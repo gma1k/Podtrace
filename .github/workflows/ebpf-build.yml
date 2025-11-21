@@ -28,9 +28,12 @@ jobs:
       - name: Compile eBPF program
         run: |
           echo "Compiling podtrace.bpf.c..."
-          clang -O2 -g -target bpf \
+          clang -O2 -g \
+            -target bpf \
             -D__TARGET_ARCH_x86 \
-            -c bpf/podtrace.bpf.c -o bpf/podtrace.bpf.o
+            -I./bpf \
+            -c bpf/podtrace.bpf.c \
+            -o bpf/podtrace.bpf.o
 
       - name: List output
         run: ls -l bpf/
