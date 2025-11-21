@@ -1,0 +1,35 @@
+name: Bash Script Checks
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/*.sh"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "**/*.sh"
+
+jobs:
+  bash-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          echo "Running ShellCheck on all .sh files:"
+          shellcheck $(git ls-files '*.sh')
+
+      - name: Install shfmt
+        run: sudo apt-get install -y shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
+      - name: Check formatting (shfmt)
+        run: |
+          echo "Checking formatting with shfmt..."
+          shfmt -d .

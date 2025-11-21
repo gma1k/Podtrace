@@ -82,7 +82,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 }
 
 func runNormalMode(eventChan <-chan *events.Event) error {
-	fmt.Println("Tracing started. Press Ctrl+C to stop.\n")
+	fmt.Println("Tracing started. Press Ctrl+C to stop.")
 
 	for {
 		select {

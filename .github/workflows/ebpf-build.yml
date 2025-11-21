@@ -1,0 +1,39 @@
+name: eBPF Build
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "bpf/**"
+      - "**/*.c"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "bpf/**"
+      - "**/*.c"
+      
+jobs:
+  build-ebpf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r)
+
+      - name: Compile eBPF program
+        run: |
+          echo "Compiling podtrace.bpf.c..."
+          clang -O2 -g \
+            -target bpf \
+            -D__TARGET_ARCH_x86 \
+            -I./bpf \
+            -c bpf/podtrace.bpf.c \
+            -o bpf/podtrace.bpf.o
+
+      - name: List output
+        run: ls -l bpf/
