@@ -8,7 +8,10 @@ on:
       - "**/*.c"
   pull_request:
     branches: ["main"]
-
+    paths:
+      - "bpf/**"
+      - "**/*.c"
+      
 jobs:
   build-ebpf:
     runs-on: ubuntu-latest
