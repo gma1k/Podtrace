@@ -1,4 +1,4 @@
-# podtrace
+<img src="https://github.com/gma1k/podtrace-poc/blob/main/assets/podtrace-logo.png" width="360" alt="podtrace logo"/>
 
 A simple but powerful eBPF-based troubleshooting tool for Kubernetes applications.
 
