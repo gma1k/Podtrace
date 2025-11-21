@@ -49,6 +49,7 @@ The diagnose mode generates a report including:
 - Process activity (top processes by event count)
 - TCP statistics (RTT, spikes, errors)
 - Connection statistics (latency, failures, top targets)
+- File system statistics (write/fsync latency)
 - Connection patterns and network I/O patterns
 
 
