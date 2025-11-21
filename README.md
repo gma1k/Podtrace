@@ -4,7 +4,7 @@ A simple but powerful eBPF-based troubleshooting tool for Kubernetes application
 
 ## Overview
 
-`podtrace` attaches eBPF programs to a single Kubernetes pod's container cgroup and prints high-level, human-readable events that help diagnose application issues.
+`podtrace` attaches eBPF programs to a single Kubernetes pod's container and prints high-level, human-readable events that help diagnose application issues.
 
 ## Features
 
