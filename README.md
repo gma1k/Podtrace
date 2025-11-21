@@ -18,7 +18,7 @@ A simple but powerful eBPF-based troubleshooting tool for Kubernetes application
 
 - Linux kernel 5.8+ with BTF support
 - Go 1.19+
-- Kubernetes cluster access (kubeconfig or in-cluster)
+- Kubernetes cluster access
 
 ## Building
 
