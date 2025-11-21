@@ -46,7 +46,12 @@ jobs:
         if: matrix.language == 'cpp'
         run: |
           echo "Compiling podtrace.bpf.c..."
-          clang -O2 -g -target bpf -c bpf/podtrace.bpf.c -o bpf/podtrace.bpf.o
+          clang -O2 -g \
+            -target bpf \
+            -D__TARGET_ARCH_x86 \
+            -I./bpf \
+            -c bpf/podtrace.bpf.c \
+            -o bpf/podtrace.bpf.o
 
       - name: Analyze
         uses: github/codeql-action/analyze@v3
