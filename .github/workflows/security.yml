@@ -24,12 +24,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Install build dependencies
         run: |
@@ -39,8 +46,8 @@ jobs:
       - name: Build Go
         if: matrix.language == 'go'
         run: |
-          go mod download
-          go build ./...
+          GOTOOLCHAIN=auto go mod download
+          GOTOOLCHAIN=auto go build ./...
 
       - name: Build eBPF C
         if: matrix.language == 'cpp'

@@ -3,8 +3,22 @@ name: Go CI
 on:
   push:
     branches: ["**"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "Makefile"
   pull_request:
-    branches: ["main"]
+    branches: ["**"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "Makefile"
 
 jobs:
   build-and-test:
@@ -21,10 +35,10 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: go mod download
+        run: GOTOOLCHAIN=auto go mod download
 
       - name: Build
-        run: go build ./...
+        run: GOTOOLCHAIN=auto go build ./...
 
       - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
+        run: GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out ./...

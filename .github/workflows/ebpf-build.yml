@@ -6,11 +6,21 @@ on:
     paths:
       - "bpf/**"
       - "**/*.c"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "Makefile"
   pull_request:
-    branches: ["main"]
+    branches: ["**"]
     paths:
       - "bpf/**"
       - "**/*.c"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "Makefile"
       
 jobs:
   build-ebpf:
@@ -20,10 +30,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r)
+
+      - name: Install Go dependencies
+        run: |
+          echo "Installing Go dependencies..."
+          GOTOOLCHAIN=auto go mod download
+          GOTOOLCHAIN=auto go mod verify
 
       - name: Compile eBPF program
         run: |
@@ -35,5 +57,14 @@ jobs:
             -c bpf/podtrace.bpf.c \
             -o bpf/podtrace.bpf.o
 
-      - name: List output
-        run: ls -l bpf/
+      - name: Build Go binary
+        run: |
+          echo "Building Go binary..."
+          GOTOOLCHAIN=auto go build -o bin/podtrace ./cmd/podtrace
+
+      - name: List outputs
+        run: |
+          echo "eBPF object:"
+          ls -l bpf/ || true
+          echo "Go binary:"
+          ls -l bin/ || true
