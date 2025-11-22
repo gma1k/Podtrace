@@ -3,8 +3,8 @@ module github.com/podtrace/podtrace
 go 1.19
 
 require (
-	github.com/cilium/ebpf v0.11.0
-	github.com/spf13/cobra v1.8.0
+	github.com/cilium/ebpf v0.20.0
+	github.com/spf13/cobra v1.10.0
 	k8s.io/apimachinery v0.29.0
 	k8s.io/client-go v0.29.0
 )
