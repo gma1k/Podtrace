@@ -10,7 +10,7 @@ A simple but powerful eBPF-based troubleshooting tool for Kubernetes application
 
 - **Network Connection Monitoring**: Tracks TCP connection latency and errors
 - **TCP RTT Analysis**: Detects RTT spikes and retry patterns
-- **File System Monitoring**: Identifies slow disk operations (write, fsync)
+- **File System Monitoring**: Identifies slow disk operations
 - **Process Activity Analysis**: Shows which processes are generating events
 - **Diagnose Mode**: Collects events for a specified duration and generates a comprehensive summary report
 
