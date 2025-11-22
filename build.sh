@@ -24,7 +24,7 @@ generate_vmlinux_if_missing() {
         if [ -f "/sys/kernel/btf/vmlinux" ]; then
             echo "Generating vmlinux.h from BTF..."
             bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
-            echo "✓ vmlinux.h generated"
+            echo "vmlinux.h generated"
         else
             echo "Warning: /sys/kernel/btf/vmlinux not found. You may need to install kernel headers."
             echo "On Debian/Ubuntu: sudo apt-get install linux-headers-\$(uname -r)"
@@ -34,8 +34,7 @@ generate_vmlinux_if_missing() {
         echo "On Debian/Ubuntu: sudo apt-get install linux-tools-common linux-tools-generic"
         echo ""
         echo "Alternatively, you can:"
-        echo "1. Install kernel headers: sudo apt-get install linux-headers-\$(uname -r)"
-        echo "2. Or use BCC's vmlinux.h: wget https://raw.githubusercontent.com/iovisor/bcc/master/src/cc/vmlinux.h"
+        echo "Install kernel headers: sudo apt-get install linux-headers-\$(uname -r)"
     fi
 }
 
@@ -52,9 +51,10 @@ compile_ebpf() {
 
 build_go_binary() {
     echo "Building Go binary..."
+    export GOTOOLCHAIN=auto
     make build || {
         echo "Error: Go build failed. Make sure:"
-        echo "1. Go 1.21+ is installed"
+        echo "1. Go 1.24+ is installed (or GOTOOLCHAIN=auto will download it)"
         echo "2. Dependencies are installed: make deps"
         exit 1
     }

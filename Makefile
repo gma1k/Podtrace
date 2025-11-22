@@ -1,15 +1,39 @@
-.PHONY: all build clean test
+.PHONY: all build clean test check-go
 
 CLANG ?= clang
 LLC ?= llc
-GO ?= go
+# Prefer /usr/local/go/bin/go if available (newer Go versions), otherwise use system go
+GO ?= $(shell if [ -f /usr/local/go/bin/go ]; then echo /usr/local/go/bin/go; else echo go; fi)
 BPF_SRC = bpf/podtrace.bpf.c
 BPF_OBJ = bpf/podtrace.bpf.o
 BINARY = bin/podtrace
 
+# Export GOTOOLCHAIN=auto to automatically download required Go version (Go 1.21+)
+# For Go < 1.21, user needs to upgrade Go manually
+export GOTOOLCHAIN=auto
+
 BPF_CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v3
 
-all: build
+all: check-go build
+
+check-go:
+	@if ! $(GO) version | grep -qE "go1\.(2[1-9]|[3-9][0-9])"; then \
+		echo ""; \
+		echo "   Error: Go 1.24+ required (or Go 1.21+ with GOTOOLCHAIN=auto)"; \
+		echo "   Current version: $$($(GO) version)"; \
+		echo "   Using: $(GO)"; \
+		echo ""; \
+		echo "   Quick upgrade (recommended):"; \
+		echo "   wget -q https://go.dev/dl/go1.24.0.linux-amd64.tar.gz && \\"; \
+		echo "   sudo rm -rf /usr/local/go && \\"; \
+		echo "   sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz && \\"; \
+		echo "   export PATH=\$$PATH:/usr/local/go/bin && \\"; \
+		echo "   /usr/local/go/bin/go version"; \
+		echo ""; \
+		echo "   Or visit: https://go.dev/dl/"; \
+		echo ""; \
+		exit 1; \
+	fi
 
 $(BPF_OBJ): $(BPF_SRC)
 	@mkdir -p $(dir $(BPF_OBJ))
