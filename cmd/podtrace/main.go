@@ -75,7 +75,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	}
 
 	if diagnoseDuration != "" {
-		return runDiagnoseMode(eventChan, diagnoseDuration)
+		return runDiagnoseMode(eventChan, diagnoseDuration, podInfo.CgroupPath)
 	}
 
 	return runNormalMode(eventChan)
@@ -97,7 +97,7 @@ func runNormalMode(eventChan <-chan *events.Event) error {
 	}
 }
 
-func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string) error {
+func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupPath string) error {
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return fmt.Errorf("invalid duration: %w", err)

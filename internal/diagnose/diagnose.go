@@ -13,9 +13,10 @@ import (
 
 // Diagnostician collects and analyzes events
 type Diagnostician struct {
-	events      []*events.Event
-	startTime   time.Time
-	endTime     time.Time
+	events     []*events.Event
+	startTime  time.Time
+	endTime    time.Time
+	cgroupPath string
 }
 
 func NewDiagnostician() *Diagnostician {
@@ -78,7 +79,7 @@ func (d *Diagnostician) GenerateReport() string {
 		report += fmt.Sprintf("TCP Statistics:\n")
 		report += fmt.Sprintf("  Send operations: %d (%.1f/sec)\n", len(tcpSendEvents), float64(len(tcpSendEvents))/duration.Seconds())
 		report += fmt.Sprintf("  Receive operations: %d (%.1f/sec)\n", len(tcpRecvEvents), float64(len(tcpRecvEvents))/duration.Seconds())
-		
+
 		allTCP := append(tcpSendEvents, tcpRecvEvents...)
 		if len(allTCP) > 0 {
 			avgRTT, maxRTT, spikes, p50, p95, p99, errors := d.analyzeTCP(allTCP)
@@ -126,7 +127,7 @@ func (d *Diagnostician) GenerateReport() string {
 		report += fmt.Sprintf("File System Statistics:\n")
 		report += fmt.Sprintf("  Write operations: %d (%.1f/sec)\n", len(writeEvents), float64(len(writeEvents))/duration.Seconds())
 		report += fmt.Sprintf("  Fsync operations: %d (%.1f/sec)\n", len(fsyncEvents), float64(len(fsyncEvents))/duration.Seconds())
-		
+
 		allFS := append(writeEvents, fsyncEvents...)
 		if len(allFS) > 0 {
 			avgLatency, maxLatency, slowOps, p50, p95, p99 := d.analyzeFS(allFS)
@@ -149,6 +150,9 @@ func (d *Diagnostician) GenerateReport() string {
 		report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
 		report += "\n"
 	}
+
+	// CPU Usage by Process
+	report += d.generateCPUUsageReport(duration)
 
 	report += d.generateApplicationTracing(duration)
 
@@ -405,7 +409,7 @@ func (d *Diagnostician) detectIssues() []string {
 
 func (d *Diagnostician) generateApplicationTracing(duration time.Duration) string {
 	var report string
-	
+
 	// Process Activity Analysis
 	pidActivity := d.analyzeProcessActivity()
 	if len(pidActivity) > 0 {
@@ -420,7 +424,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 			if name == "" {
 				name = "unknown"
 			}
-			report += fmt.Sprintf("    - PID %d (%s): %d events (%.1f%%)\n", 
+			report += fmt.Sprintf("    - PID %d (%s): %d events (%.1f%%)\n",
 				pidInfo.pid, name, pidInfo.count, pidInfo.percentage)
 		}
 		report += "\n"
@@ -432,7 +436,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 		report += fmt.Sprintf("Activity Timeline:\n")
 		report += fmt.Sprintf("  Activity distribution:\n")
 		for _, bucket := range timeline {
-			report += fmt.Sprintf("    - %s: %d events (%.1f%%)\n", 
+			report += fmt.Sprintf("    - %s: %d events (%.1f%%)\n",
 				bucket.period, bucket.count, bucket.percentage)
 		}
 		report += "\n"
@@ -505,16 +509,16 @@ type burstInfo struct {
 }
 
 type connectionPattern struct {
-	pattern      string
-	avgRate      float64
-	burstRate    float64
+	pattern       string
+	avgRate       float64
+	burstRate     float64
 	uniqueTargets int
 }
 
 type ioPattern struct {
-	sendRecvRatio   float64
-	avgThroughput   float64
-	peakThroughput  float64
+	sendRecvRatio  float64
+	avgThroughput  float64
+	peakThroughput float64
 }
 
 func (d *Diagnostician) analyzeProcessActivity() []pidInfo {
@@ -568,7 +572,7 @@ func getProcessName(pid uint32) string {
 	processNameCacheMutex.Unlock()
 
 	name := ""
-	
+
 	statPath := fmt.Sprintf("/proc/%d/stat", pid)
 	if data, err := os.ReadFile(statPath); err == nil {
 		statStr := string(data)
@@ -578,14 +582,14 @@ func getProcessName(pid uint32) string {
 			name = statStr[start+1 : end]
 		}
 	}
-	
+
 	if name == "" {
 		commPath := fmt.Sprintf("/proc/%d/comm", pid)
 		if data, err := os.ReadFile(commPath); err == nil {
 			name = strings.TrimSpace(string(data))
 		}
 	}
-	
+
 	if name == "" {
 		cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 		if cmdline, err := os.ReadFile(cmdlinePath); err == nil {
@@ -598,7 +602,7 @@ func getProcessName(pid uint32) string {
 			}
 		}
 	}
-	
+
 	if name == "" {
 		exePath := fmt.Sprintf("/proc/%d/exe", pid)
 		if link, err := os.Readlink(exePath); err == nil {
@@ -609,7 +613,7 @@ func getProcessName(pid uint32) string {
 			}
 		}
 	}
-	
+
 	if name == "" {
 		statusPath := fmt.Sprintf("/proc/%d/status", pid)
 		if data, err := os.ReadFile(statusPath); err == nil {
@@ -625,11 +629,11 @@ func getProcessName(pid uint32) string {
 			}
 		}
 	}
-	
+
 	processNameCacheMutex.Lock()
 	processNameCache[pid] = name
 	processNameCacheMutex.Unlock()
-	
+
 	return name
 }
 
@@ -721,7 +725,7 @@ func (d *Diagnostician) analyzeConnectionPattern(connectEvents []*events.Event, 
 	if windowDuration < 100*time.Millisecond {
 		windowDuration = 100 * time.Millisecond
 	}
-	
+
 	var windowCounts []int
 	windowStart := d.startTime
 	for windowStart.Before(d.endTime) {
