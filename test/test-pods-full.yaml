@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podtrace-test
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-cpu-test
+  namespace: podtrace-test
+  labels:
+    app: nginx-cpu
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    command:
+    - sh
+    - -c
+    - |
+      nginx
+      while true; do
+        for i in {1..1000}; do
+          echo "CPU test $i" > /dev/null
+        done
+        sleep 0.1
+      done
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test
+  namespace: podtrace-test
+  labels:
+    app: network-test
+spec:
+  containers:
+  - name: network
+    image: curlimages/curl:latest
+    command:
+    - sh
+    - -c
+    - |
+      while true; do
+        nslookup google.com || true
+        curl -s -o /dev/null http://httpbin.org/get || true
+        sleep 1
+      done
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: io-test
+  namespace: podtrace-test
+  labels:
+    app: io-test
+spec:
+  containers:
+  - name: io
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - |
+      while true; do
+        echo "I/O test $(date)" >> /tmp/io-test.log
+        sync
+        sleep 0.5
+      done
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: memory-test
+  namespace: podtrace-test
+  labels:
+    app: memory-test
+spec:
+  containers:
+  - name: memory
+    image: python:3.9-slim
+    command:
+    - python3
+    - -c
+    - |
+      import time
+      data = []
+      while True:
+          data.append(bytearray(1024 * 1024))
+          time.sleep(0.1)
+          if len(data) > 10:
+              data.pop(0)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multithread-test
+  namespace: podtrace-test
+  labels:
+    app: multithread-test
+spec:
+  containers:
+  - name: multithread
+    image: python:3.9-slim
+    command:
+    - python3
+    - -c
+    - |
+      import threading
+      import time
+      
+      def cpu_worker(worker_id):
+          while True:
+              sum(range(10000))
+              time.sleep(0.01)
+      
+      threads = []
+      for i in range(4):
+          t = threading.Thread(target=cpu_worker, args=(i,))
+          t.daemon = True
+          t.start()
+          threads.append(t)
+      
+      while True:
+          time.sleep(1)
