@@ -41,9 +41,9 @@ apply_test_resources() {
 
 wait_for_pods_ready() {
 	echo "Waiting for pods to be ready..."
-	kubectl wait --for=condition=Ready pod/nginx-test   -n "${NAMESPACE}" --timeout=120s || true
+	kubectl wait --for=condition=Ready pod/nginx-test -n "${NAMESPACE}" --timeout=120s || true
 	kubectl wait --for=condition=Ready pod/busybox-test -n "${NAMESPACE}" --timeout=120s || true
-	kubectl wait --for=condition=Ready pod/alpine-test  -n "${NAMESPACE}" --timeout=120s || true
+	kubectl wait --for=condition=Ready pod/alpine-test -n "${NAMESPACE}" --timeout=120s || true
 	echo ""
 }
 

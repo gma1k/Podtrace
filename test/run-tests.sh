@@ -60,7 +60,7 @@ run_test() {
 	set +e
 	test_output=$(sudo "${PROJECT_ROOT}/bin/podtrace" -n "${NAMESPACE}" "${pod_name}" --diagnose "${duration}" 2>&1 | head -30 || true)
 	test_exit_code=${PIPESTATUS[0]}
-	set -e  # Re-enable exit on error
+	set -e
 	echo "${test_output}"
 	if [[ ${test_exit_code} -eq 0 ]]; then
 		echo -e "${GREEN}✓ ${test_name} passed${NC}"
