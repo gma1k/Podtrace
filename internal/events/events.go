@@ -110,6 +110,58 @@ func (e *Event) FormatMessage() string {
 	}
 }
 
+func (e *Event) FormatRealtimeMessage() string {
+	latencyMs := float64(e.LatencyNS) / 1e6
+	
+	switch e.Type {
+	case EventDNS:
+		if e.Error != 0 {
+			return sprintf("[DNS] lookup %s failed: error %d", e.Target, e.Error)
+		}
+		return sprintf("[DNS] lookup %s took %.2fms", e.Target, latencyMs)
+		
+	case EventConnect:
+		target := e.Target
+		if target == "" || target == "?" {
+			target = "unknown"
+		}
+		if e.Error != 0 {
+			return sprintf("[NET] connect to %s failed: error %d", target, e.Error)
+		}
+		return sprintf("[NET] connect to %s (%.2fms)", target, latencyMs)
+		
+	case EventTCPSend:
+		if e.Error < 0 && e.Error != -11 {
+			return sprintf("[NET] TCP send error: %d", e.Error)
+		}
+		if latencyMs > 10 {
+			return sprintf("[NET] TCP send latency: %.2fms", latencyMs)
+		}
+		return ""
+		
+	case EventTCPRecv:
+		if e.Error < 0 && e.Error != -11 {
+			return sprintf("[NET] TCP recv error: %d", e.Error)
+		}
+		if latencyMs > 10 {
+			return sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
+		}
+		return ""
+		
+	case EventWrite:
+		return sprintf("[FS] write() to %s took %.2fms", e.Target, latencyMs)
+		
+	case EventFsync:
+		return sprintf("[FS] fsync() to %s took %.2fms", e.Target, latencyMs)
+		
+	case EventSchedSwitch:
+		return sprintf("[CPU] thread blocked %.2fms", latencyMs)
+		
+	default:
+		return sprintf("[UNKNOWN] event type %d", e.Type)
+	}
+}
+
 func sprintf(format string, args ...interface{}) string {
 	return fmt.Sprintf(format, args...)
 }

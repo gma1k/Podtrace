@@ -83,15 +83,44 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 
 func runNormalMode(eventChan <-chan *events.Event) error {
 	fmt.Println("Tracing started. Press Ctrl+C to stop.")
+	fmt.Println("Real-time diagnostic updates every 5 seconds...")
+	fmt.Println()
+
+	diagnostician := diagnose.NewDiagnostician()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	hasPrintedReport := false
 
 	for {
 		select {
 		case event := <-eventChan:
-			msg := event.FormatMessage()
-			if msg != "" {
-				fmt.Println(msg)
+			diagnostician.AddEvent(event)
+
+		case <-ticker.C:
+			diagnostician.Finish()
+			
+			if hasPrintedReport {
+				fmt.Print("\033[2J\033[H")
 			}
+			
+			report := diagnostician.GenerateReport()
+			fmt.Println("=== Real-time Diagnostic Report (updating every 5s) ===")
+			fmt.Println("Press Ctrl+C to stop and see final report.")
+			fmt.Println()
+			fmt.Println(report)
+			hasPrintedReport = true
+			
+
 		case <-interruptChan():
+			diagnostician.Finish()
+			if hasPrintedReport {
+				fmt.Print("\033[2J\033[H")
+			}
+			fmt.Println("=== Final Diagnostic Report ===")
+			fmt.Println()
+			report := diagnostician.GenerateReport()
+			fmt.Println(report)
 			return nil
 		}
 	}

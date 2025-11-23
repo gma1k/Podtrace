@@ -39,8 +39,11 @@ make build-setup
 ### Basic Usage
 
 ```bash
-# Trace a pod in real-time and generate a diagnostic report
-./bin/podtrace -n production my-pod --diagnose 10s
+# Trace a pod in real-time
+./bin/podtrace -n production my-pod
+
+# Run in diagnostic mode
+./bin/podtrace -n production my-pod --diagnose 20s
 ```
 
 ### Diagnose Report
