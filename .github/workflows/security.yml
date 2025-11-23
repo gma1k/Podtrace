@@ -26,17 +26,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-
       - name: Set up Go
         if: matrix.language == 'go'
         uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
 
       - name: Install build dependencies
         run: |
