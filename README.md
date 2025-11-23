@@ -1,6 +1,10 @@
-<img src="https://github.com/gma1k/podtrace/blob/main/assets/podtrace-logo.png" width="360" alt="podtrace logo"/>
+<p align="center">
+  <a href="https://github.com/gma1k/podtrace">
+    <img src="https://github.com/gma1k/podtrace/blob/main/assets/podtrace-logo.png" width="420" alt="podtrace logo"/>
+  </a>
+</p>
 
-A simple but powerful eBPF-based troubleshooting tool for Kubernetes applications.
+A simple but powerful eBPF-based diagnostic tool for Kubernetes applications.
 
 ## Overview
 
