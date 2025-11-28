@@ -101,7 +101,7 @@ http://localhost:3000/metrics
 
 ## Prometheus Scrape Configuration
 
-set <PODTRACE_HOST> to the address of the pod or host running podtrace.
+In your Prometheus scrape job, set <PODTRACE_HOST> to the address of the pod or host running podtrace.
 ```bash
 scrape_configs:
   - job_name: 'podtrace'
