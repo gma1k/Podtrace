@@ -78,13 +78,14 @@ After building, set capabilities to run without sudo:
 sudo ./scripts/setup-capabilities.sh
 ```
 
-## Podtrace Prometheus & Grafana Integration
+
+
+
+### Podtrace Prometheus & Grafana Integration
 
 `podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking, DNS, CPU scheduling, and file system operations, all labeled per process and event type.
 
 ---
-
-## Enabling Metrics Export
 
 Running:
 
