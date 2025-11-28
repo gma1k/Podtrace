@@ -77,3 +77,63 @@ After building, set capabilities to run without sudo:
 ```bash
 sudo ./scripts/setup-capabilities.sh
 ```
+
+
+---
+
+## Podtrace Prometheus & Grafana Integration
+
+`podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking, DNS, CPU scheduling, and file system operations, all labeled per process and event type.
+
+---
+
+Running:
+
+```bash
+./bin/podtrace -n production my-pod --metrics
+```
+
+launches an HTTP server accessible at:
+
+```bash
+http://localhost:3000/metrics
+```
+
+## Prometheus Scrape Configuration
+
+In your Prometheus scrape job, set <PODTRACE_HOST> to the address of the pod or host running podtrace.
+```bash
+scrape_configs:
+  - job_name: 'podtrace'
+    static_configs:
+      - targets: ['<PODTRACE_HOST>:3000']
+```
+## Available Metrics
+All metrics are exported per process and per event type:
+| Metric                                   | Description                                     |
+| ---------------------------------------- | ----------------------------------------------- |
+| `podtrace_rtt_seconds`                   | Histogram of TCP RTTs                           |
+| `podtrace_rtt_latest_seconds`            | Most recent TCP RTT                             |
+| `podtrace_latency_seconds`               | Histogram of TCP send/receive latency           |
+| `podtrace_latency_latest_seconds`        | Most recent TCP latency                         |
+| `podtrace_dns_latency_seconds_gauge`     | Latest DNS query latency                        |
+| `podtrace_dns_latency_seconds_histogram` | Distribution of DNS query latencies             |
+| `podtrace_fs_latency_seconds_gauge`      | Latest file system operation latency            |
+| `podtrace_fs_latency_seconds_histogram`  | Distribution of file system operation latencies |
+| `podtrace_cpu_block_seconds_gauge`       | Latest CPU block time                           |
+| `podtrace_cpu_block_seconds_histogram`   | Distribution of CPU block times                 |
+
+## Grafana Dashboard
+
+A ready-to-use Grafana dashboard JSON is included in the repository at `podtrace/internal/metricsexporter/dashboard/Podtrace-Dashboard.json`
+
+
+## Steps to use:
+
+- Open Grafana and go to Dashboards → New → Import.
+
+- Paste the JSON or upload the .json file.
+
+- Select or your Prometheus datasource as the datasource.
+
+- Import. The dashboard will display per-process and per-event-type metrics for RTT, latency, DNS, FS, and CPU block time.

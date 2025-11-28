@@ -52,6 +52,7 @@ func (d *Diagnostician) GenerateReport() string {
 	// DNS statistics
 	dnsEvents := d.filterEvents(events.EventDNS)
 	if len(dnsEvents) > 0 {
+
 		avgLatency, maxLatency, errors, p50, p95, p99, topTargets := d.analyzeDNS(dnsEvents)
 		report += fmt.Sprintf("DNS Statistics:\n")
 		report += fmt.Sprintf("  Total lookups: %d (%.1f/sec)\n", len(dnsEvents), float64(len(dnsEvents))/duration.Seconds())

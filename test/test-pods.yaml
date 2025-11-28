@@ -18,6 +18,7 @@ spec:
     image: nginx:alpine
     ports:
     - containerPort: 80
+    - containerPort: 3000
     command: ["/bin/sh", "-c"]
     args:
     - |

@@ -12,10 +12,11 @@ import (
 	"github.com/podtrace/podtrace/internal/ebpf"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/kubernetes"
+	"github.com/podtrace/podtrace/internal/metricsexporter"
 )
 
 var (
-	namespace       string
+	namespace        string
 	diagnoseDuration string
 )
 
@@ -39,6 +40,7 @@ func main() {
 }
 
 func runPodtrace(cmd *cobra.Command, args []string) error {
+	metricsexporter.StartServer()
 	podName := args[0]
 
 	resolver, err := kubernetes.NewPodResolver()
@@ -67,8 +69,8 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to attach to cgroup: %w", err)
 	}
 
-
 	eventChan := make(chan *events.Event, 100)
+	go metricsexporter.HandleEvents(eventChan)
 
 	if err := tracer.Start(eventChan); err != nil {
 		return fmt.Errorf("failed to start tracer: %w", err)
@@ -99,18 +101,17 @@ func runNormalMode(eventChan <-chan *events.Event) error {
 
 		case <-ticker.C:
 			diagnostician.Finish()
-			
+
 			if hasPrintedReport {
 				fmt.Print("\033[2J\033[H")
 			}
-			
+
 			report := diagnostician.GenerateReport()
 			fmt.Println("=== Real-time Diagnostic Report (updating every 5s) ===")
 			fmt.Println("Press Ctrl+C to stop and see final report.")
 			fmt.Println()
 			fmt.Println(report)
 			hasPrintedReport = true
-			
 
 		case <-interruptChan():
 			diagnostician.Finish()
