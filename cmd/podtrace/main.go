@@ -13,6 +13,7 @@ import (
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/kubernetes"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
+	"github.com/podtrace/podtrace/internal/validation"
 )
 
 var (
@@ -42,6 +43,14 @@ func main() {
 func runPodtrace(cmd *cobra.Command, args []string) error {
 	metricsexporter.StartServer()
 	podName := args[0]
+
+	if err := validation.ValidatePodName(podName); err != nil {
+		return fmt.Errorf("invalid pod name: %w", err)
+	}
+
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return fmt.Errorf("invalid namespace: %w", err)
+	}
 
 	resolver, err := kubernetes.NewPodResolver()
 	if err != nil {
@@ -133,6 +142,14 @@ func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupP
 		return fmt.Errorf("invalid duration: %w", err)
 	}
 
+	if duration <= 0 {
+		return fmt.Errorf("duration must be positive")
+	}
+
+	if duration > 24*time.Hour {
+		return fmt.Errorf("duration cannot exceed 24 hours")
+	}
+
 	fmt.Printf("Running diagnose mode for %v...\n\n", duration)
 
 	diagnostician := diagnose.NewDiagnostician()
@@ -159,6 +176,11 @@ func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupP
 func interruptChan() <-chan os.Signal {
 	sigChan := make(chan os.Signal, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "Panic in interrupt handler: %v\n", r)
+			}
+		}()
 		ebpf.WaitForInterrupt()
 		sigChan <- os.Interrupt
 	}()

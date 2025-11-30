@@ -2,8 +2,13 @@ package events
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
+
+func sanitizeString(s string) string {
+	return strings.ReplaceAll(s, "%", "%%")
+}
 
 type EventType uint32
 
@@ -62,9 +67,9 @@ func (e *Event) FormatMessage() string {
 	switch e.Type {
 	case EventDNS:
 		if e.Error != 0 {
-			return sprintf("[DNS] lookup %s failed: error %d", e.Target, e.Error)
+			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(e.Target), e.Error)
 		}
-		return sprintf("[DNS] lookup %s took %.2fms", e.Target, latencyMs)
+		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(e.Target), latencyMs)
 
 	case EventConnect:
 		target := e.Target
@@ -72,28 +77,28 @@ func (e *Event) FormatMessage() string {
 			target = "file"
 		}
 		if e.Error != 0 {
-			return sprintf("[NET] connect to %s failed: error %d", target, e.Error)
+			return fmt.Sprintf("[NET] connect to %s failed: error %d", sanitizeString(target), e.Error)
 		}
 		if latencyMs > 1 {
-			return sprintf("[NET] connect to %s took %.2fms", target, latencyMs)
+			return fmt.Sprintf("[NET] connect to %s took %.2fms", sanitizeString(target), latencyMs)
 		}
 		return ""
 
 	case EventTCPSend:
 		if e.Error < 0 && e.Error != -11 {
-			return sprintf("[NET] TCP send error: %d", e.Error)
+			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
 		if latencyMs > 100 {
-			return sprintf("[NET] TCP send latency spike: %.2fms", latencyMs)
+			return fmt.Sprintf("[NET] TCP send latency spike: %.2fms", latencyMs)
 		}
 		return ""
 
 	case EventTCPRecv:
 		if e.Error < 0 && e.Error != -11 {
-			return sprintf("[NET] TCP recv error: %d", e.Error)
+			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
 		if latencyMs > 100 {
-			return sprintf("[NET] TCP recv RTT spike: %.2fms", latencyMs)
+			return fmt.Sprintf("[NET] TCP recv RTT spike: %.2fms", latencyMs)
 		}
 		return ""
 
@@ -102,27 +107,27 @@ func (e *Event) FormatMessage() string {
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return sprintf("[FS] write() to %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventRead:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return sprintf("[FS] read() from %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventFsync:
 		target := e.Target
 		if target == "" {
 			target = "file"
 		}
-		return sprintf("[FS] fsync() to %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] fsync() to %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventSchedSwitch:
-		return sprintf("[CPU] thread blocked %.2fms", latencyMs)
+		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
 
 	default:
-		return sprintf("[UNKNOWN] event type %d", e.Type)
+		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
 	}
 }
 
@@ -132,9 +137,9 @@ func (e *Event) FormatRealtimeMessage() string {
 	switch e.Type {
 	case EventDNS:
 		if e.Error != 0 {
-			return sprintf("[DNS] lookup %s failed: error %d", e.Target, e.Error)
+			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(e.Target), e.Error)
 		}
-		return sprintf("[DNS] lookup %s took %.2fms", e.Target, latencyMs)
+		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(e.Target), latencyMs)
 
 	case EventConnect:
 		target := e.Target
@@ -142,25 +147,25 @@ func (e *Event) FormatRealtimeMessage() string {
 			target = "file"
 		}
 		if e.Error != 0 {
-			return sprintf("[NET] connect to %s failed: error %d", target, e.Error)
+			return fmt.Sprintf("[NET] connect to %s failed: error %d", sanitizeString(target), e.Error)
 		}
-		return sprintf("[NET] connect to %s (%.2fms)", target, latencyMs)
+		return fmt.Sprintf("[NET] connect to %s (%.2fms)", sanitizeString(target), latencyMs)
 
 	case EventTCPSend:
 		if e.Error < 0 && e.Error != -11 {
-			return sprintf("[NET] TCP send error: %d", e.Error)
+			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
 		if latencyMs > 10 {
-			return sprintf("[NET] TCP send latency: %.2fms", latencyMs)
+			return fmt.Sprintf("[NET] TCP send latency: %.2fms", latencyMs)
 		}
 		return ""
 
 	case EventTCPRecv:
 		if e.Error < 0 && e.Error != -11 {
-			return sprintf("[NET] TCP recv error: %d", e.Error)
+			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
 		if latencyMs > 10 {
-			return sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
+			return fmt.Sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
 		}
 		return ""
 
@@ -169,30 +174,26 @@ func (e *Event) FormatRealtimeMessage() string {
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return sprintf("[FS] write() to %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventRead:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return sprintf("[FS] read() from %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventFsync:
 		target := e.Target
 		if target == "" {
 			target = "file"
 		}
-		return sprintf("[FS] fsync() to %s took %.2fms", target, latencyMs)
+		return fmt.Sprintf("[FS] fsync() to %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventSchedSwitch:
-		return sprintf("[CPU] thread blocked %.2fms", latencyMs)
+		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
 
 	default:
-		return sprintf("[UNKNOWN] event type %d", e.Type)
+		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
 	}
-}
-
-func sprintf(format string, args ...interface{}) string {
-	return fmt.Sprintf(format, args...)
 }

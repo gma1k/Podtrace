@@ -72,29 +72,30 @@ static inline void format_ip_port(u32 ip, u16 port, char *buf) {
 	u8 c = (ip >> 8) & 0xFF;
 	u8 d = ip & 0xFF;
 	u16 p = port;
+	u32 idx = 0;
 	
-	buf[0] = '0' + (a / 100) % 10;
-	buf[1] = '0' + (a / 10) % 10;
-	buf[2] = '0' + a % 10;
-	buf[3] = '.';
-	buf[4] = '0' + (b / 100) % 10;
-	buf[5] = '0' + (b / 10) % 10;
-	buf[6] = '0' + b % 10;
-	buf[7] = '.';
-	buf[8] = '0' + (c / 100) % 10;
-	buf[9] = '0' + (c / 10) % 10;
-	buf[10] = '0' + c % 10;
-	buf[11] = '.';
-	buf[12] = '0' + (d / 100) % 10;
-	buf[13] = '0' + (d / 10) % 10;
-	buf[14] = '0' + d % 10;
-	buf[15] = ':';
-	buf[16] = '0' + (p / 10000) % 10;
-	buf[17] = '0' + (p / 1000) % 10;
-	buf[18] = '0' + (p / 100) % 10;
-	buf[19] = '0' + (p / 10) % 10;
-	buf[20] = '0' + p % 10;
-	buf[21] = '\0';
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (a / 100) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (a / 10) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + a % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (b / 100) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (b / 10) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + b % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (c / 100) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (c / 10) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + c % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (d / 100) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (d / 10) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + d % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = ':';
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 10000) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 1000) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 100) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 10) % 10;
+	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + p % 10;
+	if (idx < MAX_STRING_LEN) buf[idx] = '\0';
 }
 
 static inline void format_ipv6_port(const u8 *ipv6, u16 port, char *buf) {

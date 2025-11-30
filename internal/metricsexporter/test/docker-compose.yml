@@ -1,4 +1,9 @@
 version: '3.8'
+
+# WARNING: This docker-compose file contains hardcoded test credentials (admin/admin)
+# DO NOT USE IN PRODUCTION - These credentials are for testing purposes only
+# In production, use environment variables or secrets management for credentials
+
 services:
   prometheus:
     image: prom/prometheus:latest

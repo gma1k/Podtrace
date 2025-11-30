@@ -1,7 +1,12 @@
 package metricsexporter
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/prometheus/client_golang/prometheus"
@@ -108,6 +113,11 @@ func init() {
 }
 
 func HandleEvents(ch <-chan *events.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Panic in metrics event handler: %v\n", r)
+		}
+	}()
 	for e := range ch {
 		if e == nil {
 			continue
@@ -172,7 +182,48 @@ func ExportSchedSwitchMetric(e *events.Event) {
 
 }
 
+var (
+	limiter = rate.NewLimiter(rate.Every(time.Second/10), 20)
+)
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func StartServer() {
-	http.Handle("/metrics", promhttp.Handler())
-	go http.ListenAndServe(":3000", nil)
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", securityHeadersMiddleware(rateLimitMiddleware(promhttp.Handler())))
+
+	server := &http.Server{
+		Addr:         "127.0.0.1:3000",
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "Panic in metrics server: %v\n", r)
+			}
+		}()
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "Metrics server error: %v\n", err)
+		}
+	}()
 }

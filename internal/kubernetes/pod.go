@@ -11,6 +11,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/podtrace/podtrace/internal/validation"
 )
 
 // PodResolver resolves pod names to container IDs and cgroup paths
@@ -26,7 +28,7 @@ func NewPodResolver() (*PodResolver, error) {
 	config, err = rest.InClusterConfig()
 	if err != nil {
 		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-		
+
 		if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
 			loadingRules.ExplicitPath = kubeconfig
 		} else {
@@ -52,14 +54,7 @@ func NewPodResolver() (*PodResolver, error) {
 
 		config, err = kubeConfig.ClientConfig()
 		if err != nil {
-			kubeconfigPath := loadingRules.ExplicitPath
-			if kubeconfigPath == "" {
-				kubeconfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config")
-			}
-			return nil, fmt.Errorf("failed to get kubeconfig: %w\n"+
-				"  Kubeconfig path: %s\n"+
-				"  Try: kubectl cluster-info\n"+
-				"  Or: export KUBECONFIG=~/.kube/config && sudo -E ./bin/podtrace ...", err, kubeconfigPath)
+			return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
 		}
 	}
 
@@ -87,9 +82,13 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace string)
 
 	parts := strings.Split(containerID, "://")
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid container ID format: %s", containerID)
+		return nil, fmt.Errorf("invalid container ID format")
 	}
 	shortID := parts[1]
+
+	if !validation.ValidateContainerID(shortID) {
+		return nil, fmt.Errorf("invalid container ID")
+	}
 
 	cgroupPath, err := findCgroupPath(shortID)
 	if err != nil {
@@ -116,7 +115,7 @@ type PodInfo struct {
 // findCgroupPath finds the cgroup path for a container ID
 func findCgroupPath(containerID string) (string, error) {
 	cgroupBase := "/sys/fs/cgroup"
-	
+
 	paths := []string{
 		filepath.Join(cgroupBase, "kubepods.slice"),
 		filepath.Join(cgroupBase, "system.slice"),
@@ -147,5 +146,5 @@ func findCgroupPath(containerID string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("cgroup path not found for container %s", containerID)
+	return "", fmt.Errorf("cgroup path not found for container")
 }

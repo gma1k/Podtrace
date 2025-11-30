@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/podtrace/podtrace/internal/events"
+	"github.com/podtrace/podtrace/internal/validation"
 )
 
 // Diagnostician collects and analyzes events
@@ -571,10 +572,16 @@ func (d *Diagnostician) analyzeProcessActivity() []pidInfo {
 	return pidInfos
 }
 
+const maxProcessCacheSize = 1000
+
 var processNameCache = make(map[uint32]string)
 var processNameCacheMutex = &sync.Mutex{}
 
 func getProcessName(pid uint32) string {
+	if !validation.ValidatePID(pid) {
+		return ""
+	}
+
 	processNameCacheMutex.Lock()
 	if name, ok := processNameCache[pid]; ok {
 		processNameCacheMutex.Unlock()
@@ -642,10 +649,16 @@ func getProcessName(pid uint32) string {
 	}
 
 	processNameCacheMutex.Lock()
+	if len(processNameCache) >= maxProcessCacheSize {
+		for k := range processNameCache {
+			delete(processNameCache, k)
+			break
+		}
+	}
 	processNameCache[pid] = name
 	processNameCacheMutex.Unlock()
 
-	return name
+	return validation.SanitizeProcessName(name)
 }
 
 func (d *Diagnostician) analyzeTimeline(duration time.Duration) []timelineBucket {

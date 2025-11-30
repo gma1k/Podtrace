@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/podtrace/podtrace/internal/events"
+	"github.com/podtrace/podtrace/internal/validation"
 )
 
 type Tracer struct {
@@ -100,6 +101,10 @@ func (t *Tracer) isPIDInCgroup(pid uint32) bool {
 		return true
 	}
 
+	if !validation.ValidatePID(pid) {
+		return false
+	}
+
 	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
 	data, err := os.ReadFile(cgroupFile)
 	if err != nil {
@@ -163,6 +168,11 @@ func extractCgroupPathFromProc(cgroupContent string) string {
 // Start begins collecting events and sends them to the event channel
 func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "Panic in event reader: %v\n", r)
+			}
+		}()
 		for {
 			record, err := t.reader.Read()
 			if err != nil {
@@ -176,6 +186,7 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 			event := parseEvent(record.RawSample)
 			if event != nil {
 				event.ProcessName = getProcessNameQuick(event.PID)
+				event.ProcessName = validation.SanitizeProcessName(event.ProcessName)
 
 				if t.isPIDInCgroup(event.PID) {
 					eventChan <- event
@@ -340,10 +351,16 @@ func findLibcPath() string {
 	return ""
 }
 
+const maxProcessCacheSize = 1000
+
 var processNameCache = make(map[uint32]string)
 var processNameCacheMutex = &sync.Mutex{}
 
 func getProcessNameQuick(pid uint32) string {
+	if !validation.ValidatePID(pid) {
+		return ""
+	}
+
 	processNameCacheMutex.Lock()
 	if name, ok := processNameCache[pid]; ok {
 		processNameCacheMutex.Unlock()
@@ -384,6 +401,12 @@ func getProcessNameQuick(pid uint32) string {
 	}
 
 	processNameCacheMutex.Lock()
+	if len(processNameCache) >= maxProcessCacheSize {
+		for k := range processNameCache {
+			delete(processNameCache, k)
+			break
+		}
+	}
 	processNameCache[pid] = name
 	processNameCacheMutex.Unlock()
 
