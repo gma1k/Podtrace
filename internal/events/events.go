@@ -21,6 +21,13 @@ const (
 	EventRead
 	EventFsync
 	EventSchedSwitch
+	EventTCPState
+	EventPageFault
+	EventOOMKill
+	EventUDPSend
+	EventUDPRecv
+	EventHTTPReq
+	EventHTTPResp
 )
 
 type Event struct {
@@ -30,6 +37,8 @@ type Event struct {
 	Type        EventType
 	LatencyNS   uint64
 	Error       int32
+	Bytes       uint64
+	TCPState    uint32
 	Target      string
 	Details     string
 }
@@ -48,7 +57,7 @@ func (e *Event) TypeString() string {
 		return "DNS"
 	case EventConnect:
 		return "NET"
-	case EventTCPSend, EventTCPRecv:
+	case EventTCPSend, EventTCPRecv, EventTCPState, EventUDPSend, EventUDPRecv:
 		return "NET"
 	case EventWrite, EventRead:
 		return "FS"
@@ -56,6 +65,10 @@ func (e *Event) TypeString() string {
 		return "FS"
 	case EventSchedSwitch:
 		return "CPU"
+	case EventPageFault, EventOOMKill:
+		return "MEM"
+	case EventHTTPReq, EventHTTPResp:
+		return "HTTP"
 	default:
 		return "UNKNOWN"
 	}
@@ -89,7 +102,11 @@ func (e *Event) FormatMessage() string {
 			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
 		if latencyMs > 100 {
-			return fmt.Sprintf("[NET] TCP send latency spike: %.2fms", latencyMs)
+			msg := fmt.Sprintf("[NET] TCP send latency spike: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
 		}
 		return ""
 
@@ -98,23 +115,98 @@ func (e *Event) FormatMessage() string {
 			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
 		if latencyMs > 100 {
-			return fmt.Sprintf("[NET] TCP recv RTT spike: %.2fms", latencyMs)
+			msg := fmt.Sprintf("[NET] TCP recv RTT spike: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
 		}
 		return ""
+
+	case EventUDPSend:
+		if e.Error < 0 {
+			return fmt.Sprintf("[NET] UDP send error: %d", e.Error)
+		}
+		if latencyMs > 100 {
+			msg := fmt.Sprintf("[NET] UDP send latency spike: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
+		}
+		return ""
+
+	case EventUDPRecv:
+		if e.Error < 0 {
+			return fmt.Sprintf("[NET] UDP recv error: %d", e.Error)
+		}
+		if latencyMs > 100 {
+			msg := fmt.Sprintf("[NET] UDP recv latency spike: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
+		}
+		return ""
+
+	case EventHTTPReq:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		return fmt.Sprintf("[HTTP] request to %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventHTTPResp:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		msg := fmt.Sprintf("[HTTP] response from %s took %.2fms", sanitizeString(target), latencyMs)
+		if e.Bytes > 0 {
+			msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+		}
+		return msg
+
+	case EventTCPState:
+		stateStr := TCPStateString(e.TCPState)
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		return fmt.Sprintf("[NET] TCP state change to %s for %s", stateStr, sanitizeString(target))
+
+	case EventPageFault:
+		return fmt.Sprintf("[MEM] Page fault (error: %d)", e.Error)
+
+	case EventOOMKill:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		memMB := float64(e.Bytes) / (1024 * 1024)
+		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
+		msg := fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
+		if e.Bytes > 0 {
+			msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+		}
+		return msg
 
 	case EventRead:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
+		msg := fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
+		if e.Bytes > 0 {
+			msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+		}
+		return msg
 
 	case EventFsync:
 		target := e.Target
@@ -129,6 +221,27 @@ func (e *Event) FormatMessage() string {
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
 	}
+}
+
+func TCPStateString(state uint32) string {
+	states := map[uint32]string{
+		1:  "ESTABLISHED",
+		2:  "SYN_SENT",
+		3:  "SYN_RECV",
+		4:  "FIN_WAIT1",
+		5:  "FIN_WAIT2",
+		6:  "TIME_WAIT",
+		7:  "CLOSE",
+		8:  "CLOSE_WAIT",
+		9:  "LAST_ACK",
+		10: "LISTEN",
+		11: "CLOSING",
+		12: "NEW_SYN_RECV",
+	}
+	if name, ok := states[state]; ok {
+		return name
+	}
+	return fmt.Sprintf("UNKNOWN(%d)", state)
 }
 
 func (e *Event) FormatRealtimeMessage() string {
@@ -156,7 +269,11 @@ func (e *Event) FormatRealtimeMessage() string {
 			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
 		if latencyMs > 10 {
-			return fmt.Sprintf("[NET] TCP send latency: %.2fms", latencyMs)
+			msg := fmt.Sprintf("[NET] TCP send latency: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
 		}
 		return ""
 
@@ -165,23 +282,54 @@ func (e *Event) FormatRealtimeMessage() string {
 			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
 		if latencyMs > 10 {
-			return fmt.Sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
+			msg := fmt.Sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
+			if e.Bytes > 0 {
+				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+			}
+			return msg
 		}
 		return ""
+
+	case EventTCPState:
+		stateStr := TCPStateString(e.TCPState)
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		return fmt.Sprintf("[NET] TCP state: %s for %s", stateStr, sanitizeString(target))
+
+	case EventPageFault:
+		return fmt.Sprintf("[MEM] Page fault (error: %d)", e.Error)
+
+	case EventOOMKill:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		memMB := float64(e.Bytes) / (1024 * 1024)
+		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
+		msg := fmt.Sprintf("[FS] write() to %s took %.2fms", sanitizeString(target), latencyMs)
+		if e.Bytes > 0 {
+			msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+		}
+		return msg
 
 	case EventRead:
 		target := e.Target
 		if target == "" || target == "?" {
 			target = "file"
 		}
-		return fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
+		msg := fmt.Sprintf("[FS] read() from %s took %.2fms", sanitizeString(target), latencyMs)
+		if e.Bytes > 0 {
+			msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
+		}
+		return msg
 
 	case EventFsync:
 		target := e.Target

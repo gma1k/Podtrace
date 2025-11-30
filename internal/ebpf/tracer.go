@@ -283,7 +283,8 @@ func (t *Tracer) Stop() error {
 }
 
 func parseEvent(data []byte) *events.Event {
-	if len(data) < 32 {
+	const expectedEventSize = 304
+	if len(data) < expectedEventSize {
 		return nil
 	}
 
@@ -293,8 +294,10 @@ func parseEvent(data []byte) *events.Event {
 		Type      uint32
 		LatencyNS uint64
 		Error     int32
-		Target    [64]byte
-		Details   [64]byte
+		Bytes     uint64
+		TCPState  uint32
+		Target    [128]byte
+		Details   [128]byte
 	}
 
 	if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
@@ -307,6 +310,8 @@ func parseEvent(data []byte) *events.Event {
 		Type:      events.EventType(e.Type),
 		LatencyNS: e.LatencyNS,
 		Error:     e.Error,
+		Bytes:     e.Bytes,
+		TCPState:  e.TCPState,
 		Target:    string(bytes.TrimRight(e.Target[:], "\x00")),
 		Details:   string(bytes.TrimRight(e.Details[:], "\x00")),
 	}
@@ -324,6 +329,10 @@ func attachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		"kretprobe_tcp_sendmsg":    "tcp_sendmsg",
 		"kprobe_tcp_recvmsg":       "tcp_recvmsg",
 		"kretprobe_tcp_recvmsg":    "tcp_recvmsg",
+		"kprobe_udp_sendmsg":       "udp_sendmsg",
+		"kretprobe_udp_sendmsg":    "udp_sendmsg",
+		"kprobe_udp_recvmsg":       "udp_recvmsg",
+		"kretprobe_udp_recvmsg":    "udp_recvmsg",
 		"kprobe_vfs_write":         "vfs_write",
 		"kretprobe_vfs_write":      "vfs_write",
 		"kprobe_vfs_read":          "vfs_read",
@@ -362,6 +371,39 @@ func attachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") {
 				fmt.Fprintf(os.Stderr, "Note: CPU/scheduling tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
+	if tcpStateProg := coll.Programs["tracepoint_tcp_set_state"]; tcpStateProg != nil {
+		tp, err := link.Tracepoint("tcp", "tcp_set_state", tcpStateProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: TCP state tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
+	if pageFaultProg := coll.Programs["tracepoint_page_fault_user"]; pageFaultProg != nil {
+		tp, err := link.Tracepoint("exceptions", "page_fault_user", pageFaultProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: Page fault tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
+	if oomKillProg := coll.Programs["tracepoint_oom_kill_process"]; oomKillProg != nil {
+		tp, err := link.Tracepoint("oom", "oom_kill_process", oomKillProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: OOM kill tracking unavailable: %v\n", err)
 			}
 		} else {
 			links = append(links, tp)

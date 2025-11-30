@@ -90,7 +90,6 @@ func (d *Diagnostician) GenerateReport() string {
 		report += "\n"
 	}
 
-	// TCP RTT statistics
 	tcpSendEvents := d.filterEvents(events.EventTCPSend)
 	tcpRecvEvents := d.filterEvents(events.EventTCPRecv)
 	if len(tcpSendEvents) > 0 || len(tcpRecvEvents) > 0 {
@@ -100,12 +99,18 @@ func (d *Diagnostician) GenerateReport() string {
 
 		allTCP := append(tcpSendEvents, tcpRecvEvents...)
 		if len(allTCP) > 0 {
-			avgRTT, maxRTT, spikes, p50, p95, p99, errors := d.analyzeTCP(allTCP)
+			avgRTT, maxRTT, spikes, p50, p95, p99, errors, totalBytes, avgBytes, peakBytes := d.analyzeTCP(allTCP)
 			report += fmt.Sprintf("  Average RTT: %.2fms\n", avgRTT)
 			report += fmt.Sprintf("  Max RTT: %.2fms\n", maxRTT)
 			report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
 			report += fmt.Sprintf("  RTT spikes (>100ms): %d\n", spikes)
 			report += fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(allTCP)))
+			if totalBytes > 0 {
+				report += fmt.Sprintf("  Total bytes transferred: %s\n", formatBytes(totalBytes))
+				report += fmt.Sprintf("  Average bytes per operation: %s\n", formatBytes(avgBytes))
+				report += fmt.Sprintf("  Peak bytes per operation: %s\n", formatBytes(peakBytes))
+				report += fmt.Sprintf("  Average throughput: %s/sec\n", formatBytes(uint64(float64(totalBytes)/duration.Seconds())))
+			}
 		}
 		report += "\n"
 	}
@@ -138,7 +143,6 @@ func (d *Diagnostician) GenerateReport() string {
 		report += "\n"
 	}
 
-	// File system statistics
 	writeEvents := d.filterEvents(events.EventWrite)
 	readEvents := d.filterEvents(events.EventRead)
 	fsyncEvents := d.filterEvents(events.EventFsync)
@@ -150,14 +154,18 @@ func (d *Diagnostician) GenerateReport() string {
 
 		allFS := append(append(writeEvents, readEvents...), fsyncEvents...)
 		if len(allFS) > 0 {
-			avgLatency, maxLatency, slowOps, p50, p95, p99 := d.analyzeFS(allFS)
+			avgLatency, maxLatency, slowOps, p50, p95, p99, totalBytes, avgBytes := d.analyzeFS(allFS)
 			report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
 			report += fmt.Sprintf("  Max latency: %.2fms\n", maxLatency)
 			report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
 			thresholdMs := d.fsSlowThreshold
 			report += fmt.Sprintf("  Slow operations (>%.1fms): %d\n", thresholdMs, slowOps)
+			if totalBytes > 0 {
+				report += fmt.Sprintf("  Total bytes transferred: %s\n", formatBytes(totalBytes))
+				report += fmt.Sprintf("  Average bytes per operation: %s\n", formatBytes(avgBytes))
+				report += fmt.Sprintf("  Average throughput: %s/sec\n", formatBytes(uint64(float64(totalBytes)/duration.Seconds())))
+			}
 
-			// Top files by operation count
 			fileMap := make(map[string]int)
 			for _, e := range allFS {
 				if e.Target != "" && e.Target != "?" && e.Target != "unknown" && e.Target != "file" {
@@ -188,7 +196,121 @@ func (d *Diagnostician) GenerateReport() string {
 		report += "\n"
 	}
 
-	// CPU statistics
+	udpSendEvents := d.filterEvents(events.EventUDPSend)
+	udpRecvEvents := d.filterEvents(events.EventUDPRecv)
+	if len(udpSendEvents) > 0 || len(udpRecvEvents) > 0 {
+		report += fmt.Sprintf("UDP Statistics:\n")
+		report += fmt.Sprintf("  Send operations: %d (%.1f/sec)\n", len(udpSendEvents), float64(len(udpSendEvents))/duration.Seconds())
+		report += fmt.Sprintf("  Receive operations: %d (%.1f/sec)\n", len(udpRecvEvents), float64(len(udpRecvEvents))/duration.Seconds())
+
+		allUDP := append(udpSendEvents, udpRecvEvents...)
+		if len(allUDP) > 0 {
+			var totalBytes, avgBytes, peakBytes uint64
+			var totalLatency float64
+			var latencies []float64
+			errors := 0
+			for _, e := range allUDP {
+				latencyMs := float64(e.LatencyNS) / 1e6
+				latencies = append(latencies, latencyMs)
+				totalLatency += latencyMs
+				if e.Error < 0 {
+					errors++
+				}
+				if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+					totalBytes += e.Bytes
+					if e.Bytes > peakBytes {
+						peakBytes = e.Bytes
+					}
+				}
+			}
+			if len(allUDP) > 0 {
+				avgLatency := totalLatency / float64(len(allUDP))
+				avgBytes = totalBytes / uint64(len(allUDP))
+				sort.Float64s(latencies)
+				p50 := percentile(latencies, 50)
+				p95 := percentile(latencies, 95)
+				p99 := percentile(latencies, 99)
+				report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
+				report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+				report += fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(allUDP)))
+				if totalBytes > 0 {
+					report += fmt.Sprintf("  Total bytes transferred: %s\n", formatBytes(totalBytes))
+					report += fmt.Sprintf("  Average bytes per operation: %s\n", formatBytes(avgBytes))
+					report += fmt.Sprintf("  Peak bytes per operation: %s\n", formatBytes(peakBytes))
+					report += fmt.Sprintf("  Average throughput: %s/sec\n", formatBytes(uint64(float64(totalBytes)/duration.Seconds())))
+				}
+			}
+		}
+		report += "\n"
+	}
+
+	httpReqEvents := d.filterEvents(events.EventHTTPReq)
+	httpRespEvents := d.filterEvents(events.EventHTTPResp)
+	if len(httpReqEvents) > 0 || len(httpRespEvents) > 0 {
+		report += fmt.Sprintf("HTTP Statistics:\n")
+		report += fmt.Sprintf("  Requests: %d (%.1f/sec)\n", len(httpReqEvents), float64(len(httpReqEvents))/duration.Seconds())
+		report += fmt.Sprintf("  Responses: %d (%.1f/sec)\n", len(httpRespEvents), float64(len(httpRespEvents))/duration.Seconds())
+
+		allHTTP := append(httpReqEvents, httpRespEvents...)
+		if len(allHTTP) > 0 {
+			var totalBytes, avgBytes uint64
+			var totalLatency float64
+			var latencies []float64
+			for _, e := range allHTTP {
+				latencyMs := float64(e.LatencyNS) / 1e6
+				latencies = append(latencies, latencyMs)
+				totalLatency += latencyMs
+				if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+					totalBytes += e.Bytes
+				}
+			}
+			if len(allHTTP) > 0 {
+				avgLatency := totalLatency / float64(len(allHTTP))
+				avgBytes = totalBytes / uint64(len(allHTTP))
+				sort.Float64s(latencies)
+				p50 := percentile(latencies, 50)
+				p95 := percentile(latencies, 95)
+				p99 := percentile(latencies, 99)
+				report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
+				report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+				if totalBytes > 0 {
+					report += fmt.Sprintf("  Total bytes transferred: %s\n", formatBytes(totalBytes))
+					report += fmt.Sprintf("  Average bytes per response: %s\n", formatBytes(avgBytes))
+					report += fmt.Sprintf("  Average throughput: %s/sec\n", formatBytes(uint64(float64(totalBytes)/duration.Seconds())))
+				}
+				if len(httpReqEvents) > 0 {
+					urlMap := make(map[string]int)
+					for _, e := range httpReqEvents {
+						if e.Target != "" {
+							urlMap[e.Target]++
+						}
+					}
+					if len(urlMap) > 0 {
+						type urlCount struct {
+							url   string
+							count int
+						}
+						var urlCounts []urlCount
+						for url, count := range urlMap {
+							urlCounts = append(urlCounts, urlCount{url: url, count: count})
+						}
+						sort.Slice(urlCounts, func(i, j int) bool {
+							return urlCounts[i].count > urlCounts[j].count
+						})
+						report += fmt.Sprintf("  Top requested URLs:\n")
+						for i, uc := range urlCounts {
+							if i >= 5 {
+								break
+							}
+							report += fmt.Sprintf("    - %s (%d requests)\n", uc.url, uc.count)
+						}
+					}
+				}
+			}
+		}
+		report += "\n"
+	}
+
 	schedEvents := d.filterEvents(events.EventSchedSwitch)
 	if len(schedEvents) > 0 {
 		avgBlock, maxBlock, p50, p95, p99 := d.analyzeCPU(schedEvents)
@@ -200,7 +322,82 @@ func (d *Diagnostician) GenerateReport() string {
 		report += "\n"
 	}
 
-	// CPU Usage by Process
+	tcpStateEvents := d.filterEvents(events.EventTCPState)
+	if len(tcpStateEvents) > 0 {
+		report += fmt.Sprintf("TCP Connection State Tracking:\n")
+		report += fmt.Sprintf("  State changes: %d (%.1f/sec)\n", len(tcpStateEvents), float64(len(tcpStateEvents))/duration.Seconds())
+		stateCounts := make(map[string]int)
+		for _, e := range tcpStateEvents {
+			stateStr := events.TCPStateString(e.TCPState)
+			stateCounts[stateStr]++
+		}
+		if len(stateCounts) > 0 {
+			report += fmt.Sprintf("  State distribution:\n")
+			type stateInfo struct {
+				state string
+				count int
+			}
+			var states []stateInfo
+			for state, count := range stateCounts {
+				states = append(states, stateInfo{state: state, count: count})
+			}
+			sort.Slice(states, func(i, j int) bool {
+				return states[i].count > states[j].count
+			})
+			for i, s := range states {
+				if i >= 10 {
+					break
+				}
+				report += fmt.Sprintf("    - %s: %d\n", s.state, s.count)
+			}
+		}
+		report += "\n"
+	}
+
+	pageFaultEvents := d.filterEvents(events.EventPageFault)
+	oomKillEvents := d.filterEvents(events.EventOOMKill)
+	if len(pageFaultEvents) > 0 || len(oomKillEvents) > 0 {
+		report += fmt.Sprintf("Memory Statistics:\n")
+		if len(pageFaultEvents) > 0 {
+			report += fmt.Sprintf("  Page faults: %d (%.1f/sec)\n", len(pageFaultEvents), float64(len(pageFaultEvents))/duration.Seconds())
+			errorCounts := make(map[int32]int)
+			for _, e := range pageFaultEvents {
+				errorCounts[e.Error]++
+			}
+			if len(errorCounts) > 0 {
+				report += fmt.Sprintf("  Page fault error codes:\n")
+				for errCode, count := range errorCounts {
+					report += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, count)
+				}
+			}
+		}
+		if len(oomKillEvents) > 0 {
+			report += fmt.Sprintf("  OOM kills: %d\n", len(oomKillEvents))
+			var totalMem uint64
+			for _, e := range oomKillEvents {
+				totalMem += e.Bytes
+			}
+			if len(oomKillEvents) > 0 {
+				report += fmt.Sprintf("  Total memory killed: %s\n", formatBytes(totalMem))
+				if len(oomKillEvents) > 0 {
+					report += fmt.Sprintf("  Average memory per kill: %s\n", formatBytes(totalMem/uint64(len(oomKillEvents))))
+				}
+				report += fmt.Sprintf("  Killed processes:\n")
+				for i, e := range oomKillEvents {
+					if i >= 5 {
+						break
+					}
+					procName := e.Target
+					if procName == "" {
+						procName = fmt.Sprintf("PID %d", e.PID)
+					}
+					report += fmt.Sprintf("    - %s (%s)\n", procName, formatBytes(e.Bytes))
+				}
+			}
+		}
+		report += "\n"
+	}
+
 	report += d.generateCPUUsageReport(duration)
 
 	report += d.generateApplicationTracing(duration)
@@ -275,12 +472,14 @@ func (d *Diagnostician) analyzeDNS(events []*events.Event) (avgLatency, maxLaten
 	return
 }
 
-func (d *Diagnostician) analyzeTCP(events []*events.Event) (avgRTT, maxRTT float64, spikes int, p50, p95, p99 float64, errors int) {
+func (d *Diagnostician) analyzeTCP(events []*events.Event) (avgRTT, maxRTT float64, spikes int, p50, p95, p99 float64, errors int, totalBytes, avgBytes, peakBytes uint64) {
 	var totalRTT float64
 	var rtts []float64
 	maxRTT = 0
 	spikes = 0
 	errors = 0
+	totalBytes = 0
+	peakBytes = 0
 
 	for _, e := range events {
 		rttMs := float64(e.LatencyNS) / 1e6
@@ -295,6 +494,12 @@ func (d *Diagnostician) analyzeTCP(events []*events.Event) (avgRTT, maxRTT float
 		if e.Error < 0 && e.Error != -11 {
 			errors++
 		}
+		if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+			totalBytes += e.Bytes
+			if e.Bytes > peakBytes {
+				peakBytes = e.Bytes
+			}
+		}
 	}
 
 	if len(events) > 0 {
@@ -303,6 +508,9 @@ func (d *Diagnostician) analyzeTCP(events []*events.Event) (avgRTT, maxRTT float
 		p50 = percentile(rtts, 50)
 		p95 = percentile(rtts, 95)
 		p99 = percentile(rtts, 99)
+		if totalBytes > 0 {
+			avgBytes = totalBytes / uint64(len(events))
+		}
 	}
 	return
 }
@@ -349,11 +557,12 @@ func (d *Diagnostician) analyzeConnections(events []*events.Event) (avgLatency, 
 	return
 }
 
-func (d *Diagnostician) analyzeFS(events []*events.Event) (avgLatency, maxLatency float64, slowOps int, p50, p95, p99 float64) {
+func (d *Diagnostician) analyzeFS(events []*events.Event) (avgLatency, maxLatency float64, slowOps int, p50, p95, p99 float64, totalBytes, avgBytes uint64) {
 	var totalLatency float64
 	var latencies []float64
 	maxLatency = 0
 	slowOps = 0
+	totalBytes = 0
 
 	for _, e := range events {
 		latencyMs := float64(e.LatencyNS) / 1e6
@@ -365,6 +574,9 @@ func (d *Diagnostician) analyzeFS(events []*events.Event) (avgLatency, maxLatenc
 		if latencyMs > d.fsSlowThreshold {
 			slowOps++
 		}
+		if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+			totalBytes += e.Bytes
+		}
 	}
 
 	if len(events) > 0 {
@@ -373,6 +585,9 @@ func (d *Diagnostician) analyzeFS(events []*events.Event) (avgLatency, maxLatenc
 		p50 = percentile(latencies, 50)
 		p95 = percentile(latencies, 95)
 		p99 = percentile(latencies, 99)
+		if totalBytes > 0 {
+			avgBytes = totalBytes / uint64(len(events))
+		}
 	}
 	return
 }
@@ -407,6 +622,18 @@ func percentile(sorted []float64, p float64) float64 {
 	}
 	index := int(float64(len(sorted)-1) * p / 100)
 	return sorted[index]
+}
+
+func formatBytes(bytes uint64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.2f KB", float64(bytes)/1024)
+	} else if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/(1024*1024))
+	} else {
+		return fmt.Sprintf("%.2f GB", float64(bytes)/(1024*1024*1024))
+	}
 }
 
 // detectIssues analyzes events and returns a list of potential issues
@@ -768,6 +995,9 @@ func (d *Diagnostician) analyzeConnectionPattern(connectEvents []*events.Event, 
 		windowStart = windowEnd
 	}
 
+	if len(windowCounts) == 0 {
+		return connectionPattern{pattern: "steady"}
+	}
 	var sum, sumSq float64
 	for _, count := range windowCounts {
 		sum += float64(count)
@@ -890,8 +1120,13 @@ func (d *Diagnostician) ExportJSON() ExportData {
 			"p95_ms":          p95,
 			"p99_ms":          p99,
 			"errors":          errors,
-			"error_rate":      float64(errors) * 100 / float64(len(dnsEvents)),
-			"top_targets":     topTargets,
+			"error_rate": func() float64 {
+				if len(dnsEvents) > 0 {
+					return float64(errors) * 100 / float64(len(dnsEvents))
+				}
+				return 0
+			}(),
+			"top_targets": topTargets,
 		}
 	}
 
@@ -899,7 +1134,11 @@ func (d *Diagnostician) ExportJSON() ExportData {
 	tcpRecvEvents := d.filterEvents(events.EventTCPRecv)
 	if len(tcpSendEvents) > 0 || len(tcpRecvEvents) > 0 {
 		allTCP := append(tcpSendEvents, tcpRecvEvents...)
-		avgRTT, maxRTT, spikes, p50, p95, p99, errors := d.analyzeTCP(allTCP)
+		avgRTT, maxRTT, spikes, p50, p95, p99, errors, totalBytes, avgBytes, peakBytes := d.analyzeTCP(allTCP)
+		errorRate := float64(0)
+		if len(allTCP) > 0 {
+			errorRate = float64(errors) * 100 / float64(len(allTCP))
+		}
 		data.TCP = map[string]interface{}{
 			"send_operations":    len(tcpSendEvents),
 			"receive_operations": len(tcpRecvEvents),
@@ -910,7 +1149,10 @@ func (d *Diagnostician) ExportJSON() ExportData {
 			"p99_ms":             p99,
 			"rtt_spikes":         spikes,
 			"errors":             errors,
-			"error_rate":         float64(errors) * 100 / float64(len(allTCP)),
+			"error_rate":         errorRate,
+			"total_bytes":        totalBytes,
+			"avg_bytes":          avgBytes,
+			"peak_bytes":         peakBytes,
 		}
 	}
 
@@ -937,7 +1179,7 @@ func (d *Diagnostician) ExportJSON() ExportData {
 	fsyncEvents := d.filterEvents(events.EventFsync)
 	if len(writeEvents) > 0 || len(readEvents) > 0 || len(fsyncEvents) > 0 {
 		allFS := append(append(writeEvents, readEvents...), fsyncEvents...)
-		avgLatency, maxLatency, slowOps, p50, p95, p99 := d.analyzeFS(allFS)
+		avgLatency, maxLatency, slowOps, p50, p95, p99, totalBytes, avgBytes := d.analyzeFS(allFS)
 		data.FileSystem = map[string]interface{}{
 			"write_operations": len(writeEvents),
 			"read_operations":  len(readEvents),
@@ -948,6 +1190,8 @@ func (d *Diagnostician) ExportJSON() ExportData {
 			"p95_ms":           p95,
 			"p99_ms":           p99,
 			"slow_operations":  slowOps,
+			"total_bytes":      totalBytes,
+			"avg_bytes":        avgBytes,
 		}
 	}
 

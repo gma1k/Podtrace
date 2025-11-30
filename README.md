@@ -4,7 +4,7 @@
   </a>
 </p>
 
-A simple but powerful eBPF-based diagnostic tool for Kubernetes applications.
+A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Provides comprehensive observability including network tracing (TCP/UDP), file system monitoring, memory tracking, HTTP application-layer tracing, and detailed diagnostic reports.
 
 ## Overview
 
@@ -12,17 +12,36 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications.
 
 ## Documentation
 
-`podtrace` documentation is available in the [`doc/`](doc/) directory. See the [documentation index](doc/README.md) for all available guides.
+`podtrace` documentation is available in the [`doc/`](doc/) directory.
 
 ## Features
 
-- **Network Connection Monitoring**: Tracks TCP IPv4/IPv6 connection latency and errors
+### Network Tracing
+- **TCP Connection Monitoring**: Tracks TCP IPv4/IPv6 connection latency and errors
 - **TCP RTT Analysis**: Detects RTT spikes and retry patterns
-- **File System Monitoring**: Tracks read, write, and fsync operations with latency analysis
+- **TCP State Tracking**: Monitors TCP connection state transitions (SYN, ESTABLISHED, FIN, etc.)
+- **UDP Network Tracing**: Tracks UDP send/receive operations with latency and bandwidth metrics
+- **I/O Bandwidth Tracking**: Monitors bytes transferred for TCP/UDP send/receive operations
+
+### File System Monitoring
+- **File Operations**: Tracks read, write, and fsync operations with latency analysis
+- **I/O Bandwidth**: Monitors bytes transferred for file read/write operations
+- **Throughput Analysis**: Calculates average throughput and peak transfer rates
+
+### Memory & System Events
+- **Page Fault Tracking**: Monitors page faults with error code analysis
+- **OOM Kill Detection**: Tracks out-of-memory kills with memory usage details
+
+### Application Layer
+- **HTTP Tracing**: Framework for HTTP request/response tracking via uprobes (requires per-application configuration)
+- **DNS Tracking**: Monitors DNS lookups with latency and error tracking
+
+### System Monitoring
 - **CPU/Scheduling Tracking**: Monitors thread blocking and CPU scheduling events
-- **DNS Tracking**: Monitors DNS lookups
 - **CPU Usage per Process**: Shows CPU consumption by process
 - **Process Activity Analysis**: Shows which processes are generating events
+
+### Diagnostics
 - **Diagnose Mode**: Collects events for a specified duration and generates a comprehensive summary report
 
 ## Prerequisites
@@ -62,9 +81,13 @@ The diagnose mode generates a comprehensive report including:
 
 - **Summary Statistics**: Total events, events per second, collection period
 - **DNS Statistics**: DNS lookup latency, errors, top targets
-- **TCP Statistics**: RTT analysis, spikes detection, send/receive operations
+- **TCP Statistics**: RTT analysis, spikes detection, send/receive operations, bandwidth metrics (total bytes, average bytes, peak bytes, throughput)
+- **UDP Statistics**: Send/receive operations, latency analysis, bandwidth metrics, error tracking
 - **Connection Statistics**: IPv4/IPv6 connection latency, failures, error breakdown, top targets
-- **File System Statistics**: Read, write, and fsync operation latency, slow operations
+- **TCP Connection State Tracking**: State transition analysis, state distribution, connection lifecycle monitoring
+- **File System Statistics**: Read, write, and fsync operation latency, slow operations, bandwidth metrics (total bytes, average bytes, throughput)
+- **HTTP Statistics**: Request/response counts, latency analysis, bandwidth metrics, top requested URLs
+- **Memory Statistics**: Page fault counts and error codes, OOM kill tracking with memory usage details
 - **CPU Statistics**: Thread blocking times and scheduling events
 - **CPU Usage by Process**: CPU percentage per process
 - **Process Activity**: Top active processes by event count
@@ -87,7 +110,7 @@ sudo ./scripts/setup-capabilities.sh
 
 ## Podtrace Prometheus & Grafana Integration
 
-`podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking, DNS, CPU scheduling, and file system operations, all labeled per process and event type.
+`podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking (TCP/UDP), DNS, CPU scheduling, file system operations, memory events, and HTTP tracing, all labeled per process and event type.
 
 ---
 
