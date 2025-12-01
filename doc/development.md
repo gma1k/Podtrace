@@ -5,14 +5,31 @@
 ```
 podtrace/
 ├── bpf/                    # eBPF source code
-│   ├── podtrace.bpf.c      # Main eBPF program
+│   ├── common.h            # Common definitions and includes
+│   ├── maps.h              # BPF map definitions
+│   ├── events.h            # Event types and structures
+│   ├── helpers.h           # Helper functions
+│   ├── network.c           # Network probes (TCP, UDP, DNS, HTTP)
+│   ├── filesystem.c        # Filesystem probes
+│   ├── cpu.c               # CPU/scheduling probes
+│   ├── memory.c            # Memory probes
+│   ├── podtrace.bpf.c      # Main eBPF program (includes all modules)
 │   └── vmlinux.h           # Kernel types
 ├── cmd/
 │   └── podtrace/
 │       └── main.go         # Application entry point
 ├── internal/
 │   ├── diagnose/           # Diagnostic analysis
+│   │   ├── analyzer/       # Analysis functions (DNS, network, FS, CPU)
+│   │   ├── detector/       # Issue detection
+│   │   ├── profiling/      # CPU profiling and timeline analysis
+│   │   ├── tracker/        # Connection and process tracking
+│   │   └── diagnose.go     # Main Diagnostician struct
 │   ├── ebpf/               # eBPF integration
+│   │   ├── filter/         # Cgroup filtering
+│   │   ├── parser/         # Event parsing
+│   │   ├── probes/         # Probe attachment
+│   │   └── tracer.go       # Main Tracer struct
 │   ├── events/             # Event types and formatting
 │   ├── kubernetes/         # K8s pod resolution
 │   ├── metricsexporter/    # Prometheus metrics
@@ -57,10 +74,15 @@ make clean
 
 ### eBPF Layer (`bpf/`)
 
-- **podtrace.bpf.c**: Main eBPF program
-  - Defines maps (ring buffer, hash maps)
-  - Implements probe handlers
-  - Formats event data
+- **podtrace.bpf.c**: Main eBPF program (includes all modules)
+- **common.h**: Common definitions, constants, includes
+- **maps.h**: All BPF map definitions
+- **events.h**: Event type definitions and structures
+- **helpers.h**: Helper functions (get_key, calc_latency, format_ip, etc.)
+- **network.c**: Network probes (TCP, UDP, DNS, HTTP, connections)
+- **filesystem.c**: Filesystem probes (read, write, fsync)
+- **cpu.c**: CPU/scheduling probes (sched_switch)
+- **memory.c**: Memory probes (page_fault, oom_kill)
 
 ### Application Layer (`cmd/` and `internal/`)
 
@@ -71,7 +93,10 @@ make clean
 
 - **ebpf/**: eBPF integration
   - `loader.go`: Loads eBPF object file
-  - `tracer.go`: Manages eBPF programs and event collection
+  - `tracer.go`: Main Tracer struct managing eBPF programs and event collection
+  - `filter/`: Cgroup filtering logic
+  - `parser/`: Event parsing from ring buffer
+  - `probes/`: Probe attachment logic
 
 - **events/**: Event handling
   - Event type definitions
@@ -83,9 +108,11 @@ make clean
   - Cgroup path finding
 
 - **diagnose/**: Diagnostic analysis
-  - Event collection and analysis
-  - Report generation
-  - Statistics calculation
+  - `diagnose.go`: Main Diagnostician struct and orchestration
+  - `analyzer/`: Analysis functions (DNS, network, filesystem, CPU)
+  - `detector/`: Issue detection logic
+  - `profiling/`: CPU profiling and timeline analysis
+  - `tracker/`: Connection and process tracking
 
 - **metricsexporter/**: Metrics
   - Prometheus metric definitions
@@ -125,7 +152,7 @@ int kretprobe_new_function(struct pt_regs *ctx) {
 
 ### 3. Register Probe
 
-In `internal/ebpf/tracer.go`, add to `attachProbes()`:
+In `internal/ebpf/probes/probes.go`, add to `AttachProbes()`:
 
 ```go
 probes := map[string]string{

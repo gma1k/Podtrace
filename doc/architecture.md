@@ -11,7 +11,7 @@ Podtrace is an eBPF-based diagnostic tool for Kubernetes applications. It uses k
 │                    Kubernetes Cluster                        │
 │                                                              │
 │  ┌──────────────┐         ┌──────────────────────────┐       │
-│  │   Podtrace   │────────▶│   Target Pod Container  │       │
+│  │   Podtrace   │────────▶│   Target Pod Container   │       │
 │  │   (User)     │         │                          │       │
 │  └──────┬───────┘         └──────────────────────────┘       │
 │         │                                                    │
@@ -52,9 +52,19 @@ Podtrace is an eBPF-based diagnostic tool for Kubernetes applications. It uses k
 
 ## Components
 
-### 1. eBPF Programs (`bpf/podtrace.bpf.c`)
+### 1. eBPF Programs (`bpf/`)
 
-The eBPF programs run in the kernel and trace system calls and kernel events:
+The eBPF programs run in the kernel and trace system calls and kernel events. The code is organized into modular files:
+
+- **podtrace.bpf.c**: Main file that includes all modules
+- **common.h**: Common definitions and includes
+- **maps.h**: BPF map definitions
+- **events.h**: Event types and structures
+- **helpers.h**: Helper functions
+- **network.c**: Network probes (TCP, UDP, DNS, HTTP)
+- **filesystem.c**: Filesystem probes
+- **cpu.c**: CPU/scheduling probes
+- **memory.c**: Memory probes
 
 - **Kprobes**: Attach to kernel functions
   - `tcp_v4_connect` / `tcp_v6_connect` - Network connections
@@ -69,12 +79,22 @@ The eBPF programs run in the kernel and trace system calls and kernel events:
 
 ### 2. Event Collection (`internal/ebpf/`)
 
-- **Tracer**: Manages eBPF program lifecycle
+- **Tracer**: Main struct managing eBPF program lifecycle
   - Loads and attaches eBPF programs
   - Reads events from ring buffer
-  - Filters events by cgroup
+  - Coordinates filtering and parsing
 
 - **Loader**: Loads compiled eBPF object file
+
+- **probes/**: Probe attachment logic
+  - Attaches kprobes, kretprobes, tracepoints, uprobes
+
+- **parser/**: Event parsing
+  - Parses events from ring buffer into Go structs
+
+- **filter/**: Cgroup filtering
+  - Filters events by cgroup path
+  - Caches PID-to-cgroup mappings
 
 ### 3. Kubernetes Integration (`internal/kubernetes/`)
 
@@ -90,11 +110,25 @@ The eBPF programs run in the kernel and trace system calls and kernel events:
 
 ### 5. Diagnostics (`internal/diagnose/`)
 
-- **Diagnostician**: Analyzes collected events
+- **Diagnostician**: Main struct that orchestrates diagnostic analysis
   - Generates comprehensive reports
-  - Calculates statistics (latency, percentiles, error rates)
-  - Detects performance issues
-  - Tracks process activity and CPU usage
+  - Coordinates analysis across modules
+
+- **analyzer/**: Analysis functions
+  - DNS, network, filesystem, CPU analysis
+  - Statistics calculation (latency, percentiles, error rates)
+
+- **detector/**: Issue detection
+  - Detects performance issues and anomalies
+
+- **profiling/**: Profiling and timeline analysis
+  - CPU usage profiling
+  - Timeline and burst detection
+  - Connection pattern analysis
+
+- **tracker/**: Tracking functionality
+  - Connection tracking
+  - Process activity tracking
 
 ### 6. Metrics Export (`internal/metricsexporter/`)
 

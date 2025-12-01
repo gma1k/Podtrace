@@ -1,4 +1,4 @@
-package diagnose
+package tracker
 
 import (
 	"fmt"
@@ -105,9 +105,9 @@ type ConnectionSummary struct {
 	LastActivity time.Time
 }
 
-func (d *Diagnostician) generateConnectionCorrelation() string {
+func GenerateConnectionCorrelation(events []*events.Event) string {
 	tracker := NewConnectionTracker()
-	for _, event := range d.events {
+	for _, event := range events {
 		tracker.ProcessEvent(event)
 	}
 
@@ -133,4 +133,3 @@ func (d *Diagnostician) generateConnectionCorrelation() string {
 	report += "\n"
 	return report
 }
-

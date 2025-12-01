@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: GPL-2.0
+
+#ifndef PODTRACE_EVENTS_H
+#define PODTRACE_EVENTS_H
+
+#include "common.h"
+
+enum event_type {
+	EVENT_DNS,
+	EVENT_CONNECT,
+	EVENT_TCP_SEND,
+	EVENT_TCP_RECV,
+	EVENT_WRITE,
+	EVENT_READ,
+	EVENT_FSYNC,
+	EVENT_SCHED_SWITCH,
+	EVENT_TCP_STATE,
+	EVENT_PAGE_FAULT,
+	EVENT_OOM_KILL,
+	EVENT_UDP_SEND,
+	EVENT_UDP_RECV,
+	EVENT_HTTP_REQ,
+	EVENT_HTTP_RESP,
+};
+
+struct event {
+	u64 timestamp;
+	u32 pid;
+	u32 type;
+	u64 latency_ns;
+	s32 error;
+	u64 bytes;
+	u32 tcp_state;
+	char target[MAX_STRING_LEN];
+	char details[MAX_STRING_LEN];
+};
+
+#endif
