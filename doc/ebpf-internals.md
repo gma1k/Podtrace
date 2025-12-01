@@ -160,6 +160,14 @@ clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v3 \
       -Ibpf -I. -c bpf/podtrace.bpf.c -o bpf/podtrace.bpf.o
 ```
 
+Note: The eBPF code is now modular. `podtrace.bpf.c` includes all modules:
+- `network.c` - Network probes
+- `filesystem.c` - Filesystem probes
+- `cpu.c` - CPU/scheduling probes
+- `memory.c` - Memory probes
+
+The header files (`common.h`, `maps.h`, `events.h`, `helpers.h`) provide shared definitions.
+
 Flags:
 - `-O2`: Optimize for performance
 - `-g`: Include debug information

@@ -4,7 +4,7 @@ CLANG ?= clang
 LLC ?= llc
 # Prefer /usr/local/go/bin/go if available (newer Go versions), otherwise use system go
 GO ?= $(shell if [ -f /usr/local/go/bin/go ]; then echo /usr/local/go/bin/go; else echo go; fi)
-BPF_SRC = bpf/podtrace.bpf.c
+BPF_SRC = bpf/podtrace.bpf.c bpf/network.c bpf/filesystem.c bpf/cpu.c bpf/memory.c
 BPF_OBJ = bpf/podtrace.bpf.o
 BINARY = bin/podtrace
 
@@ -35,9 +35,9 @@ check-go:
 		exit 1; \
 	fi
 
-$(BPF_OBJ): $(BPF_SRC)
+$(BPF_OBJ): bpf/podtrace.bpf.c bpf/*.h bpf/network.c bpf/filesystem.c bpf/cpu.c bpf/memory.c
 	@mkdir -p $(dir $(BPF_OBJ))
-	$(CLANG) $(BPF_CFLAGS) -Ibpf -I. -c $(BPF_SRC) -o $(BPF_OBJ)
+	$(CLANG) $(BPF_CFLAGS) -Ibpf -I. -c bpf/podtrace.bpf.c -o $(BPF_OBJ)
 
 build: $(BPF_OBJ)
 	@mkdir -p bin
