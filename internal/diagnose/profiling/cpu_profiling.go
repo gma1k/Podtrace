@@ -7,14 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"github.com/podtrace/podtrace/internal/events"
+
 	"github.com/podtrace/podtrace/internal/diagnose/tracker"
+	"github.com/podtrace/podtrace/internal/events"
 )
 
 func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) string {
 	pidActivity := tracker.AnalyzeProcessActivity(events)
 	if len(pidActivity) == 0 {
-		return generateCPUUsageFromProc(duration)
+		return GenerateCPUUsageFromProc(duration)
 	}
 
 	var report string
@@ -53,7 +54,7 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 			cpuPercent: cpuInfo.cpuPercent,
 			cpuTimeSec: cpuInfo.cpuTimeSec,
 		}
-		if isKernelThread(pid, cpuInfo.name) {
+		if IsKernelThread(pid, cpuInfo.name) {
 			kernelProcesses = append(kernelProcesses, info)
 		} else {
 			podProcesses = append(podProcesses, info)
@@ -110,10 +111,10 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 }
 
 type cpuTimeInfo struct {
-	totalNS   uint64
+	totalNS    uint64
 	cpuPercent float64
 	cpuTimeSec float64
-	name      string
+	name       string
 }
 
 func getProcessCPUTime(pid uint32) cpuTimeInfo {
@@ -152,7 +153,7 @@ func getProcessCPUTime(pid uint32) cpuTimeInfo {
 	return cpuTimeInfo{totalNS: totalNS}
 }
 
-func isKernelThread(pid uint32, name string) bool {
+func IsKernelThread(pid uint32, name string) bool {
 
 	kernelPrefixes := []string{
 		"kworker",
@@ -185,7 +186,7 @@ func isKernelThread(pid uint32, name string) bool {
 	return false
 }
 
-func generateCPUUsageFromProc(duration time.Duration) string {
+func GenerateCPUUsageFromProc(duration time.Duration) string {
 	var report string
 	report += fmt.Sprintf("CPU Usage by Process:\n")
 	report += fmt.Sprintf("  No CPU events collected during diagnostic period.\n")

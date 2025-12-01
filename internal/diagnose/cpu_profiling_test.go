@@ -5,38 +5,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/podtrace/podtrace/internal/diagnose/profiling"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
 func TestGenerateCPUUsageReport(t *testing.T) {
-	d := NewDiagnostician()
 	duration := 10 * time.Second
 
-	report := d.generateCPUUsageReport(duration)
+	var testEvents []*events.Event
+	report := profiling.GenerateCPUUsageReport(testEvents, duration)
 	if report == "" {
-		t.Error("generateCPUUsageReport should return a report even with no events")
+		t.Error("GenerateCPUUsageReport should return a report even with no events")
 	}
 	if !contains(report, "CPU Usage by Process") {
 		t.Error("Report should contain 'CPU Usage by Process'")
 	}
 
-	d.AddEvent(&events.Event{
-		PID:         1,
-		ProcessName: "init",
-		Type:        events.EventDNS,
-		Timestamp:   uint64(time.Now().UnixNano()),
-	})
-
-	d.AddEvent(&events.Event{
-		PID:         1,
-		ProcessName: "init",
-		Type:        events.EventConnect,
-		Timestamp:   uint64(time.Now().UnixNano()),
-	})
+	testEvents = []*events.Event{
+		{
+			PID:         1,
+			ProcessName: "init",
+			Type:        events.EventDNS,
+			Timestamp:   uint64(time.Now().UnixNano()),
+		},
+		{
+			PID:         1,
+			ProcessName: "init",
+			Type:        events.EventConnect,
+			Timestamp:   uint64(time.Now().UnixNano()),
+		},
+	}
 
 	selfPID := uint32(os.Getpid())
 	if selfPID > 1 {
-		d.AddEvent(&events.Event{
+		testEvents = append(testEvents, &events.Event{
 			PID:         selfPID,
 			ProcessName: "test-process",
 			Type:        events.EventTCPSend,
@@ -44,7 +46,7 @@ func TestGenerateCPUUsageReport(t *testing.T) {
 		})
 	}
 
-	report = d.generateCPUUsageReport(duration)
+	report = profiling.GenerateCPUUsageReport(testEvents, duration)
 	if !contains(report, "CPU Usage by Process") {
 		t.Error("Report should contain 'CPU Usage by Process'")
 	}
@@ -74,21 +76,20 @@ func TestIsKernelThread(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := isKernelThread(tt.pid, tt.name)
+		result := profiling.IsKernelThread(tt.pid, tt.name)
 		if result != tt.expected {
-			t.Errorf("isKernelThread(%d, %s) = %v, expected %v",
+			t.Errorf("IsKernelThread(%d, %s) = %v, expected %v",
 				tt.pid, tt.name, result, tt.expected)
 		}
 	}
 }
 
 func TestGenerateCPUUsageFromProc(t *testing.T) {
-	d := NewDiagnostician()
 	duration := 10 * time.Second
 
-	report := d.generateCPUUsageFromProc(duration)
+	report := profiling.GenerateCPUUsageFromProc(duration)
 	if report == "" {
-		t.Error("generateCPUUsageFromProc should return a report")
+		t.Error("GenerateCPUUsageFromProc should return a report")
 	}
 	if !contains(report, "CPU Usage by Process") {
 		t.Error("Report should contain 'CPU Usage by Process'")
@@ -99,24 +100,24 @@ func TestGenerateCPUUsageFromProc(t *testing.T) {
 }
 
 func TestCPUUsageReportWithKernelThreads(t *testing.T) {
-	d := NewDiagnostician()
 	duration := 10 * time.Second
 
-	d.AddEvent(&events.Event{
-		PID:         1,
-		ProcessName: "init",
-		Type:        events.EventDNS,
-		Timestamp:   uint64(time.Now().UnixNano()),
-	})
+	testEvents := []*events.Event{
+		{
+			PID:         1,
+			ProcessName: "init",
+			Type:        events.EventDNS,
+			Timestamp:   uint64(time.Now().UnixNano()),
+		},
+		{
+			PID:         2,
+			ProcessName: "kthreadd",
+			Type:        events.EventSchedSwitch,
+			Timestamp:   uint64(time.Now().UnixNano()),
+		},
+	}
 
-	d.AddEvent(&events.Event{
-		PID:         2,
-		ProcessName: "kthreadd",
-		Type:        events.EventSchedSwitch,
-		Timestamp:   uint64(time.Now().UnixNano()),
-	})
-
-	report := d.generateCPUUsageReport(duration)
+	report := profiling.GenerateCPUUsageReport(testEvents, duration)
 	if !contains(report, "CPU Usage by Process") {
 		t.Error("Report should contain 'CPU Usage by Process'")
 	}
