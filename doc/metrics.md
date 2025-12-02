@@ -6,15 +6,21 @@ Podtrace exposes Prometheus metrics for integration with monitoring systems like
 
 ## Enabling Metrics
 
-Metrics are automatically enabled when you run podtrace. The metrics server starts on `127.0.0.1:3000`.
+Metrics are enabled when you run podtrace with the `--metrics` flag. By default, the metrics server starts on `127.0.0.1:3000`.
 
 ```bash
-./bin/podtrace -n production my-pod
+./bin/podtrace -n production my-pod --metrics
 ```
 
-Access metrics at:
+Access metrics at (default address):
 ```
 http://localhost:3000/metrics
+
+To change the bind address and port, set the `PODTRACE_METRICS_ADDR` environment variable before running podtrace, for example:
+
+```bash
+PODTRACE_METRICS_ADDR="0.0.0.0:3000" ./bin/podtrace -n production my-pod --metrics
+```
 ```
 
 ## Available Metrics

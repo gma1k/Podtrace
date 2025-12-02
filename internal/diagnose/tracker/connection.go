@@ -9,10 +9,10 @@ import (
 )
 
 type ConnectionInfo struct {
-	Target      string
-	ConnectTime time.Time
-	SendCount   int
-	RecvCount   int
+	Target       string
+	ConnectTime  time.Time
+	SendCount    int
+	RecvCount    int
 	TotalLatency time.Duration
 	LastActivity time.Time
 }
@@ -36,8 +36,8 @@ func (ct *ConnectionTracker) ProcessEvent(event *events.Event) {
 	case events.EventConnect:
 		if event.Error == 0 && event.Target != "" {
 			conn := &ConnectionInfo{
-				Target:      event.Target,
-				ConnectTime: event.TimestampTime(),
+				Target:       event.Target,
+				ConnectTime:  event.TimestampTime(),
 				LastActivity: event.TimestampTime(),
 			}
 			ct.connections[event.Target] = conn
@@ -55,8 +55,8 @@ func (ct *ConnectionTracker) ProcessEvent(event *events.Event) {
 				conn.LastActivity = event.TimestampTime()
 			} else {
 				conn := &ConnectionInfo{
-					Target:      event.Target,
-					ConnectTime: event.TimestampTime(),
+					Target:       event.Target,
+					ConnectTime:  event.TimestampTime(),
 					LastActivity: event.TimestampTime(),
 				}
 				if event.Type == events.EventTCPSend {
@@ -80,12 +80,12 @@ func (ct *ConnectionTracker) GetConnectionSummary() []ConnectionSummary {
 			avgLatency = conn.TotalLatency / time.Duration(totalOps)
 		}
 		summaries = append(summaries, ConnectionSummary{
-			Target:      target,
-			ConnectTime: conn.ConnectTime,
-			SendCount:   conn.SendCount,
-			RecvCount:   conn.RecvCount,
-			TotalOps:    totalOps,
-			AvgLatency:  avgLatency,
+			Target:       target,
+			ConnectTime:  conn.ConnectTime,
+			SendCount:    conn.SendCount,
+			RecvCount:    conn.RecvCount,
+			TotalOps:     totalOps,
+			AvgLatency:   avgLatency,
 			LastActivity: conn.LastActivity,
 		})
 	}
@@ -116,10 +116,9 @@ func GenerateConnectionCorrelation(events []*events.Event) string {
 		return ""
 	}
 
-	var report string
-	report += "Connection Correlation:\n"
+	report := "Connection Correlation:\n"
 	report += fmt.Sprintf("  Active connections: %d\n", len(summaries))
-	report += fmt.Sprintf("  Top connections by activity:\n")
+	report += "  Top connections by activity:\n"
 	for i, summary := range summaries {
 		if i >= 10 {
 			break

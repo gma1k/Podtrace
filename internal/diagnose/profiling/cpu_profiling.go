@@ -18,8 +18,7 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 		return GenerateCPUUsageFromProc(duration)
 	}
 
-	var report string
-	report += fmt.Sprintf("CPU Usage by Process:\n")
+	report := "CPU Usage by Process:\n"
 
 	durationSec := duration.Seconds()
 	totalCPUPercent := 0.0
@@ -70,7 +69,7 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 
 	podCPUPercent := 0.0
 	if len(podProcesses) > 0 {
-		report += fmt.Sprintf("  Pod Processes:\n")
+		report += "  Pod Processes:\n"
 		for i, info := range podProcesses {
 			if i >= 10 {
 				break
@@ -84,7 +83,7 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 
 	if len(kernelProcesses) > 0 {
 		kernelCPUPercent := 0.0
-		report += fmt.Sprintf("  System/Kernel Processes:\n")
+		report += "  System/Kernel Processes:\n"
 		for i, info := range kernelProcesses {
 			if i >= 5 {
 				break
@@ -93,8 +92,8 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 				info.pid, info.name, info.cpuPercent, info.cpuTimeSec, durationSec)
 			kernelCPUPercent += info.cpuPercent
 		}
-		if len(kernelProcesses) > 5 {
-			report += fmt.Sprintf("    ... and %d more system processes\n", len(kernelProcesses)-5)
+		if extra := len(kernelProcesses) - 5; extra > 0 {
+			report += fmt.Sprintf("    ... and %d more system processes\n", extra)
 		}
 		report += "\n"
 		totalCPUPercent = podCPUPercent + kernelCPUPercent
@@ -187,16 +186,15 @@ func IsKernelThread(pid uint32, name string) bool {
 }
 
 func GenerateCPUUsageFromProc(duration time.Duration) string {
-	var report string
-	report += fmt.Sprintf("CPU Usage by Process:\n")
-	report += fmt.Sprintf("  No CPU events collected during diagnostic period.\n")
-	report += fmt.Sprintf("  This may indicate:\n")
-	report += fmt.Sprintf("    - Pod is idle or sleeping\n")
-	report += fmt.Sprintf("    - eBPF probes not attached correctly\n")
-	report += fmt.Sprintf("    - No processes matching cgroup filter\n")
-	report += fmt.Sprintf("  Try:\n")
-	report += fmt.Sprintf("    - Longer duration: --diagnose 30s\n")
-	report += fmt.Sprintf("    - Check pod is active: kubectl logs <pod-name>\n")
-	report += fmt.Sprintf("    - Verify eBPF attachment (check stderr output)\n\n")
+	report := "CPU Usage by Process:\n"
+	report += "  No CPU events collected during diagnostic period.\n"
+	report += "  This may indicate:\n"
+	report += "    - Pod is idle or sleeping\n"
+	report += "    - eBPF probes not attached correctly\n"
+	report += "    - No processes matching cgroup filter\n"
+	report += "  Try:\n"
+	report += "    - Longer duration: --diagnose 30s\n"
+	report += "    - Check pod is active: kubectl logs <pod-name>\n"
+	report += "    - Verify eBPF attachment (check stderr output)\n\n"
 	return report
 }

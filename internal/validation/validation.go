@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -127,4 +128,35 @@ func SanitizeCSVField(field string) string {
 		return "\"" + field + "\""
 	}
 	return field
+}
+
+func ValidateErrorRateThreshold(value float64) error {
+	if value < 0 || value > 100 {
+		return fmt.Errorf("error threshold must be between 0 and 100")
+	}
+	return nil
+}
+
+func ValidateRTTThreshold(value float64) error {
+	if value < 0 {
+		return fmt.Errorf("RTT threshold must be non-negative")
+	}
+	return nil
+}
+
+func ValidateFSThreshold(value float64) error {
+	if value < 0 {
+		return fmt.Errorf("file system threshold must be non-negative")
+	}
+	return nil
+}
+
+func ValidateDiagnoseDuration(duration time.Duration) error {
+	if duration <= 0 {
+		return fmt.Errorf("duration must be positive")
+	}
+	if duration > 24*time.Hour {
+		return fmt.Errorf("duration cannot exceed 24 hours")
+	}
+	return nil
 }

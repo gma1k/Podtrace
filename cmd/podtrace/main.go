@@ -85,6 +85,16 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid event filter: %w", err)
 	}
 
+	if err := validation.ValidateErrorRateThreshold(errorRateThreshold); err != nil {
+		return fmt.Errorf("invalid error threshold: %w", err)
+	}
+	if err := validation.ValidateRTTThreshold(rttSpikeThreshold); err != nil {
+		return fmt.Errorf("invalid RTT threshold: %w", err)
+	}
+	if err := validation.ValidateFSThreshold(fsSlowThreshold); err != nil {
+		return fmt.Errorf("invalid file system threshold: %w", err)
+	}
+
 	resolver, err := kubernetes.NewPodResolver()
 	if err != nil {
 		return fmt.Errorf("failed to create pod resolver: %w", err)
@@ -187,12 +197,8 @@ func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupP
 		return fmt.Errorf("invalid duration: %w", err)
 	}
 
-	if duration <= 0 {
-		return fmt.Errorf("duration must be positive")
-	}
-
-	if duration > 24*time.Hour {
-		return fmt.Errorf("duration cannot exceed 24 hours")
+	if err := validation.ValidateDiagnoseDuration(duration); err != nil {
+		return err
 	}
 
 	fmt.Printf("Running diagnose mode for %v...\n\n", duration)

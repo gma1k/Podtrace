@@ -221,8 +221,13 @@ func StartServer() *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", securityHeadersMiddleware(rateLimitMiddleware(promhttp.Handler())))
 
+	addr := os.Getenv("PODTRACE_METRICS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:3000"
+	}
+
 	server := &http.Server{
-		Addr:         "127.0.0.1:3000",
+		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
