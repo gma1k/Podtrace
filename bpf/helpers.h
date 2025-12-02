@@ -4,6 +4,7 @@
 #define PODTRACE_HELPERS_H
 
 #include "common.h"
+#include "maps.h"
 
 static inline u64 get_key(u32 pid, u32 tid) {
 	return ((u64)pid << 32) | tid;
@@ -77,6 +78,42 @@ static inline void format_ipv6_port(const u8 *ipv6, u16 port, char *buf) {
 		buf[idx++] = '0' + p % 10;
 	}
 	buf[idx] = '\0';
+}
+
+static inline u64 build_stack_key(u32 pid, u32 tid, u64 timestamp) {
+	u64 base = ((u64)pid << 32) | tid;
+	return base ^ timestamp;
+}
+
+static inline struct event *get_event_buf(void) {
+	u32 zero = 0;
+	struct event *e = bpf_map_lookup_elem(&event_buf, &zero);
+	if (e) {
+		__builtin_memset(e, 0, sizeof(*e));
+	}
+	return e;
+}
+
+static inline void capture_user_stack(void *ctx, u32 pid, u32 tid, struct event *e) {
+	if (!e) {
+		return;
+	}
+	u32 zero = 0;
+	struct stack_trace_t *trace = bpf_map_lookup_elem(&stack_buf, &zero);
+	if (!trace) {
+		e->stack_key = 0;
+		return;
+	}
+	trace->nr = 0;
+	int sz = bpf_get_stack(ctx, trace->ips, sizeof(trace->ips), BPF_F_USER_STACK);
+	if (sz <= 0) {
+		e->stack_key = 0;
+		return;
+	}
+	trace->nr = sz / sizeof(u64);
+	u64 key = build_stack_key(pid, tid, e->timestamp);
+	bpf_map_update_elem(&stack_traces, &key, trace, BPF_ANY);
+	e->stack_key = key;
 }
 
 #endif

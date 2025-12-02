@@ -20,6 +20,8 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **TCP Connection Monitoring**: Tracks TCP IPv4/IPv6 connection latency and errors
 - **TCP RTT Analysis**: Detects RTT spikes and retry patterns
 - **TCP State Tracking**: Monitors TCP connection state transitions (SYN, ESTABLISHED, FIN, etc.)
+- **TCP Retransmission Tracking**: Detects TCP retransmissions for network quality diagnostics
+- **Network Device Errors**: Monitors network interface errors and packet drops
 - **UDP Network Tracing**: Tracks UDP send/receive operations with latency and bandwidth metrics
 - **I/O Bandwidth Tracking**: Monitors bytes transferred for TCP/UDP send/receive operations
 
@@ -36,11 +38,17 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 ### Application Layer
 - **HTTP Tracing**: Framework for HTTP request/response tracking via uprobes (requires per-application configuration)
 - **DNS Tracking**: Monitors DNS lookups with latency and error tracking
+- **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution with pattern extraction and latency analysis
 
 ### System Monitoring
 - **CPU/Scheduling Tracking**: Monitors thread blocking and CPU scheduling events
 - **CPU Usage per Process**: Shows CPU consumption by process
 - **Process Activity Analysis**: Shows which processes are generating events
+- **Stack Traces for Slow Operations**: Captures user-space stack traces for slow I/O, DNS, CPU blocks, memory faults, and other operations exceeding thresholds
+- **Lock Contention Tracking**: Monitors futex and pthread mutex waits with timing and hot lock identification
+- **Syscall Tracing**: Tracks process lifecycle via execve, fork/clone, open/openat, and close syscalls with file descriptor leak detection
+- **Network Reliability**: Monitors TCP retransmissions and network device errors for network quality diagnostics
+- **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution patterns and latency (query patterns sanitized for security)
 
 ### Diagnostics
 - **Diagnose Mode**: Collects events for a specified duration and generates a comprehensive summary report
@@ -96,6 +104,11 @@ The diagnose mode generates a comprehensive report including:
 - **Activity Bursts**: Detection of burst periods
 - **Connection Patterns**: Analysis of connection behavior
 - **Network I/O Patterns**: Send/receive ratios and throughput analysis
+- **Process and Syscall Activity**: Process execution, fork/clone, file operations, and file descriptor leak detection
+- **Stack Traces for Slow Operations**: User-space stack traces for operations exceeding thresholds with symbol resolution
+- **Lock Contention Analysis**: Futex and pthread mutex wait times and hot lock identification
+- **Network Reliability**: TCP retransmission tracking and network device error monitoring
+- **Database Query Performance**: Query pattern analysis and execution latency (PostgreSQL, MySQL)
 - **Potential Issues**: Automatic detection of high error rates and performance problems
 
 ## Running without sudo

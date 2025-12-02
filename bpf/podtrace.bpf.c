@@ -9,5 +9,6 @@
 #include "filesystem.c"
 #include "cpu.c"
 #include "memory.c"
+#include "syscalls.c"
 
 char LICENSE[] SEC("license") = "GPL";

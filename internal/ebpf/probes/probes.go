@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 )
@@ -30,6 +31,10 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		"kretprobe_vfs_read":       "vfs_read",
 		"kprobe_vfs_fsync":         "vfs_fsync",
 		"kretprobe_vfs_fsync":      "vfs_fsync",
+		"kprobe_do_futex":          "do_futex",
+		"kretprobe_do_futex":       "do_futex",
+		"kprobe_do_sys_openat2":    "do_sys_openat2",
+		"kretprobe_do_sys_openat2": "do_sys_openat2",
 	}
 
 	for progName, symbol := range probes {
@@ -79,6 +84,28 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		}
 	}
 
+	if tcpRetransProg := coll.Programs["tracepoint_tcp_retransmit_skb"]; tcpRetransProg != nil {
+		tp, err := link.Tracepoint("tcp", "tcp_retransmit_skb", tcpRetransProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: TCP retransmission tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
+	if netDevProg := coll.Programs["tracepoint_net_dev_xmit"]; netDevProg != nil {
+		tp, err := link.Tracepoint("net", "net_dev_xmit", netDevProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: network device error tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
 	if pageFaultProg := coll.Programs["tracepoint_page_fault_user"]; pageFaultProg != nil {
 		tp, err := link.Tracepoint("exceptions", "page_fault_user", pageFaultProg, nil)
 		if err != nil {
@@ -95,6 +122,17 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
 				fmt.Fprintf(os.Stderr, "Note: OOM kill tracking unavailable: %v\n", err)
+			}
+		} else {
+			links = append(links, tp)
+		}
+	}
+
+	if forkProg := coll.Programs["tracepoint_sched_process_fork"]; forkProg != nil {
+		tp, err := link.Tracepoint("sched", "sched_process_fork", forkProg, nil)
+		if err != nil {
+			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
+				fmt.Fprintf(os.Stderr, "Note: process fork tracking unavailable: %v\n", err)
 			}
 		} else {
 			links = append(links, tp)
@@ -131,6 +169,83 @@ func AttachDNSProbes(coll *ebpf.Collection, containerID string) []link.Link {
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Note: DNS tracking unavailable (libc path not found)\n")
+	}
+	return links
+}
+
+func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	var links []link.Link
+	libcPath := FindLibcPath(containerID)
+	if libcPath == "" {
+		return links
+	}
+	uprobe, err := link.OpenExecutable(libcPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: lock tracking unavailable: %v\n", err)
+		return links
+	}
+	if prog := coll.Programs["uprobe_pthread_mutex_lock"]; prog != nil {
+		l, err := uprobe.Uprobe("pthread_mutex_lock", prog, nil)
+		if err == nil {
+			links = append(links, l)
+		} else if !strings.Contains(err.Error(), "symbol pthread_mutex_lock not found") {
+			fmt.Fprintf(os.Stderr, "Note: pthread mutex lock tracking unavailable: %v\n", err)
+		}
+	}
+	if prog := coll.Programs["uretprobe_pthread_mutex_lock"]; prog != nil {
+		l, err := uprobe.Uretprobe("pthread_mutex_lock", prog, nil)
+		if err == nil {
+			links = append(links, l)
+		} else if !strings.Contains(err.Error(), "symbol pthread_mutex_lock not found") {
+			fmt.Fprintf(os.Stderr, "Note: pthread mutex lock tracking unavailable: %v\n", err)
+		}
+	}
+	return links
+}
+
+func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	var links []link.Link
+	dbLibs := []string{
+		"/usr/lib/x86_64-linux-gnu/libpq.so.5",
+		"/usr/lib64/libpq.so.5",
+		"/usr/lib/libpq.so.5",
+		"/usr/lib/x86_64-linux-gnu/libmysqlclient.so.21",
+		"/usr/lib64/libmysqlclient.so.21",
+		"/usr/lib/libmysqlclient.so.21",
+	}
+	for _, path := range dbLibs {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		exe, err := link.OpenExecutable(path)
+		if err != nil {
+			continue
+		}
+		if prog := coll.Programs["uprobe_PQexec"]; prog != nil {
+			l, err := exe.Uprobe("PQexec", prog, nil)
+			if err == nil {
+				links = append(links, l)
+			}
+		}
+		if prog := coll.Programs["uretprobe_PQexec"]; prog != nil {
+			l, err := exe.Uretprobe("PQexec", prog, nil)
+			if err == nil {
+				links = append(links, l)
+			}
+		}
+		if prog := coll.Programs["uprobe_mysql_real_query"]; prog != nil {
+			l, err := exe.Uprobe("mysql_real_query", prog, nil)
+			if err == nil {
+				links = append(links, l)
+			}
+		}
+		if prog := coll.Programs["uretprobe_mysql_real_query"]; prog != nil {
+			l, err := exe.Uretprobe("mysql_real_query", prog, nil)
+			if err == nil {
+				links = append(links, l)
+			}
+		}
 	}
 	return links
 }

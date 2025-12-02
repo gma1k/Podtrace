@@ -102,24 +102,27 @@ int kretprobe_vfs_read(struct pt_regs *ctx) {
 		bytes = (u64)ret;
 	}
 	
-	struct event e = {};
-	e.timestamp = bpf_ktime_get_ns();
-	e.pid = pid;
-	e.type = EVENT_READ;
-	e.latency_ns = latency;
-	e.error = ret < 0 ? ret : 0;
-	e.bytes = bytes;
-	e.tcp_state = 0;
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = pid;
+	e->type = EVENT_READ;
+	e->latency_ns = latency;
+	e->error = ret < 0 ? ret : 0;
+	e->bytes = bytes;
+	e->tcp_state = 0;
 	
 	char *path_ptr = bpf_map_lookup_elem(&file_paths, &key);
 	if (path_ptr) {
-		bpf_probe_read_kernel_str(e.target, sizeof(e.target), path_ptr);
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path_ptr);
 		bpf_map_delete_elem(&file_paths, &key);
 	} else {
-		e.target[0] = '\0';
+		e->target[0] = '\0';
 	}
-	
-	bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+	capture_user_stack(ctx, pid, tid, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	bpf_map_delete_elem(&start_times, &key);
 	return 0;
 }
@@ -147,24 +150,27 @@ int kretprobe_vfs_write(struct pt_regs *ctx) {
 		bytes = (u64)ret;
 	}
 	
-	struct event e = {};
-	e.timestamp = bpf_ktime_get_ns();
-	e.pid = pid;
-	e.type = EVENT_WRITE;
-	e.latency_ns = latency;
-	e.error = ret < 0 ? ret : 0;
-	e.bytes = bytes;
-	e.tcp_state = 0;
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = pid;
+	e->type = EVENT_WRITE;
+	e->latency_ns = latency;
+	e->error = ret < 0 ? ret : 0;
+	e->bytes = bytes;
+	e->tcp_state = 0;
 	
 	char *path_ptr = bpf_map_lookup_elem(&file_paths, &key);
 	if (path_ptr) {
-		bpf_probe_read_kernel_str(e.target, sizeof(e.target), path_ptr);
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path_ptr);
 		bpf_map_delete_elem(&file_paths, &key);
 	} else {
-		e.target[0] = '\0';
+		e->target[0] = '\0';
 	}
-	
-	bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+	capture_user_stack(ctx, pid, tid, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	bpf_map_delete_elem(&start_times, &key);
 	return 0;
 }
@@ -205,24 +211,27 @@ int kretprobe_vfs_fsync(struct pt_regs *ctx) {
 		return 0;
 	}
 	
-	struct event e = {};
-	e.timestamp = bpf_ktime_get_ns();
-	e.pid = pid;
-	e.type = EVENT_FSYNC;
-	e.latency_ns = latency;
-	e.error = PT_REGS_RC(ctx);
-	e.bytes = 0;
-	e.tcp_state = 0;
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = pid;
+	e->type = EVENT_FSYNC;
+	e->latency_ns = latency;
+	e->error = PT_REGS_RC(ctx);
+	e->bytes = 0;
+	e->tcp_state = 0;
 	
 	char *path_ptr = bpf_map_lookup_elem(&file_paths, &key);
 	if (path_ptr) {
-		bpf_probe_read_kernel_str(e.target, sizeof(e.target), path_ptr);
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path_ptr);
 		bpf_map_delete_elem(&file_paths, &key);
 	} else {
-		e.target[0] = '\0';
+		e->target[0] = '\0';
 	}
-	
-	bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+	capture_user_stack(ctx, pid, tid, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	bpf_map_delete_elem(&start_times, &key);
 	return 0;
 }

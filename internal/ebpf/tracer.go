@@ -22,6 +22,14 @@ import (
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
+const maxStackDepth = 64
+
+type stackTraceValue struct {
+	IPs [maxStackDepth]uint64
+	Nr  uint32
+	Pad uint32
+}
+
 type Tracer struct {
 	collection  *ebpf.Collection
 	links       []link.Link
@@ -103,6 +111,14 @@ func (t *Tracer) SetContainerID(containerID string) error {
 	if len(dnsLinks) > 0 {
 		t.links = append(t.links, dnsLinks...)
 	}
+	syncLinks := probes.AttachSyncProbes(t.collection, containerID)
+	if len(syncLinks) > 0 {
+		t.links = append(t.links, syncLinks...)
+	}
+	dbLinks := probes.AttachDBProbes(t.collection, containerID)
+	if len(dbLinks) > 0 {
+		t.links = append(t.links, dbLinks...)
+	}
 	return nil
 }
 
@@ -111,6 +127,8 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 	var errorCount int
 	var lastErrorLog time.Time
 	var errorCountMu sync.Mutex
+	stackMap := t.collection.Maps["stack_traces"]
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -145,6 +163,21 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 
 			event := parser.ParseEvent(record.RawSample)
 			if event != nil {
+				if stackMap != nil && event.StackKey != 0 {
+					var stack stackTraceValue
+					key := event.StackKey
+					if err := stackMap.Lookup(&key, &stack); err == nil {
+						n := int(stack.Nr)
+						if n > len(stack.IPs) {
+							n = len(stack.IPs)
+						}
+						if n > 0 {
+							frames := make([]uint64, n)
+							copy(frames, stack.IPs[:n])
+							event.Stack = frames
+						}
+					}
+				}
 				event.ProcessName = getProcessNameQuick(event.PID)
 				event.ProcessName = validation.SanitizeProcessName(event.ProcessName)
 

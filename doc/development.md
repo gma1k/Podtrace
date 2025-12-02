@@ -9,10 +9,11 @@ podtrace/
 │   ├── maps.h              # BPF map definitions
 │   ├── events.h            # Event types and structures
 │   ├── helpers.h           # Helper functions
-│   ├── network.c           # Network probes (TCP, UDP, DNS, HTTP)
+│   ├── network.c           # Network probes (TCP, UDP, DNS, HTTP, retransmissions, errors)
 │   ├── filesystem.c        # Filesystem probes
-│   ├── cpu.c               # CPU/scheduling probes
+│   ├── cpu.c               # CPU/scheduling probes and lock contention
 │   ├── memory.c            # Memory probes
+│   ├── syscalls.c          # System call probes (exec, fork, open, close)
 │   ├── podtrace.bpf.c      # Main eBPF program (includes all modules)
 │   └── vmlinux.h           # Kernel types
 ├── cmd/
@@ -78,11 +79,12 @@ make clean
 - **common.h**: Common definitions, constants, includes
 - **maps.h**: All BPF map definitions
 - **events.h**: Event type definitions and structures
-- **helpers.h**: Helper functions (get_key, calc_latency, format_ip, etc.)
-- **network.c**: Network probes (TCP, UDP, DNS, HTTP, connections)
+- **helpers.h**: Helper functions (get_key, calc_latency, format_ip, get_event_buf, capture_user_stack, etc.)
+- **network.c**: Network probes (TCP, UDP, DNS, HTTP, connections, retransmissions, errors)
 - **filesystem.c**: Filesystem probes (read, write, fsync)
-- **cpu.c**: CPU/scheduling probes (sched_switch)
+- **cpu.c**: CPU/scheduling probes (sched_switch) and lock contention (futex, pthread)
 - **memory.c**: Memory probes (page_fault, oom_kill)
+- **syscalls.c**: System call probes (execve, fork, open, close)
 
 ### Application Layer (`cmd/` and `internal/`)
 
@@ -138,17 +140,49 @@ const (
 
 ### 2. Add eBPF Probe
 
-In `bpf/podtrace.bpf.c`:
+In `bpf/podtrace.bpf.c` or appropriate module file:
 
 ```c
 SEC("kprobe/new_function")
 int kprobe_new_function(struct pt_regs *ctx) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    u32 tid = (u32)bpf_get_current_pid_tgid();
+    u64 key = get_key(pid, tid);
+    u64 ts = bpf_ktime_get_ns();
+    bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
+    return 0;
 }
 
 SEC("kretprobe/new_function")
 int kretprobe_new_function(struct pt_regs *ctx) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    u32 tid = (u32)bpf_get_current_pid_tgid();
+    u64 key = get_key(pid, tid);
+    u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
+    if (!start_ts) {
+        return 0;
+    }
+    
+    struct event *e = get_event_buf();
+    if (!e) {
+        bpf_map_delete_elem(&start_times, &key);
+        return 0;
+    }
+    
+    e->timestamp = bpf_ktime_get_ns();
+    e->pid = pid;
+    e->type = EVENT_NEW_TYPE;
+    e->latency_ns = calc_latency(*start_ts);
+    e->error = PT_REGS_RC(ctx);
+    
+    capture_user_stack(ctx, pid, tid, e);
+    bpf_ringbuf_output(&events, e, sizeof(*e), 0);
+    bpf_map_delete_elem(&start_times, &key);
+    return 0;
 }
 ```
+
+**Important**: Always use `get_event_buf()` instead of stack-allocating `struct event` to avoid BPF stack overflow (512 byte limit). The same applies to stack traces - use `stack_buf` via `capture_user_stack()`.
 
 ### 3. Register Probe
 

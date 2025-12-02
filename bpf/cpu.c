@@ -32,18 +32,22 @@ int tracepoint_sched_switch(void *ctx) {
 		if (block_start) {
 			u64 block_time = calc_latency(*block_start);
 			if (block_time > 1000000) {
-				struct event e = {};
-				e.timestamp = timestamp;
-				e.pid = prev_pid;
-				e.type = EVENT_SCHED_SWITCH;
-				e.latency_ns = block_time;
-				e.error = 0;
-				e.bytes = 0;
-				e.tcp_state = 0;
-				e.target[0] = '\0';
-				e.details[0] = '\0';
+				struct event *e = get_event_buf();
+    if (!e) {
+    	return 0;
+    }
+				e->timestamp = timestamp;
+				e->pid = prev_pid;
+				e->type = EVENT_SCHED_SWITCH;
+				e->latency_ns = block_time;
+				e->error = 0;
+				e->bytes = 0;
+				e->tcp_state = 0;
+				e->target[0] = '\0';
+				e->details[0] = '\0';
 				
-				bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+				capture_user_stack(ctx, prev_pid, 0, e);
+				bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 			}
 			bpf_map_delete_elem(&start_times, &key);
 		}
@@ -55,5 +59,149 @@ int tracepoint_sched_switch(void *ctx) {
 		bpf_map_update_elem(&start_times, &new_key, &now, BPF_ANY);
 	}
 	
+	return 0;
+}
+
+SEC("kprobe/do_futex")
+int kprobe_do_futex(struct pt_regs *ctx) {
+	u32 pid = bpf_get_current_pid_tgid() >> 32;
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	u64 key = get_key(pid, tid);
+	u64 ts = bpf_ktime_get_ns();
+	bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
+	long *uaddr = (long *)PT_REGS_PARM1(ctx);
+	if (uaddr) {
+		char buf[MAX_STRING_LEN] = {};
+		u64 addr = (u64)uaddr;
+		u32 idx = 0;
+		if (idx < MAX_STRING_LEN - 2) {
+			buf[idx++] = '0';
+			buf[idx++] = 'x';
+		}
+		for (int i = 0; i < 16 && idx < MAX_STRING_LEN - 1; i++) {
+			u8 nibble = (addr >> ((15 - i) * 4)) & 0xF;
+			if (nibble < 10) {
+				buf[idx++] = '0' + nibble;
+			} else {
+				buf[idx++] = 'a' + (nibble - 10);
+			}
+		}
+		buf[idx] = '\0';
+		bpf_map_update_elem(&lock_targets, &key, buf, BPF_ANY);
+	}
+	return 0;
+}
+
+SEC("kretprobe/do_futex")
+int kretprobe_do_futex(struct pt_regs *ctx) {
+	u32 pid = bpf_get_current_pid_tgid() >> 32;
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	u64 key = get_key(pid, tid);
+	u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
+	if (!start_ts) {
+		return 0;
+	}
+	u64 latency = calc_latency(*start_ts);
+	if (latency < 1000000) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
+	long ret = PT_REGS_RC(ctx);
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = pid;
+	e->type = EVENT_LOCK_CONTENTION;
+	e->latency_ns = latency;
+	e->error = ret;
+	e->bytes = 0;
+	e->tcp_state = 0;
+	char *name_ptr = bpf_map_lookup_elem(&lock_targets, &key);
+	if (name_ptr) {
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), name_ptr);
+		bpf_map_delete_elem(&lock_targets, &key);
+	} else {
+		e->target[0] = '\0';
+	}
+	capture_user_stack(ctx, pid, tid, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
+	bpf_map_delete_elem(&start_times, &key);
+	return 0;
+}
+
+SEC("uprobe/pthread_mutex_lock")
+int uprobe_pthread_mutex_lock(struct pt_regs *ctx) {
+	u32 pid = bpf_get_current_pid_tgid() >> 32;
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	u64 key = get_key(pid, tid);
+	u64 ts = bpf_ktime_get_ns();
+	bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
+	void *mutex = (void *)PT_REGS_PARM1(ctx);
+	if (mutex) {
+		char buf[MAX_STRING_LEN] = {};
+		u64 addr = (u64)mutex;
+		u32 idx = 0;
+		if (idx < MAX_STRING_LEN - 10) {
+			buf[idx++] = 'm';
+			buf[idx++] = 't';
+			buf[idx++] = 'x';
+			buf[idx++] = '@';
+		}
+		if (idx < MAX_STRING_LEN - 2) {
+			buf[idx++] = '0';
+			buf[idx++] = 'x';
+		}
+		for (int i = 0; i < 16 && idx < MAX_STRING_LEN - 1; i++) {
+			u8 nibble = (addr >> ((15 - i) * 4)) & 0xF;
+			if (nibble < 10) {
+				buf[idx++] = '0' + nibble;
+			} else {
+				buf[idx++] = 'a' + (nibble - 10);
+			}
+		}
+		buf[idx] = '\0';
+		bpf_map_update_elem(&lock_targets, &key, buf, BPF_ANY);
+	}
+	return 0;
+}
+
+SEC("uretprobe/pthread_mutex_lock")
+int uretprobe_pthread_mutex_lock(struct pt_regs *ctx) {
+	u32 pid = bpf_get_current_pid_tgid() >> 32;
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	u64 key = get_key(pid, tid);
+	u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
+	if (!start_ts) {
+		return 0;
+	}
+	u64 latency = calc_latency(*start_ts);
+	if (latency < 1000000) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
+	long ret = PT_REGS_RC(ctx);
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = pid;
+	e->type = EVENT_LOCK_CONTENTION;
+	e->latency_ns = latency;
+	e->error = ret;
+	e->bytes = 0;
+	e->tcp_state = 0;
+	char *name_ptr = bpf_map_lookup_elem(&lock_targets, &key);
+	if (name_ptr) {
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), name_ptr);
+		bpf_map_delete_elem(&lock_targets, &key);
+	} else {
+		e->target[0] = '\0';
+	}
+	capture_user_stack(ctx, pid, tid, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
+	bpf_map_delete_elem(&start_times, &key);
 	return 0;
 }

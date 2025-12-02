@@ -79,16 +79,17 @@ func ValidateEventFilter(filter string) error {
 		return fmt.Errorf("event filter exceeds maximum length of %d characters", maxEventFilterLength)
 	}
 	validFilters := map[string]bool{
-		"dns": true,
-		"net": true,
-		"fs":  true,
-		"cpu": true,
+		"dns":  true,
+		"net":  true,
+		"fs":   true,
+		"cpu":  true,
+		"proc": true,
 	}
 	filters := strings.Split(strings.ToLower(filter), ",")
 	for _, f := range filters {
 		f = strings.TrimSpace(f)
 		if f != "" && !validFilters[f] {
-			return fmt.Errorf("invalid event filter: %s (valid: dns, net, fs, cpu)", f)
+			return fmt.Errorf("invalid event filter: %s (valid: dns, net, fs, cpu, proc)", f)
 		}
 	}
 	return nil

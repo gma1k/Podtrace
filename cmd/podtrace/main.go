@@ -269,6 +269,8 @@ func filterEvents(in <-chan *events.Event, out chan<- *events.Event, filter stri
 			shouldInclude = true
 		case filterMap["cpu"] && event.Type == events.EventSchedSwitch:
 			shouldInclude = true
+		case filterMap["proc"] && (event.Type == events.EventExec || event.Type == events.EventFork || event.Type == events.EventOpen || event.Type == events.EventClose):
+			shouldInclude = true
 		}
 		if shouldInclude {
 			select {

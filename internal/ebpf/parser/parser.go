@@ -3,11 +3,12 @@ package parser
 import (
 	"bytes"
 	"encoding/binary"
+
 	"github.com/podtrace/podtrace/internal/events"
 )
 
 func ParseEvent(data []byte) *events.Event {
-	const expectedEventSize = 304
+	const expectedEventSize = 312
 	if len(data) < expectedEventSize {
 		return nil
 	}
@@ -20,6 +21,7 @@ func ParseEvent(data []byte) *events.Event {
 		Error     int32
 		Bytes     uint64
 		TCPState  uint32
+		StackKey  uint64
 		Target    [128]byte
 		Details   [128]byte
 	}
@@ -36,6 +38,7 @@ func ParseEvent(data []byte) *events.Event {
 		Error:     e.Error,
 		Bytes:     e.Bytes,
 		TCPState:  e.TCPState,
+		StackKey:  e.StackKey,
 		Target:    string(bytes.TrimRight(e.Target[:], "\x00")),
 		Details:   string(bytes.TrimRight(e.Details[:], "\x00")),
 	}

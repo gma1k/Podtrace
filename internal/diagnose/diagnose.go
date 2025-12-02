@@ -1,10 +1,15 @@
 package diagnose
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/podtrace/podtrace/internal/diagnose/analyzer"
@@ -402,6 +407,10 @@ func (d *Diagnostician) GenerateReport() string {
 
 	report += profiling.GenerateCPUUsageReport(d.events, duration)
 
+	report += d.generateStackTraceSection()
+
+	report += d.generateSyscallSection(duration)
+
 	report += d.generateApplicationTracing(duration)
 
 	report += tracker.GenerateConnectionCorrelation(d.events)
@@ -428,8 +437,6 @@ func (d *Diagnostician) filterEvents(eventType events.EventType) []*events.Event
 	}
 	return filtered
 }
-
-
 
 func (d *Diagnostician) generateApplicationTracing(duration time.Duration) string {
 	var report string
@@ -508,8 +515,189 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 	return report
 }
 
+type stackSummary struct {
+	Key        string
+	Count      int
+	Sample     *events.Event
+	FirstFrame string
+}
 
+func (d *Diagnostician) generateStackTraceSection() string {
+	var report string
+	if len(d.events) == 0 {
+		return ""
+	}
+	type resolver struct {
+		cache map[string]string
+	}
+	resolve := func(r *resolver, pid uint32, addr uint64) string {
+		if addr == 0 {
+			return ""
+		}
+		if r.cache == nil {
+			r.cache = make(map[string]string)
+		}
+		exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if err != nil || exePath == "" {
+			return fmt.Sprintf("0x%x", addr)
+		}
+		key := exePath + "|" + fmt.Sprintf("%x", addr)
+		if v, ok := r.cache[key]; ok {
+			return v
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "addr2line", "-e", exePath, fmt.Sprintf("%#x", addr))
+		out, err := cmd.Output()
+		if err != nil {
+			v := fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
+			r.cache[key] = v
+			return v
+		}
+		line := strings.TrimSpace(string(out))
+		if line == "" || line == "??:0" || line == "??:?" {
+			line = fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
+		} else {
+			line = filepath.Base(exePath) + ":" + line
+		}
+		r.cache[key] = line
+		return line
+	}
+	r := &resolver{cache: make(map[string]string)}
+	stackMap := make(map[string]*stackSummary)
+	for _, e := range d.events {
+		if e == nil {
+			continue
+		}
+		if len(e.Stack) == 0 {
+			continue
+		}
+		if e.LatencyNS < uint64(1000000) && e.Type != events.EventLockContention && e.Type != events.EventDBQuery {
+			continue
+		}
+		top := e.Stack[0]
+		frame := resolve(r, e.PID, top)
+		if frame == "" {
+			continue
+		}
+		key := fmt.Sprintf("%s|%d", frame, e.Type)
+		if entry, ok := stackMap[key]; ok {
+			entry.Count++
+		} else {
+			stackMap[key] = &stackSummary{
+				Key:        key,
+				Count:      1,
+				Sample:     e,
+				FirstFrame: frame,
+			}
+		}
+	}
+	if len(stackMap) == 0 {
+		return ""
+	}
+	var summaries []*stackSummary
+	for _, v := range stackMap {
+		summaries = append(summaries, v)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].Count > summaries[j].Count
+	})
+	report += "Stack Traces for Slow Operations:\n"
+	limit := 5
+	if len(summaries) < limit {
+		limit = len(summaries)
+	}
+	for i := 0; i < limit; i++ {
+		s := summaries[i]
+		e := s.Sample
+		if e == nil {
+			continue
+		}
+		report += fmt.Sprintf("  Hot stack %d: %d events, type=%s, target=%s, avg latency=%.2fms\n", i+1, s.Count, e.TypeString(), e.Target, float64(e.LatencyNS)/1e6)
+		maxFrames := 5
+		if len(e.Stack) < maxFrames {
+			maxFrames = len(e.Stack)
+		}
+		for j := 0; j < maxFrames; j++ {
+			addr := e.Stack[j]
+			frame := resolve(r, e.PID, addr)
+			report += fmt.Sprintf("    #%d %s\n", j, frame)
+		}
+	}
+	report += "\n"
+	return report
+}
 
+func (d *Diagnostician) generateSyscallSection(duration time.Duration) string {
+	var report string
+	if len(d.events) == 0 {
+		return ""
+	}
+	var execEvents, forkEvents, openEvents, closeEvents []*events.Event
+	for _, e := range d.events {
+		if e == nil {
+			continue
+		}
+		switch e.Type {
+		case events.EventExec:
+			execEvents = append(execEvents, e)
+		case events.EventFork:
+			forkEvents = append(forkEvents, e)
+		case events.EventOpen:
+			openEvents = append(openEvents, e)
+		case events.EventClose:
+			closeEvents = append(closeEvents, e)
+		}
+	}
+	if len(execEvents) == 0 && len(forkEvents) == 0 && len(openEvents) == 0 && len(closeEvents) == 0 {
+		return ""
+	}
+	report += "Process and Syscall Activity:\n"
+	if len(execEvents) > 0 {
+		report += fmt.Sprintf("  Execve calls: %d (%.1f/sec)\n", len(execEvents), float64(len(execEvents))/duration.Seconds())
+	}
+	if len(forkEvents) > 0 {
+		report += fmt.Sprintf("  Fork events: %d (%.1f/sec)\n", len(forkEvents), float64(len(forkEvents))/duration.Seconds())
+	}
+	if len(openEvents) > 0 || len(closeEvents) > 0 {
+		report += fmt.Sprintf("  Open calls: %d (%.1f/sec)\n", len(openEvents), float64(len(openEvents))/duration.Seconds())
+		report += fmt.Sprintf("  Close calls: %d (%.1f/sec)\n", len(closeEvents), float64(len(closeEvents))/duration.Seconds())
+		diff := len(openEvents) - len(closeEvents)
+		if diff > 0 {
+			report += fmt.Sprintf("  Potential descriptor leak: %d more opens than closes\n", diff)
+		}
+		fileCounts := make(map[string]int)
+		for _, e := range openEvents {
+			name := e.Target
+			if name == "" || name == "?" || name == "unknown" {
+				continue
+			}
+			fileCounts[name]++
+		}
+		if len(fileCounts) > 0 {
+			type fileInfo struct {
+				Name  string
+				Count int
+			}
+			var files []fileInfo
+			for name, count := range fileCounts {
+				files = append(files, fileInfo{Name: name, Count: count})
+			}
+			sort.Slice(files, func(i, j int) bool {
+				return files[i].Count > files[j].Count
+			})
+			report += "  Top opened files:\n"
+			for i, f := range files {
+				if i >= 5 {
+					break
+				}
+				report += fmt.Sprintf("    - %s (%d opens)\n", f.Name, f.Count)
+			}
+		}
+	}
+	report += "\n"
+	return report
+}
 
 type ExportData struct {
 	Summary         map[string]interface{}   `json:"summary"`
@@ -638,12 +826,12 @@ func (d *Diagnostician) ExportJSON() ExportData {
 
 	pidActivity := tracker.AnalyzeProcessActivity(d.events)
 	for _, info := range pidActivity {
-			data.ProcessActivity = append(data.ProcessActivity, map[string]interface{}{
-				"pid":         info.Pid,
-				"name":        info.Name,
-				"event_count": info.Count,
-				"percentage":  info.Percentage,
-			})
+		data.ProcessActivity = append(data.ProcessActivity, map[string]interface{}{
+			"pid":         info.Pid,
+			"name":        info.Name,
+			"event_count": info.Count,
+			"percentage":  info.Percentage,
+		})
 	}
 
 	issues := detector.DetectIssues(d.events, d.errorRateThreshold, d.rttSpikeThreshold)

@@ -18,17 +18,21 @@ int tracepoint_page_fault_user(void *ctx) {
 	
 	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
 	
-	struct event e = {};
-	e.timestamp = bpf_ktime_get_ns();
-	e.pid = args_local.common_pid;
-	e.type = EVENT_PAGE_FAULT;
-	e.latency_ns = 0;
-	e.error = args_local.error_code;
-	e.bytes = 0;
-	e.tcp_state = 0;
-	e.target[0] = '\0';
+	struct event *e = get_event_buf();
+ if (!e) {
+ 	return 0;
+ }
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = args_local.common_pid;
+	e->type = EVENT_PAGE_FAULT;
+	e->latency_ns = 0;
+	e->error = args_local.error_code;
+	e->bytes = 0;
+	e->tcp_state = 0;
+	e->target[0] = '\0';
 	
-	bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+	capture_user_stack(ctx, e->pid, 0, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	return 0;
 }
 
@@ -53,17 +57,21 @@ int tracepoint_oom_kill_process(void *ctx) {
 	
 	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
 	
-	struct event e = {};
-	e.timestamp = bpf_ktime_get_ns();
-	e.pid = args_local.pid;
-	e.type = EVENT_OOM_KILL;
-	e.latency_ns = 0;
-	e.error = 0;
-	e.bytes = args_local.totalpages * 4096;
-	e.tcp_state = 0;
+	struct event *e = get_event_buf();
+	if (!e) {
+		return 0;
+	}
+	e->timestamp = bpf_ktime_get_ns();
+	e->pid = args_local.pid;
+	e->type = EVENT_OOM_KILL;
+	e->latency_ns = 0;
+	e->error = 0;
+	e->bytes = args_local.totalpages * 4096;
+	e->tcp_state = 0;
 	
-	bpf_probe_read_kernel_str(e.target, sizeof(e.target), args_local.comm);
+	bpf_probe_read_kernel_str(e->target, sizeof(e->target), args_local.comm);
 	
-	bpf_ringbuf_output(&events, &e, sizeof(e), 0);
+	capture_user_stack(ctx, e->pid, 0, e);
+	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	return 0;
 }

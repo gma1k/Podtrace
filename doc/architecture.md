@@ -61,21 +61,31 @@ The eBPF programs run in the kernel and trace system calls and kernel events. Th
 - **maps.h**: BPF map definitions
 - **events.h**: Event types and structures
 - **helpers.h**: Helper functions
-- **network.c**: Network probes (TCP, UDP, DNS, HTTP)
+- **network.c**: Network probes (TCP, UDP, DNS, HTTP, TCP retransmissions, network errors)
 - **filesystem.c**: Filesystem probes (with optional file path tracking)
-- **cpu.c**: CPU/scheduling probes
+- **cpu.c**: CPU/scheduling probes and lock contention tracking
 - **memory.c**: Memory probes
+- **syscalls.c**: System call probes (execve, fork, open, close)
 
 - **Kprobes**: Attach to kernel functions
   - `tcp_v4_connect` / `tcp_v6_connect` - Network connections
   - `tcp_sendmsg` / `tcp_recvmsg` - TCP send/receive
   - `vfs_read` / `vfs_write` / `vfs_fsync` - File system operations
+  - `do_futex` - Lock contention tracking (mutex/semaphore waits)
+  - `do_sys_openat2` - File open operations
+  - `do_execveat_common` - Process execution
 
 - **Uprobes**: Attach to user-space functions
   - `getaddrinfo` (libc) - DNS lookups
+  - `pthread_mutex_lock` (libc) - User-space mutex operations
+  - `PQexec` (libpq) - PostgreSQL query execution
+  - `mysql_real_query` (libmysqlclient) - MySQL query execution
 
 - **Tracepoints**: Kernel events
   - `sched_switch` - CPU scheduling events
+  - `sched_process_fork` - Process/thread creation
+  - `tcp_retransmit_skb` - TCP retransmissions
+  - `net_dev_xmit` - Network device transmission errors
 
 ### 2. Event Collection (`internal/ebpf/`)
 

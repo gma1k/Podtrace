@@ -28,6 +28,14 @@ const (
 	EventUDPRecv
 	EventHTTPReq
 	EventHTTPResp
+	EventLockContention
+	EventTCPRetrans
+	EventNetDevError
+	EventDBQuery
+	EventExec
+	EventFork
+	EventOpen
+	EventClose
 )
 
 type Event struct {
@@ -39,6 +47,8 @@ type Event struct {
 	Error       int32
 	Bytes       uint64
 	TCPState    uint32
+	StackKey    uint64
+	Stack       []uint64
 	Target      string
 	Details     string
 }
@@ -69,6 +79,14 @@ func (e *Event) TypeString() string {
 		return "MEM"
 	case EventHTTPReq, EventHTTPResp:
 		return "HTTP"
+	case EventLockContention:
+		return "LOCK"
+	case EventTCPRetrans, EventNetDevError:
+		return "NET"
+	case EventDBQuery:
+		return "DB"
+	case EventExec, EventFork, EventOpen, EventClose:
+		return "PROC"
 	default:
 		return "UNKNOWN"
 	}
@@ -218,6 +236,72 @@ func (e *Event) FormatMessage() string {
 	case EventSchedSwitch:
 		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
 
+	case EventLockContention:
+		target := e.Target
+		if target == "" {
+			target = "lock"
+		}
+		return fmt.Sprintf("[LOCK] contention on %s (%.2fms)", sanitizeString(target), latencyMs)
+
+	case EventTCPRetrans:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		return fmt.Sprintf("[NET] TCP retransmission detected for %s", sanitizeString(target))
+
+	case EventNetDevError:
+		target := e.Target
+		if target == "" {
+			target = "iface"
+		}
+		return fmt.Sprintf("[NET] network device errors on %s (error=%d)", sanitizeString(target), e.Error)
+
+	case EventDBQuery:
+		target := e.Target
+		if target == "" {
+			target = "query"
+		}
+		return fmt.Sprintf("[DB] query pattern %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventExec:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		if e.Error != 0 {
+			return fmt.Sprintf("[PROC] execve %s failed: error %d", sanitizeString(target), e.Error)
+		}
+		return fmt.Sprintf("[PROC] execve %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventFork:
+		target := e.Target
+		if target == "" {
+			target = "child"
+		}
+		return fmt.Sprintf("[PROC] fork created pid %d (%s)", e.PID, sanitizeString(target))
+
+	case EventOpen:
+		target := e.Target
+		if target == "" {
+			target = "file"
+		}
+		fd := int64(e.Bytes)
+		if e.Error != 0 {
+			return fmt.Sprintf("[FS] open() %s failed: error %d", sanitizeString(target), e.Error)
+		}
+		if fd >= 0 {
+			return fmt.Sprintf("[FS] open() %s fd=%d took %.2fms", sanitizeString(target), fd, latencyMs)
+		}
+		return fmt.Sprintf("[FS] open() %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventClose:
+		fd := int64(e.Bytes)
+		if fd >= 0 {
+			return fmt.Sprintf("[FS] close() fd=%d", fd)
+		}
+		return "[FS] close()"
+
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
 	}
@@ -340,6 +424,72 @@ func (e *Event) FormatRealtimeMessage() string {
 
 	case EventSchedSwitch:
 		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
+
+	case EventLockContention:
+		target := e.Target
+		if target == "" {
+			target = "lock"
+		}
+		return fmt.Sprintf("[LOCK] contention on %s (%.2fms)", sanitizeString(target), latencyMs)
+
+	case EventTCPRetrans:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		return fmt.Sprintf("[NET] TCP retransmission for %s", sanitizeString(target))
+
+	case EventNetDevError:
+		target := e.Target
+		if target == "" {
+			target = "iface"
+		}
+		return fmt.Sprintf("[NET] network device errors on %s (error=%d)", sanitizeString(target), e.Error)
+
+	case EventDBQuery:
+		target := e.Target
+		if target == "" {
+			target = "query"
+		}
+		return fmt.Sprintf("[DB] query pattern %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventExec:
+		target := e.Target
+		if target == "" {
+			target = "unknown"
+		}
+		if e.Error != 0 {
+			return fmt.Sprintf("[PROC] execve %s failed: error %d", sanitizeString(target), e.Error)
+		}
+		return fmt.Sprintf("[PROC] execve %s took %.2fms", sanitizeString(target), latencyMs)
+
+	case EventFork:
+		target := e.Target
+		if target == "" {
+			target = "child"
+		}
+		return fmt.Sprintf("[PROC] fork created pid %d (%s)", e.PID, sanitizeString(target))
+
+	case EventOpen:
+		target := e.Target
+		if target == "" {
+			target = "file"
+		}
+		fd := int64(e.Bytes)
+		if e.Error != 0 {
+			return fmt.Sprintf("[FS] open() %s failed: error %d", sanitizeString(target), e.Error)
+		}
+		if fd >= 0 {
+			return fmt.Sprintf("[FS] open() %s fd=%d (%.2fms)", sanitizeString(target), fd, latencyMs)
+		}
+		return fmt.Sprintf("[FS] open() %s (%.2fms)", sanitizeString(target), latencyMs)
+
+	case EventClose:
+		fd := int64(e.Bytes)
+		if fd >= 0 {
+			return fmt.Sprintf("[FS] close() fd=%d", fd)
+		}
+		return "[FS] close()"
 
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)

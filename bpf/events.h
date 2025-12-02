@@ -21,6 +21,14 @@ enum event_type {
 	EVENT_UDP_RECV,
 	EVENT_HTTP_REQ,
 	EVENT_HTTP_RESP,
+	EVENT_LOCK_CONTENTION,
+	EVENT_TCP_RETRANS,
+	EVENT_NET_DEV_ERROR,
+	EVENT_DB_QUERY,
+	EVENT_EXEC,
+	EVENT_FORK,
+	EVENT_OPEN,
+	EVENT_CLOSE,
 };
 
 struct event {
@@ -31,6 +39,7 @@ struct event {
 	s32 error;
 	u64 bytes;
 	u32 tcp_state;
+	u64 stack_key;
 	char target[MAX_STRING_LEN];
 	char details[MAX_STRING_LEN];
 };

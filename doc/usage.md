@@ -49,8 +49,33 @@ This will:
 Usage: ./bin/podtrace -n <namespace> <pod-name> [flags]
 
 Flags:
-  -n, --namespace string   Kubernetes namespace (default: "default")
-      --diagnose string    Run in diagnose mode for the specified duration (e.g., 10s, 5m)
+  -n, --namespace string        Kubernetes namespace (default: "default")
+      --diagnose string         Run in diagnose mode for the specified duration (e.g., 10s, 5m)
+      --metrics                 Enable Prometheus metrics server
+      --export string           Export format for diagnose report (json, csv)
+      --filter string           Filter events by type (dns,net,fs,cpu,proc)
+      --container string        Container name to trace (default: first container)
+      --error-threshold float   Error rate threshold percentage for issue detection (default: 10.0)
+      --rtt-threshold float     RTT spike threshold in milliseconds (default: 100.0)
+      --fs-threshold float      File system slow operation threshold in milliseconds (default: 10.0)
+```
+
+### Event Filtering
+
+Use `--filter` to focus on specific event types:
+- `dns`: DNS lookup events
+- `net`: Network events (TCP, UDP, connections)
+- `fs`: File system events (read, write, fsync)
+- `cpu`: CPU scheduling events
+- `proc`: Process lifecycle events (exec, fork, open, close)
+
+Examples:
+```bash
+# Only show network events
+./bin/podtrace -n production my-pod --filter net
+
+# Show both network and process events
+./bin/podtrace -n production my-pod --filter net,proc
 ```
 
 ## Real-time Mode Output
@@ -117,10 +142,26 @@ The diagnose report includes:
 - Send/receive ratio
 - Average and peak throughput
 
+### Process and Syscall Activity
+- Process execution tracking (execve events)
+- Process/thread creation (fork/clone events)
+- File descriptor operations (open/openat and close)
+- File descriptor leak detection (opens vs closes)
+- Top opened files
+- Process lifecycle patterns
+
+### Stack Traces for Slow Operations
+- User-space stack traces for operations exceeding thresholds
+- Symbol resolution for stack frames
+- Grouped by operation type and latency
+- Helps pinpoint exact code paths causing performance issues
+
 ### Potential Issues
 - High error rates
 - Performance problems
 - RTT spikes
+- File descriptor leaks
+- Lock contention hotspots
 
 ## Examples
 
@@ -189,6 +230,9 @@ Review:
 - File path tracking requires kernel 5.6+ with `bpf_d_path` support (disabled by default)
 - DNS tracking may be unavailable if libc path cannot be determined
 - CPU scheduling tracking requires tracepoint permissions
+- Stack trace symbol resolution requires `addr2line` tool and debug symbols
+- Database query tracing requires matching database client libraries (libpq, libmysqlclient)
+- Some syscall probes may be unavailable on certain kernel versions (e.g., `__close_fd`)
 
 ## Troubleshooting
 
