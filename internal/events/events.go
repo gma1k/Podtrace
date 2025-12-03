@@ -10,6 +10,16 @@ func sanitizeString(s string) string {
 	return strings.ReplaceAll(s, "%", "%%")
 }
 
+func truncateString(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}
+
 type EventType uint32
 
 const (
@@ -94,16 +104,17 @@ func (e *Event) TypeString() string {
 
 func (e *Event) FormatMessage() string {
 	latencyMs := float64(e.LatencyNS) / 1e6
+	const maxTargetLen = 256
 
 	switch e.Type {
 	case EventDNS:
 		if e.Error != 0 {
-			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(e.Target), e.Error)
+			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(truncateString(e.Target, maxTargetLen)), e.Error)
 		}
-		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(e.Target), latencyMs)
+		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(truncateString(e.Target, maxTargetLen)), latencyMs)
 
 	case EventConnect:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -168,14 +179,14 @@ func (e *Event) FormatMessage() string {
 		return ""
 
 	case EventHTTPReq:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
 		return fmt.Sprintf("[HTTP] request to %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventHTTPResp:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -187,7 +198,7 @@ func (e *Event) FormatMessage() string {
 
 	case EventTCPState:
 		stateStr := TCPStateString(e.TCPState)
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -197,7 +208,7 @@ func (e *Event) FormatMessage() string {
 		return fmt.Sprintf("[MEM] Page fault (error: %d)", e.Error)
 
 	case EventOOMKill:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -205,7 +216,7 @@ func (e *Event) FormatMessage() string {
 		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -216,7 +227,7 @@ func (e *Event) FormatMessage() string {
 		return msg
 
 	case EventRead:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -227,7 +238,7 @@ func (e *Event) FormatMessage() string {
 		return msg
 
 	case EventFsync:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "file"
 		}
@@ -237,35 +248,35 @@ func (e *Event) FormatMessage() string {
 		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
 
 	case EventLockContention:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "lock"
 		}
 		return fmt.Sprintf("[LOCK] contention on %s (%.2fms)", sanitizeString(target), latencyMs)
 
 	case EventTCPRetrans:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
 		return fmt.Sprintf("[NET] TCP retransmission detected for %s", sanitizeString(target))
 
 	case EventNetDevError:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "iface"
 		}
 		return fmt.Sprintf("[NET] network device errors on %s (error=%d)", sanitizeString(target), e.Error)
 
 	case EventDBQuery:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "query"
 		}
 		return fmt.Sprintf("[DB] query pattern %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventExec:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -275,14 +286,14 @@ func (e *Event) FormatMessage() string {
 		return fmt.Sprintf("[PROC] execve %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventFork:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "child"
 		}
 		return fmt.Sprintf("[PROC] fork created pid %d (%s)", e.PID, sanitizeString(target))
 
 	case EventOpen:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "file"
 		}
@@ -330,16 +341,17 @@ func TCPStateString(state uint32) string {
 
 func (e *Event) FormatRealtimeMessage() string {
 	latencyMs := float64(e.LatencyNS) / 1e6
+	const maxTargetLen = 256
 
 	switch e.Type {
 	case EventDNS:
 		if e.Error != 0 {
-			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(e.Target), e.Error)
+			return fmt.Sprintf("[DNS] lookup %s failed: error %d", sanitizeString(truncateString(e.Target, maxTargetLen)), e.Error)
 		}
-		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(e.Target), latencyMs)
+		return fmt.Sprintf("[DNS] lookup %s took %.2fms", sanitizeString(truncateString(e.Target, maxTargetLen)), latencyMs)
 
 	case EventConnect:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -376,7 +388,7 @@ func (e *Event) FormatRealtimeMessage() string {
 
 	case EventTCPState:
 		stateStr := TCPStateString(e.TCPState)
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -386,7 +398,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		return fmt.Sprintf("[MEM] Page fault (error: %d)", e.Error)
 
 	case EventOOMKill:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -394,7 +406,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -405,7 +417,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		return msg
 
 	case EventRead:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" || target == "?" {
 			target = "file"
 		}
@@ -416,7 +428,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		return msg
 
 	case EventFsync:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "file"
 		}
@@ -426,35 +438,35 @@ func (e *Event) FormatRealtimeMessage() string {
 		return fmt.Sprintf("[CPU] thread blocked %.2fms", latencyMs)
 
 	case EventLockContention:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "lock"
 		}
 		return fmt.Sprintf("[LOCK] contention on %s (%.2fms)", sanitizeString(target), latencyMs)
 
 	case EventTCPRetrans:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
 		return fmt.Sprintf("[NET] TCP retransmission for %s", sanitizeString(target))
 
 	case EventNetDevError:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "iface"
 		}
 		return fmt.Sprintf("[NET] network device errors on %s (error=%d)", sanitizeString(target), e.Error)
 
 	case EventDBQuery:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "query"
 		}
 		return fmt.Sprintf("[DB] query pattern %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventExec:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "unknown"
 		}
@@ -464,14 +476,14 @@ func (e *Event) FormatRealtimeMessage() string {
 		return fmt.Sprintf("[PROC] execve %s took %.2fms", sanitizeString(target), latencyMs)
 
 	case EventFork:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "child"
 		}
 		return fmt.Sprintf("[PROC] fork created pid %d (%s)", e.PID, sanitizeString(target))
 
 	case EventOpen:
-		target := e.Target
+		target := truncateString(e.Target, maxTargetLen)
 		if target == "" {
 			target = "file"
 		}

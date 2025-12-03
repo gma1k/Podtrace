@@ -565,7 +565,12 @@ func (d *Diagnostician) generateStackTraceSection() string {
 	}
 	r := &resolver{cache: make(map[string]string)}
 	stackMap := make(map[string]*stackSummary)
+	const maxEventsForStacks = 10000
+	processed := 0
 	for _, e := range d.events {
+		if processed >= maxEventsForStacks {
+			break
+		}
 		if e == nil {
 			continue
 		}
@@ -575,6 +580,7 @@ func (d *Diagnostician) generateStackTraceSection() string {
 		if e.LatencyNS < uint64(1000000) && e.Type != events.EventLockContention && e.Type != events.EventDBQuery {
 			continue
 		}
+		processed++
 		top := e.Stack[0]
 		frame := resolve(r, e.PID, top)
 		if frame == "" {

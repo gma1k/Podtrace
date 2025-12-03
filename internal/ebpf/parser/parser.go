@@ -3,29 +3,33 @@ package parser
 import (
 	"bytes"
 	"encoding/binary"
+	"unsafe"
 
 	"github.com/podtrace/podtrace/internal/events"
 )
 
+type rawEvent struct {
+	Timestamp uint64
+	PID       uint32
+	Type      uint32
+	LatencyNS uint64
+	Error     int32
+	_         uint32
+	Bytes     uint64
+	TCPState  uint32
+	_         uint32
+	StackKey  uint64
+	Target    [128]byte
+	Details   [128]byte
+}
+
 func ParseEvent(data []byte) *events.Event {
-	const expectedEventSize = 312
+	const expectedEventSize = int(unsafe.Sizeof(rawEvent{}))
 	if len(data) < expectedEventSize {
 		return nil
 	}
 
-	var e struct {
-		Timestamp uint64
-		PID       uint32
-		Type      uint32
-		LatencyNS uint64
-		Error     int32
-		Bytes     uint64
-		TCPState  uint32
-		StackKey  uint64
-		Target    [128]byte
-		Details   [128]byte
-	}
-
+	var e rawEvent
 	if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 		return nil
 	}

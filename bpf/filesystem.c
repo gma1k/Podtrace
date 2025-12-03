@@ -103,9 +103,10 @@ int kretprobe_vfs_read(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_READ;
@@ -151,9 +152,10 @@ int kretprobe_vfs_write(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_WRITE;
@@ -212,9 +214,10 @@ int kretprobe_vfs_fsync(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_FSYNC;

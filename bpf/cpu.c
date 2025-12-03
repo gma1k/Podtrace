@@ -33,9 +33,10 @@ int tracepoint_sched_switch(void *ctx) {
 			u64 block_time = calc_latency(*block_start);
 			if (block_time > 1000000) {
 				struct event *e = get_event_buf();
-    if (!e) {
-    	return 0;
-    }
+				if (!e) {
+					bpf_map_delete_elem(&start_times, &key);
+					return 0;
+				}
 				e->timestamp = timestamp;
 				e->pid = prev_pid;
 				e->type = EVENT_SCHED_SWITCH;
@@ -108,9 +109,10 @@ int kretprobe_do_futex(struct pt_regs *ctx) {
 	}
 	long ret = PT_REGS_RC(ctx);
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_LOCK_CONTENTION;
@@ -183,9 +185,10 @@ int uretprobe_pthread_mutex_lock(struct pt_regs *ctx) {
 	}
 	long ret = PT_REGS_RC(ctx);
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_LOCK_CONTENTION;

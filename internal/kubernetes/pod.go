@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,6 +143,8 @@ func findCgroupPath(containerID string) (string, error) {
 		filepath.Join(cgroupBase, "user.slice"),
 	}
 
+	var errFound = errors.New("podtrace: cgroup found")
+
 	for _, basePath := range paths {
 		if _, err := os.Stat(basePath); os.IsNotExist(err) {
 			continue
@@ -156,7 +159,7 @@ func findCgroupPath(containerID string) (string, error) {
 			if strings.Contains(path, containerID) || (len(containerID) >= 12 && strings.Contains(path, containerID[:12])) {
 				foundPath = path
 				found = true
-				return fmt.Errorf("found")
+				return errFound
 			}
 			return nil
 		})

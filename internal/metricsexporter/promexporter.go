@@ -3,6 +3,7 @@ package metricsexporter
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -267,6 +268,15 @@ func StartServer() *Server {
 	addr := os.Getenv("PODTRACE_METRICS_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:3000"
+	}
+
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+			if os.Getenv("PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR") != "1" {
+				fmt.Fprintf(os.Stderr, "Warning: rejecting non-loopback metrics address %q without PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR=1; falling back to 127.0.0.1:3000\n", addr)
+				addr = "127.0.0.1:3000"
+			}
+		}
 	}
 
 	server := &http.Server{

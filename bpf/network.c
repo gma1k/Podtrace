@@ -178,9 +178,10 @@ int kretprobe_tcp_sendmsg(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_TCP_SEND;
@@ -231,9 +232,10 @@ int kretprobe_tcp_recvmsg(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_TCP_RECV;
@@ -287,9 +289,10 @@ int uretprobe_getaddrinfo(struct pt_regs *ctx) {
 	u64 latency = calc_latency(*start_ts);
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_DNS;
@@ -462,9 +465,10 @@ int kretprobe_udp_sendmsg(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_UDP_SEND;
@@ -508,9 +512,10 @@ int kretprobe_udp_recvmsg(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_UDP_RECV;
@@ -555,9 +560,10 @@ int uretprobe_http_request(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_HTTP_REQ;
@@ -607,9 +613,10 @@ int uretprobe_http_response(struct pt_regs *ctx) {
 	}
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_HTTP_RESP;
@@ -659,9 +666,10 @@ int uretprobe_PQexec(struct pt_regs *ctx) {
 	}
 	u64 latency = calc_latency(*start_ts);
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_DB_QUERY;
@@ -717,9 +725,10 @@ int uretprobe_mysql_real_query(struct pt_regs *ctx) {
 	}
 	u64 latency = calc_latency(*start_ts);
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		bpf_map_delete_elem(&start_times, &key);
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_DB_QUERY;
