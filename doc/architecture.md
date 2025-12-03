@@ -11,7 +11,7 @@ Podtrace is an eBPF-based diagnostic tool for Kubernetes applications. It uses k
 │                    Kubernetes Cluster                        │
 │                                                              │
 │  ┌──────────────┐         ┌──────────────────────────┐       │
-│  │   Podtrace   │────────▶│   Target Pod Container  │       │
+│  │   Podtrace   │────────▶│   Target Pod Container   │       │
 │  │   (User)     │         │                          │       │
 │  └──────┬───────┘         └──────────────────────────┘       │
 │         │                                                    │
