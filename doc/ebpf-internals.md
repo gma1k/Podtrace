@@ -12,7 +12,7 @@ eBPF maps are used for communication between kernel and user space:
 
 1. **Ring Buffer (`events`)**
    - Type: `BPF_MAP_TYPE_RINGBUF`
-   - Size: 256 KB
+   - Size: 2 MB (2048 KB)
    - Purpose: Transfer event data from kernel to user space
    - One-way: Kernel writes, user space reads
 
@@ -229,7 +229,7 @@ Stack traces are captured for operations exceeding performance thresholds:
 
 ```c
 struct stack_trace_t {
-    u64 ips[MAX_STACK_DEPTH];  // Instruction pointers (max 32 frames)
+    u64 ips[MAX_STACK_DEPTH];
     u32 nr;                     // Number of frames captured
 };
 ```
@@ -273,8 +273,9 @@ static inline void format_ip_port(u32 ip, u16 port, char *buf) {
 ### Ring Buffer
 
 - Lockless, high-performance data structure
-- 256 KB buffer handles high event rates
+- 2 MB buffer handles high event rates
 - User space must read promptly to avoid drops
+- Larger buffer reduces event loss during high-throughput scenarios
 
 ### Hash Maps
 

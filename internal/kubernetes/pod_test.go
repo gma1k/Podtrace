@@ -4,14 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func TestFindCgroupPath_NotFound(t *testing.T) {
 	dir := t.TempDir()
 
-	orig := cgroupBase
-	cgroupBase = dir
-	defer func() { cgroupBase = orig }()
+	orig := config.CgroupBasePath
+	config.SetCgroupBasePath(dir)
+	defer func() { config.SetCgroupBasePath(orig) }()
 
 	if path, err := findCgroupPath("nonexistent"); err == nil || path != "" {
 		t.Fatalf("expected error and empty path for missing cgroup, got path=%q err=%v", path, err)
@@ -21,9 +23,9 @@ func TestFindCgroupPath_NotFound(t *testing.T) {
 func TestFindCgroupPath_Found(t *testing.T) {
 	dir := t.TempDir()
 
-	orig := cgroupBase
-	cgroupBase = dir
-	defer func() { cgroupBase = orig }()
+	orig := config.CgroupBasePath
+	config.SetCgroupBasePath(dir)
+	defer func() { config.SetCgroupBasePath(orig) }()
 
 	kubepodsSlice := filepath.Join(dir, "kubepods.slice")
 	if err := os.MkdirAll(kubepodsSlice, 0o755); err != nil {

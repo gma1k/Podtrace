@@ -37,9 +37,9 @@ int kretprobe_do_execveat_common(struct pt_regs *ctx) {
 	s64 ret = PT_REGS_RC(ctx);
 
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_EXEC;
@@ -82,9 +82,9 @@ int tracepoint_sched_process_fork(void *ctx) {
 	}
 
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = child_pid;
 	e->type = EVENT_FORK;
@@ -132,9 +132,9 @@ int kretprobe_do_sys_openat2(struct pt_regs *ctx) {
 	s64 ret = PT_REGS_RC(ctx);
 
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_OPEN;
@@ -164,9 +164,9 @@ int kprobe___close_fd(struct pt_regs *ctx) {
 	unsigned int fd = (unsigned int)PT_REGS_PARM2(ctx);
 
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_CLOSE;

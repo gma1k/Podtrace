@@ -57,35 +57,38 @@ int kretprobe_tcp_v6_connect(struct pt_regs *ctx) {
 	if (uaddr) {
 		u16 family;
 		if (bpf_probe_read_user(&family, sizeof(family), uaddr) == 0) {
-			if (family == 10) {
+			if (family == AF_INET6) {
 				struct {
 					u16 sin6_family;
 					u16 sin6_port;
 				} addr;
 				if (bpf_probe_read_user(&addr, sizeof(addr), uaddr) == 0) {
 					u16 port = __builtin_bswap16(addr.sin6_port);
-					e->target[0] = '[';
-					e->target[1] = 'I';
-					e->target[2] = 'P';
-					e->target[3] = 'v';
-					e->target[4] = '6';
-					e->target[5] = ']';
-					e->target[6] = ':';
-					u32 idx = 7;
-					if (port >= 10000) {
+					u32 idx = 0;
+					u32 max_idx = MAX_STRING_LEN - 1;
+					if (idx < max_idx) e->target[idx++] = '[';
+					if (idx < max_idx) e->target[idx++] = 'I';
+					if (idx < max_idx) e->target[idx++] = 'P';
+					if (idx < max_idx) e->target[idx++] = 'v';
+					if (idx < max_idx) e->target[idx++] = '6';
+					if (idx < max_idx) e->target[idx++] = ']';
+					if (idx < max_idx) e->target[idx++] = ':';
+					if (port >= 10000 && idx < max_idx) {
 						e->target[idx++] = '0' + (port / 10000) % 10;
 					}
-					if (port >= 1000) {
+					if (port >= 1000 && idx < max_idx) {
 						e->target[idx++] = '0' + (port / 1000) % 10;
 					}
-					if (port >= 100) {
+					if (port >= 100 && idx < max_idx) {
 						e->target[idx++] = '0' + (port / 100) % 10;
 					}
-					if (port >= 10) {
+					if (port >= 10 && idx < max_idx) {
 						e->target[idx++] = '0' + (port / 10) % 10;
 					}
-					e->target[idx++] = '0' + port % 10;
-					e->target[idx] = '\0';
+					if (idx < max_idx) {
+						e->target[idx++] = '0' + port % 10;
+					}
+					e->target[idx < MAX_STRING_LEN ? idx : max_idx] = '\0';
 				}
 			}
 		}
@@ -125,7 +128,7 @@ int kretprobe_tcp_connect(struct pt_regs *ctx) {
 	void *uaddr = (void *)PT_REGS_PARM2(ctx);
 	if (uaddr) {
 		if (bpf_probe_read_user(&addr, sizeof(addr), uaddr) == 0) {
-			if (addr.sin_family == 2) {
+			if (addr.sin_family == AF_INET) {
 				u16 port = __builtin_bswap16(addr.sin_port);
 				u32 ip_be;
 				if (bpf_probe_read_user(&ip_be, sizeof(ip_be), &addr.sin_addr.s_addr) == 0) {
@@ -173,7 +176,7 @@ int kretprobe_tcp_sendmsg(struct pt_regs *ctx) {
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -227,7 +230,7 @@ int kretprobe_tcp_recvmsg(struct pt_regs *ctx) {
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -341,9 +344,9 @@ int tracepoint_tcp_set_state(void *ctx) {
 	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_TCP_STATE;
@@ -381,9 +384,9 @@ int tracepoint_tcp_retransmit_skb(void *ctx) {
 	} args_local;
 	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_TCP_RETRANS;
@@ -421,9 +424,9 @@ int tracepoint_net_dev_xmit(void *ctx) {
 		return 0;
 	}
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = pid;
 	e->type = EVENT_NET_DEV_ERROR;
@@ -460,7 +463,7 @@ int kretprobe_udp_sendmsg(struct pt_regs *ctx) {
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -507,7 +510,7 @@ int kretprobe_udp_recvmsg(struct pt_regs *ctx) {
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -608,7 +611,7 @@ int uretprobe_http_response(struct pt_regs *ctx) {
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	

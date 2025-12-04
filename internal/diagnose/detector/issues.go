@@ -2,6 +2,8 @@ package detector
 
 import (
 	"fmt"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -43,7 +45,7 @@ func DetectIssues(allEvents []*events.Event, errorRateThreshold, rttSpikeThresho
 			}
 		}
 		spikeRate := float64(spikes) / float64(len(tcpEvents)) * 100
-		if spikeRate > 5 {
+		if spikeRate > config.SpikeRateThreshold {
 			issues = append(issues, fmt.Sprintf("High TCP RTT spike rate: %.1f%% (%d/%d) (threshold: %.1fms)", spikeRate, spikes, len(tcpEvents), rttSpikeThreshold))
 		}
 	}

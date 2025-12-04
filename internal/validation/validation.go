@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 var (
@@ -111,10 +113,10 @@ func SanitizeProcessName(name string) string {
 	return result.String()
 }
 
-var containerIDRegex = regexp.MustCompile(`^[a-f0-9]{64}$|^[a-f0-9]{12,}$`)
+var 	containerIDRegex = regexp.MustCompile(`^[a-f0-9]{64}$|^[a-f0-9]{12,}$`)
 
 func ValidateContainerID(containerID string) bool {
-	if len(containerID) == 0 || len(containerID) > 128 {
+	if len(containerID) == 0 || len(containerID) > config.MaxContainerIDLength {
 		return false
 	}
 	if strings.Contains(containerID, "..") || strings.Contains(containerID, "/") {
@@ -156,8 +158,8 @@ func ValidateDiagnoseDuration(duration time.Duration) error {
 	if duration <= 0 {
 		return fmt.Errorf("duration must be positive")
 	}
-	if duration > 24*time.Hour {
-		return fmt.Errorf("duration cannot exceed 24 hours")
+	if duration > config.MaxDiagnoseDuration {
+		return fmt.Errorf("duration cannot exceed %v", config.MaxDiagnoseDuration)
 	}
 	return nil
 }

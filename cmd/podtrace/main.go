@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose"
 	"github.com/podtrace/podtrace/internal/ebpf"
 	"github.com/podtrace/podtrace/internal/events"
@@ -40,15 +41,15 @@ func main() {
 		SilenceUsage: true,
 	}
 
-	rootCmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	rootCmd.Flags().StringVarP(&namespace, "namespace", "n", config.DefaultNamespace, "Kubernetes namespace")
 	rootCmd.Flags().StringVar(&diagnoseDuration, "diagnose", "", "Run in diagnose mode for the specified duration (e.g., 10s, 5m)")
 	rootCmd.Flags().BoolVar(&enableMetrics, "metrics", false, "Enable Prometheus metrics server")
 	rootCmd.Flags().StringVar(&exportFormat, "export", "", "Export format for diagnose report (json, csv)")
 	rootCmd.Flags().StringVar(&eventFilter, "filter", "", "Filter events by type (dns,net,fs,cpu)")
 	rootCmd.Flags().StringVar(&containerName, "container", "", "Container name to trace (default: first container)")
-	rootCmd.Flags().Float64Var(&errorRateThreshold, "error-threshold", 10.0, "Error rate threshold percentage for issue detection")
-	rootCmd.Flags().Float64Var(&rttSpikeThreshold, "rtt-threshold", 100.0, "RTT spike threshold in milliseconds")
-	rootCmd.Flags().Float64Var(&fsSlowThreshold, "fs-threshold", 10.0, "File system slow operation threshold in milliseconds")
+	rootCmd.Flags().Float64Var(&errorRateThreshold, "error-threshold", config.DefaultErrorRateThreshold, "Error rate threshold percentage for issue detection")
+	rootCmd.Flags().Float64Var(&rttSpikeThreshold, "rtt-threshold", config.DefaultRTTThreshold, "RTT spike threshold in milliseconds")
+	rootCmd.Flags().Float64Var(&fsSlowThreshold, "fs-threshold", config.DefaultFSSlowThreshold, "File system slow operation threshold in milliseconds")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -100,7 +101,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create pod resolver: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.DefaultPodResolveTimeout)
 	defer cancel()
 	podInfo, err := resolver.ResolvePod(ctx, podName, namespace, containerName)
 	if err != nil {
@@ -125,14 +126,14 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to set container ID: %w", err)
 	}
 
-	eventChan := make(chan *events.Event, 100)
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
 	if enableMetrics {
 		go metricsexporter.HandleEvents(eventChan)
 	}
 
 	filteredChan := eventChan
 	if eventFilter != "" {
-		filteredChan = make(chan *events.Event, 100)
+		filteredChan = make(chan *events.Event, config.EventChannelBufferSize)
 		go filterEvents(eventChan, filteredChan, eventFilter)
 	}
 
@@ -149,11 +150,11 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 
 func runNormalMode(eventChan <-chan *events.Event) error {
 	fmt.Println("Tracing started. Press Ctrl+C to stop.")
-	fmt.Println("Real-time diagnostic updates every 5 seconds...")
+	fmt.Printf("Real-time diagnostic updates every %v...\n", config.DefaultRealtimeUpdateInterval)
 	fmt.Println()
 
 	diagnostician := diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(config.DefaultRealtimeUpdateInterval)
 	defer ticker.Stop()
 
 	hasPrintedReport := false

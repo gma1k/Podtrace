@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sys/unix"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/ebpf/filter"
 	"github.com/podtrace/podtrace/internal/ebpf/parser"
 	"github.com/podtrace/podtrace/internal/ebpf/probes"
@@ -22,10 +23,8 @@ import (
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
-const maxStackDepth = 64
-
 type stackTraceValue struct {
-	IPs [maxStackDepth]uint64
+	IPs [config.MaxStackDepth]uint64
 	Nr  uint32
 	Pad uint32
 }
@@ -45,12 +44,12 @@ func NewTracer() (*Tracer, error) {
 
 	var rlim unix.Rlimit
 	if err := unix.Getrlimit(unix.RLIMIT_MEMLOCK, &rlim); err == nil {
-		if rlim.Cur < 512*1024*1024 {
+		if rlim.Cur < config.MemlockLimitBytes {
 			originalMax := rlim.Max
-			if rlim.Max < 512*1024*1024 {
-				rlim.Max = 512 * 1024 * 1024
+			if rlim.Max < config.MemlockLimitBytes {
+				rlim.Max = config.MemlockLimitBytes
 			}
-			rlim.Cur = 512 * 1024 * 1024
+			rlim.Cur = config.MemlockLimitBytes
 			if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &rlim); err != nil {
 				rlim.Cur = rlim.Max
 				if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &rlim); err != nil {
@@ -144,7 +143,7 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 				errorCountMu.Lock()
 				errorCount++
 				now := time.Now()
-				shouldLog := now.Sub(lastErrorLog) > 5*time.Second
+				shouldLog := now.Sub(lastErrorLog) > config.DefaultErrorLogInterval
 				count := errorCount
 				if shouldLog {
 					errorCount = 0
@@ -152,7 +151,7 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 				}
 				errorCountMu.Unlock()
 				if shouldLog {
-					if count > 100 {
+					if count > config.HighErrorCountThreshold {
 						fmt.Fprintf(os.Stderr, "Warning: High ring buffer error rate: %d errors in last period. Events may be dropped.\n", count)
 					} else {
 						fmt.Fprintf(os.Stderr, "Error reading ring buffer: %v\n", err)

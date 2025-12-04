@@ -6,11 +6,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
 var readFile = os.ReadFile
-var procBase = "/proc"
 
 type CgroupFilter struct {
 	cgroupPath string
@@ -44,15 +44,15 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 	}
 	f.pidCacheMu.RUnlock()
 
-	cgroupFile := fmt.Sprintf("%s/%d/cgroup", procBase, pid)
-	if len(cgroupFile) > 64 {
+	cgroupFile := fmt.Sprintf("%s/%d/cgroup", config.ProcBasePath, pid)
+	if len(cgroupFile) > config.MaxCgroupFilePathLength {
 		return false
 	}
 	data, err := readFile(cgroupFile)
 	if err != nil {
 		f.pidCacheMu.Lock()
 		f.pidCache[pid] = false
-		if len(f.pidCache) > 10000 {
+		if len(f.pidCache) > config.MaxPIDCacheSize {
 			for k := range f.pidCache {
 				delete(f.pidCache, k)
 				break
@@ -67,7 +67,7 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 	if pidCgroupPath == "" {
 		f.pidCacheMu.Lock()
 		f.pidCache[pid] = false
-		if len(f.pidCache) > 10000 {
+		if len(f.pidCache) > config.MaxPIDCacheSize {
 			for k := range f.pidCache {
 				delete(f.pidCache, k)
 				break
@@ -90,10 +90,11 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 	}
 
 	f.pidCacheMu.Lock()
-	if len(f.pidCache) >= 10000 {
+	if len(f.pidCache) >= config.MaxPIDCacheSize {
+		evictTarget := int(float64(config.MaxPIDCacheSize) * config.PIDCacheEvictionRatio)
 		for k := range f.pidCache {
 			delete(f.pidCache, k)
-			if len(f.pidCache) < 9000 {
+			if len(f.pidCache) < evictTarget {
 				break
 			}
 		}
@@ -105,7 +106,7 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 }
 
 func NormalizeCgroupPath(path string) string {
-	path = strings.TrimPrefix(path, "/sys/fs/cgroup")
+	path = strings.TrimPrefix(path, config.CgroupBasePath)
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}

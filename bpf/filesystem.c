@@ -91,14 +91,14 @@ int kretprobe_vfs_read(struct pt_regs *ctx) {
 	}
 	
 	u64 latency = calc_latency(*start_ts);
-	if (latency < 1000000) {
+	if (latency < MIN_LATENCY_NS) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -140,14 +140,14 @@ int kretprobe_vfs_write(struct pt_regs *ctx) {
 	}
 	
 	u64 latency = calc_latency(*start_ts);
-	if (latency < 1000000) {
+	if (latency < MIN_LATENCY_NS) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}
 	
 	s64 ret = PT_REGS_RC(ctx);
 	u64 bytes = 0;
-	if (ret > 0 && ret < 10 * 1024 * 1024) {
+	if (ret > 0 && (u64)ret < MAX_BYTES_THRESHOLD) {
 		bytes = (u64)ret;
 	}
 	
@@ -208,7 +208,7 @@ int kretprobe_vfs_fsync(struct pt_regs *ctx) {
 	}
 	
 	u64 latency = calc_latency(*start_ts);
-	if (latency < 1000000) {
+	if (latency < MIN_LATENCY_NS) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}

@@ -3,6 +3,8 @@ package filter
 import (
 	"fmt"
 	"testing"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func TestCgroupFilter_EmptyPath(t *testing.T) {
@@ -168,28 +170,30 @@ func BenchmarkExtractCgroupPathFromProc(b *testing.B) {
 }
 
 func TestCgroupFilter_LongCgroupFilePath(t *testing.T) {
-	origProcBase := procBase
-	t.Cleanup(func() { procBase = origProcBase })
+	origProcBase := config.ProcBasePath
+	t.Cleanup(func() { config.SetProcBasePath(origProcBase) })
 
-	procBase = "/this/is/a/very/long/path/that/makes/the/proc/file/name/exceed/sixtyfour/characters"
+	longPath := "/this/is/a/very/long/path/that/makes/the/proc/file/name/exceed/sixtyfour/characters"
+	config.SetProcBasePath(longPath)
 
 	filter := NewCgroupFilter()
 	filter.SetCgroupPath("/sys/fs/cgroup/kubepods/test")
 
+	expectedPath := fmt.Sprintf("%s/%d/cgroup", longPath, 1234)
 	if filter.IsPIDInCgroup(1234) {
-		t.Fatalf("expected false when cgroup file path length exceeds limit")
+		t.Fatalf("expected false when cgroup file path length exceeds limit (MaxCgroupFilePathLength=%d, actual path length=%d)", config.MaxCgroupFilePathLength, len(expectedPath))
 	}
 }
 
 func TestCgroupFilter_ReadFileErrorCachingAndEviction(t *testing.T) {
 	origReadFile := readFile
-	origProcBase := procBase
+	origProcBase := config.ProcBasePath
 	t.Cleanup(func() {
 		readFile = origReadFile
-		procBase = origProcBase
+		config.SetProcBasePath(origProcBase)
 	})
 
-	procBase = "/proc"
+	config.SetProcBasePath("/proc")
 	readFile = func(path string) ([]byte, error) {
 		return nil, fmt.Errorf("forced error")
 	}
@@ -208,13 +212,13 @@ func TestCgroupFilter_ReadFileErrorCachingAndEviction(t *testing.T) {
 
 func TestCgroupFilter_RelationshipsAndSuccessCache(t *testing.T) {
 	origReadFile := readFile
-	origProcBase := procBase
+	origProcBase := config.ProcBasePath
 	t.Cleanup(func() {
 		readFile = origReadFile
-		procBase = origProcBase
+		config.SetProcBasePath(origProcBase)
 	})
 
-	procBase = "/proc"
+	config.SetProcBasePath("/proc")
 
 	type tc struct {
 		name        string
@@ -279,13 +283,13 @@ func TestCgroupFilter_RelationshipsAndSuccessCache(t *testing.T) {
 
 func TestCgroupFilter_SuccessEvictionPath(t *testing.T) {
 	origReadFile := readFile
-	origProcBase := procBase
+	origProcBase := config.ProcBasePath
 	t.Cleanup(func() {
 		readFile = origReadFile
-		procBase = origProcBase
+		config.SetProcBasePath(origProcBase)
 	})
 
-	procBase = "/proc"
+	config.SetProcBasePath("/proc")
 	readFile = func(path string) ([]byte, error) {
 		return []byte("0::/kubepods/pod1"), nil
 	}
@@ -304,13 +308,13 @@ func TestCgroupFilter_SuccessEvictionPath(t *testing.T) {
 
 func TestCgroupFilter_EmptyCgroupPathFromProc(t *testing.T) {
 	origReadFile := readFile
-	origProcBase := procBase
+	origProcBase := config.ProcBasePath
 	t.Cleanup(func() {
 		readFile = origReadFile
-		procBase = origProcBase
+		config.SetProcBasePath(origProcBase)
 	})
 
-	procBase = "/proc"
+	config.SetProcBasePath("/proc")
 	readFile = func(path string) ([]byte, error) {
 		return []byte("invalid"), nil
 	}

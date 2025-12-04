@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"sort"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -24,10 +26,10 @@ func AnalyzeTCP(events []*events.Event, rttSpikeThreshold float64) (avgRTT, maxR
 		if rttMs > rttSpikeThreshold {
 			spikes++
 		}
-		if e.Error < 0 && e.Error != -11 {
+		if e.Error < 0 && e.Error != -config.EAGAIN {
 			errors++
 		}
-		if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+		if e.Bytes > 0 && e.Bytes < config.MaxBytesForBandwidth {
 			totalBytes += e.Bytes
 			if e.Bytes > peakBytes {
 				peakBytes = e.Bytes

@@ -22,62 +22,66 @@ static inline void format_ip_port(u32 ip, u16 port, char *buf) {
 	u8 d = ip & 0xFF;
 	u16 p = port;
 	u32 idx = 0;
+	u32 max_idx = MAX_STRING_LEN - 1;
 	
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (a / 100) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (a / 10) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + a % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (b / 100) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (b / 10) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + b % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (c / 100) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (c / 10) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + c % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '.';
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (d / 100) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (d / 10) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + d % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = ':';
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 10000) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 1000) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 100) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + (p / 10) % 10;
-	if (idx < MAX_STRING_LEN - 1) buf[idx++] = '0' + p % 10;
-	if (idx < MAX_STRING_LEN) buf[idx] = '\0';
+	if (idx < max_idx) buf[idx++] = '0' + (a / 100) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (a / 10) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + a % 10;
+	if (idx < max_idx) buf[idx++] = '.';
+	if (idx < max_idx) buf[idx++] = '0' + (b / 100) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (b / 10) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + b % 10;
+	if (idx < max_idx) buf[idx++] = '.';
+	if (idx < max_idx) buf[idx++] = '0' + (c / 100) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (c / 10) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + c % 10;
+	if (idx < max_idx) buf[idx++] = '.';
+	if (idx < max_idx) buf[idx++] = '0' + (d / 100) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (d / 10) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + d % 10;
+	if (idx < max_idx) buf[idx++] = ':';
+	if (idx < max_idx) buf[idx++] = '0' + (p / 10000) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (p / 1000) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (p / 100) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + (p / 10) % 10;
+	if (idx < max_idx) buf[idx++] = '0' + p % 10;
+	buf[idx < MAX_STRING_LEN ? idx : max_idx] = '\0';
 }
 
 static inline void format_ipv6_port(const u8 *ipv6, u16 port, char *buf) {
 	u16 p = port;
 	u32 idx = 0;
+	u32 max_idx = MAX_STRING_LEN - 1;
+	u32 port_start_limit = MAX_STRING_LEN - 6;
 	
-	for (int i = 0; i < 8 && idx < MAX_STRING_LEN - 10; i++) {
-		if (i > 0) {
+	for (int i = 0; i < 8 && idx < port_start_limit; i++) {
+		if (i > 0 && idx < max_idx) {
 			buf[idx++] = ':';
 		}
+		if (idx >= max_idx) break;
 		u16 seg = (ipv6[i*2] << 8) | ipv6[i*2 + 1];
 		u8 d1 = (seg >> 12) & 0xF;
 		u8 d2 = (seg >> 8) & 0xF;
 		u8 d3 = (seg >> 4) & 0xF;
 		u8 d4 = seg & 0xF;
 		
-		if (d1 > 0) {
+		if (d1 > 0 && idx < max_idx) {
 			buf[idx++] = d1 < 10 ? '0' + d1 : 'a' + (d1 - 10);
 		}
-		buf[idx++] = d2 < 10 ? '0' + d2 : 'a' + (d2 - 10);
-		buf[idx++] = d3 < 10 ? '0' + d3 : 'a' + (d3 - 10);
-		buf[idx++] = d4 < 10 ? '0' + d4 : 'a' + (d4 - 10);
+		if (idx < max_idx) buf[idx++] = d2 < 10 ? '0' + d2 : 'a' + (d2 - 10);
+		if (idx < max_idx) buf[idx++] = d3 < 10 ? '0' + d3 : 'a' + (d3 - 10);
+		if (idx < max_idx) buf[idx++] = d4 < 10 ? '0' + d4 : 'a' + (d4 - 10);
 	}
 	
-	if (idx < MAX_STRING_LEN - 6) {
-		buf[idx++] = ':';
-		buf[idx++] = '0' + (p / 10000) % 10;
-		buf[idx++] = '0' + (p / 1000) % 10;
-		buf[idx++] = '0' + (p / 100) % 10;
-		buf[idx++] = '0' + (p / 10) % 10;
-		buf[idx++] = '0' + p % 10;
+	if (idx < port_start_limit) {
+		if (idx < max_idx) buf[idx++] = ':';
+		if (idx < max_idx) buf[idx++] = '0' + (p / 10000) % 10;
+		if (idx < max_idx) buf[idx++] = '0' + (p / 1000) % 10;
+		if (idx < max_idx) buf[idx++] = '0' + (p / 100) % 10;
+		if (idx < max_idx) buf[idx++] = '0' + (p / 10) % 10;
+		if (idx < max_idx) buf[idx++] = '0' + p % 10;
 	}
-	buf[idx] = '\0';
+	buf[idx < MAX_STRING_LEN ? idx : max_idx] = '\0';
 }
 
 static inline u64 build_stack_key(u32 pid, u32 tid, u64 timestamp) {
@@ -110,7 +114,9 @@ static inline void capture_user_stack(void *ctx, u32 pid, u32 tid, struct event 
 		e->stack_key = 0;
 		return;
 	}
-	trace->nr = sz / sizeof(u64);
+	u32 max_frames = sizeof(trace->ips) / sizeof(u64);
+	u32 nr_frames = (u32)(sz / sizeof(u64));
+	trace->nr = nr_frames > max_frames ? max_frames : nr_frames;
 	u64 key = build_stack_key(pid, tid, e->timestamp);
 	bpf_map_update_elem(&stack_traces, &key, trace, BPF_ANY);
 	e->stack_key = key;

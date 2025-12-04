@@ -14,10 +14,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/validation"
 )
-
-var cgroupBase = "/sys/fs/cgroup"
 
 type PodResolver struct {
 	clientset *kubernetes.Clientset
@@ -138,9 +137,9 @@ type PodInfo struct {
 
 func findCgroupPath(containerID string) (string, error) {
 	paths := []string{
-		filepath.Join(cgroupBase, "kubepods.slice"),
-		filepath.Join(cgroupBase, "system.slice"),
-		filepath.Join(cgroupBase, "user.slice"),
+		filepath.Join(config.CgroupBasePath, "kubepods.slice"),
+		filepath.Join(config.CgroupBasePath, "system.slice"),
+		filepath.Join(config.CgroupBasePath, "user.slice"),
 	}
 
 	var errFound = errors.New("podtrace: cgroup found")

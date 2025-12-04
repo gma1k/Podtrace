@@ -19,9 +19,9 @@ int tracepoint_page_fault_user(void *ctx) {
 	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
 	
 	struct event *e = get_event_buf();
- if (!e) {
- 	return 0;
- }
+	if (!e) {
+		return 0;
+	}
 	e->timestamp = bpf_ktime_get_ns();
 	e->pid = args_local.common_pid;
 	e->type = EVENT_PAGE_FAULT;
@@ -66,7 +66,7 @@ int tracepoint_oom_kill_process(void *ctx) {
 	e->type = EVENT_OOM_KILL;
 	e->latency_ns = 0;
 	e->error = 0;
-	e->bytes = args_local.totalpages * 4096;
+	e->bytes = args_local.totalpages * PAGE_SIZE;
 	e->tcp_state = 0;
 	
 	bpf_probe_read_kernel_str(e->target, sizeof(e->target), args_local.comm);

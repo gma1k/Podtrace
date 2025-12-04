@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"fmt"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func Percentile(sorted []float64, p float64) float64 {
@@ -13,14 +15,14 @@ func Percentile(sorted []float64, p float64) float64 {
 }
 
 func FormatBytes(bytes uint64) string {
-	if bytes < 1024 {
+	if bytes < config.KB {
 		return fmt.Sprintf("%d B", bytes)
-	} else if bytes < 1024*1024 {
-		return fmt.Sprintf("%.2f KB", float64(bytes)/1024)
-	} else if bytes < 1024*1024*1024 {
-		return fmt.Sprintf("%.2f MB", float64(bytes)/(1024*1024))
+	} else if bytes < config.MB {
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(config.KB))
+	} else if bytes < config.GB {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(config.MB))
 	} else {
-		return fmt.Sprintf("%.2f GB", float64(bytes)/(1024*1024*1024))
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(config.GB))
 	}
 }
 

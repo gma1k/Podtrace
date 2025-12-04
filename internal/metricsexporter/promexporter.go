@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -228,8 +229,8 @@ func ExportFilesystemBandwidthMetric(e *events.Event, operation string) {
 }
 
 var (
-	limiter        = rate.NewLimiter(rate.Every(time.Second/10), 20)
-	maxRequestSize = int64(1024 * 1024)
+	limiter        = rate.NewLimiter(rate.Every(time.Second/time.Duration(config.RateLimitPerSec)), config.RateLimitBurst)
+	maxRequestSize = int64(config.MaxRequestSize)
 )
 
 func securityHeadersMiddleware(next http.Handler) http.Handler {
@@ -265,16 +266,13 @@ func StartServer() *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", securityHeadersMiddleware(rateLimitMiddleware(promhttp.Handler())))
 
-	addr := os.Getenv("PODTRACE_METRICS_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:3000"
-	}
+	addr := config.GetMetricsAddress()
 
 	if host, _, err := net.SplitHostPort(addr); err == nil {
 		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
-			if os.Getenv("PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR") != "1" {
-				fmt.Fprintf(os.Stderr, "Warning: rejecting non-loopback metrics address %q without PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR=1; falling back to 127.0.0.1:3000\n", addr)
-				addr = "127.0.0.1:3000"
+			if !config.AllowNonLoopbackMetrics() {
+				fmt.Fprintf(os.Stderr, "Warning: rejecting non-loopback metrics address %q without PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR=1; falling back to %s:%d\n", addr, config.DefaultMetricsHost, config.DefaultMetricsPort)
+				addr = config.DefaultMetricsHost + ":" + fmt.Sprintf("%d", config.DefaultMetricsPort)
 			}
 		}
 	}
@@ -282,8 +280,8 @@ func StartServer() *Server {
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  config.DefaultMetricsReadTimeout,
+		WriteTimeout: config.DefaultMetricsWriteTimeout,
 	}
 
 	srv := &Server{server: server}
@@ -304,7 +302,7 @@ func StartServer() *Server {
 
 func (s *Server) Shutdown() {
 	if s.server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), config.DefaultMetricsShutdownTimeout)
 		defer cancel()
 		s.server.Shutdown(ctx)
 	}

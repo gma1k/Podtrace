@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"sort"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -22,7 +24,7 @@ func AnalyzeFS(events []*events.Event, fsSlowThreshold float64) (avgLatency, max
 		if latencyMs > fsSlowThreshold {
 			slowOps++
 		}
-		if e.Bytes > 0 && e.Bytes < 10*1024*1024 {
+		if e.Bytes > 0 && e.Bytes < config.MaxBytesForBandwidth {
 			totalBytes += e.Bytes
 		}
 	}

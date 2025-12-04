@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -120,7 +121,7 @@ func GenerateConnectionCorrelation(events []*events.Event) string {
 	report += fmt.Sprintf("  Active connections: %d\n", len(summaries))
 	report += "  Top connections by activity:\n"
 	for i, summary := range summaries {
-		if i >= 10 {
+		if i >= config.MaxConnectionTargets {
 			break
 		}
 		report += fmt.Sprintf("    - %s:\n", summary.Target)

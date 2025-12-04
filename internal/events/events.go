@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func sanitizeString(s string) string {
@@ -104,7 +106,7 @@ func (e *Event) TypeString() string {
 
 func (e *Event) FormatMessage() string {
 	latencyMs := float64(e.LatencyNS) / 1e6
-	const maxTargetLen = 256
+	maxTargetLen := config.MaxTargetStringLength
 
 	switch e.Type {
 	case EventDNS:
@@ -121,16 +123,16 @@ func (e *Event) FormatMessage() string {
 		if e.Error != 0 {
 			return fmt.Sprintf("[NET] connect to %s failed: error %d", sanitizeString(target), e.Error)
 		}
-		if latencyMs > 1 {
+		if latencyMs > config.ConnectLatencyThresholdMS {
 			return fmt.Sprintf("[NET] connect to %s took %.2fms", sanitizeString(target), latencyMs)
 		}
 		return ""
 
 	case EventTCPSend:
-		if e.Error < 0 && e.Error != -11 {
+		if e.Error < 0 && e.Error != -config.EAGAIN {
 			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
-		if latencyMs > 100 {
+		if latencyMs > config.TCPLatencySpikeThresholdMS {
 			msg := fmt.Sprintf("[NET] TCP send latency spike: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -140,10 +142,10 @@ func (e *Event) FormatMessage() string {
 		return ""
 
 	case EventTCPRecv:
-		if e.Error < 0 && e.Error != -11 {
+		if e.Error < 0 && e.Error != -config.EAGAIN {
 			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
-		if latencyMs > 100 {
+		if latencyMs > config.TCPLatencySpikeThresholdMS {
 			msg := fmt.Sprintf("[NET] TCP recv RTT spike: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -156,7 +158,7 @@ func (e *Event) FormatMessage() string {
 		if e.Error < 0 {
 			return fmt.Sprintf("[NET] UDP send error: %d", e.Error)
 		}
-		if latencyMs > 100 {
+		if latencyMs > config.UDPLatencySpikeThresholdMS {
 			msg := fmt.Sprintf("[NET] UDP send latency spike: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -169,7 +171,7 @@ func (e *Event) FormatMessage() string {
 		if e.Error < 0 {
 			return fmt.Sprintf("[NET] UDP recv error: %d", e.Error)
 		}
-		if latencyMs > 100 {
+		if latencyMs > config.UDPLatencySpikeThresholdMS {
 			msg := fmt.Sprintf("[NET] UDP recv latency spike: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -212,7 +214,7 @@ func (e *Event) FormatMessage() string {
 		if target == "" {
 			target = "unknown"
 		}
-		memMB := float64(e.Bytes) / (1024 * 1024)
+		memMB := float64(e.Bytes) / float64(config.MB)
 		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:
@@ -341,7 +343,7 @@ func TCPStateString(state uint32) string {
 
 func (e *Event) FormatRealtimeMessage() string {
 	latencyMs := float64(e.LatencyNS) / 1e6
-	const maxTargetLen = 256
+	maxTargetLen := config.MaxTargetStringLength
 
 	switch e.Type {
 	case EventDNS:
@@ -361,10 +363,10 @@ func (e *Event) FormatRealtimeMessage() string {
 		return fmt.Sprintf("[NET] connect to %s (%.2fms)", sanitizeString(target), latencyMs)
 
 	case EventTCPSend:
-		if e.Error < 0 && e.Error != -11 {
+		if e.Error < 0 && e.Error != -config.EAGAIN {
 			return fmt.Sprintf("[NET] TCP send error: %d", e.Error)
 		}
-		if latencyMs > 10 {
+		if latencyMs > config.TCPRealtimeThresholdMS {
 			msg := fmt.Sprintf("[NET] TCP send latency: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -374,10 +376,10 @@ func (e *Event) FormatRealtimeMessage() string {
 		return ""
 
 	case EventTCPRecv:
-		if e.Error < 0 && e.Error != -11 {
+		if e.Error < 0 && e.Error != -config.EAGAIN {
 			return fmt.Sprintf("[NET] TCP recv error: %d", e.Error)
 		}
-		if latencyMs > 10 {
+		if latencyMs > config.TCPRealtimeThresholdMS {
 			msg := fmt.Sprintf("[NET] TCP recv RTT: %.2fms", latencyMs)
 			if e.Bytes > 0 {
 				msg += fmt.Sprintf(" (%d bytes)", e.Bytes)
@@ -402,7 +404,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		if target == "" {
 			target = "unknown"
 		}
-		memMB := float64(e.Bytes) / (1024 * 1024)
+		memMB := float64(e.Bytes) / float64(config.MB)
 		return fmt.Sprintf("[MEM] OOM kill: %s (%.2f MB)", sanitizeString(target), memMB)
 
 	case EventWrite:

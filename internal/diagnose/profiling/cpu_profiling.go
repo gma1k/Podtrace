@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose/tracker"
 	"github.com/podtrace/podtrace/internal/events"
 )
@@ -71,7 +72,7 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 	if len(podProcesses) > 0 {
 		report += "  Pod Processes:\n"
 		for i, info := range podProcesses {
-			if i >= 10 {
+			if i >= config.TopProcessesLimit*2 {
 				break
 			}
 			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%.2fs / %.2fs)\n",
@@ -85,14 +86,14 @@ func GenerateCPUUsageReport(events []*events.Event, duration time.Duration) stri
 		kernelCPUPercent := 0.0
 		report += "  System/Kernel Processes:\n"
 		for i, info := range kernelProcesses {
-			if i >= 5 {
+			if i >= config.TopProcessesLimit {
 				break
 			}
 			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%.2fs / %.2fs)\n",
 				info.pid, info.name, info.cpuPercent, info.cpuTimeSec, durationSec)
 			kernelCPUPercent += info.cpuPercent
 		}
-		if extra := len(kernelProcesses) - 5; extra > 0 {
+		if extra := len(kernelProcesses) - config.TopProcessesLimit; extra > 0 {
 			report += fmt.Sprintf("    ... and %d more system processes\n", extra)
 		}
 		report += "\n"
@@ -117,7 +118,7 @@ type cpuTimeInfo struct {
 }
 
 func getProcessCPUTime(pid uint32) cpuTimeInfo {
-	statPath := fmt.Sprintf("/proc/%d/stat", pid)
+	statPath := fmt.Sprintf("%s/%d/stat", config.ProcBasePath, pid)
 	data, err := os.ReadFile(statPath)
 	if err != nil {
 		return cpuTimeInfo{}
@@ -132,7 +133,8 @@ func getProcessCPUTime(pid uint32) cpuTimeInfo {
 	stime, _ := strconv.ParseUint(fields[14], 10, 64)
 
 	clockTicks := uint64(100)
-	if data, err := os.ReadFile("/proc/self/auxv"); err == nil {
+	auxvPath := fmt.Sprintf("%s/self/auxv", config.ProcBasePath)
+	if data, err := os.ReadFile(auxvPath); err == nil {
 		for i := 0; i < len(data)-8; i += 16 {
 			key := uint64(data[i]) | uint64(data[i+1])<<8 | uint64(data[i+2])<<16 | uint64(data[i+3])<<24 |
 				uint64(data[i+4])<<32 | uint64(data[i+5])<<40 | uint64(data[i+6])<<48 | uint64(data[i+7])<<56

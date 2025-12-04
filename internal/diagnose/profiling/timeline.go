@@ -3,6 +3,8 @@ package profiling
 import (
 	"fmt"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -23,7 +25,7 @@ func AnalyzeTimeline(events []*events.Event, startTime time.Time, duration time.
 		return nil
 	}
 
-	numBuckets := 5
+	numBuckets := config.TimelineBuckets
 	bucketDuration := duration / time.Duration(numBuckets)
 	buckets := make([]int, numBuckets)
 
@@ -62,7 +64,10 @@ func DetectBursts(events []*events.Event, startTime time.Time, duration time.Dur
 		return nil
 	}
 
-	avgRate := float64(len(events)) / duration.Seconds()
+	var avgRate float64
+	if duration.Seconds() > 0 {
+		avgRate = float64(len(events)) / duration.Seconds()
+	}
 	windowDuration := 1 * time.Second
 	numWindows := int(duration / windowDuration)
 	if numWindows < 2 {
@@ -108,10 +113,13 @@ func AnalyzeConnectionPattern(connectEvents []*events.Event, startTime, endTime 
 		return ConnectionPattern{}
 	}
 
-	avgRate := float64(len(connectEvents)) / duration.Seconds()
+	var avgRate float64
+	if duration.Seconds() > 0 {
+		avgRate = float64(len(connectEvents)) / duration.Seconds()
+	}
 	windowDuration := duration / 10
-	if windowDuration < 100*time.Millisecond {
-		windowDuration = 100 * time.Millisecond
+	if windowDuration < config.MinBurstWindowDuration {
+		windowDuration = config.MinBurstWindowDuration
 	}
 
 	var windowCounts []int
@@ -137,7 +145,10 @@ func AnalyzeConnectionPattern(connectEvents []*events.Event, startTime, endTime 
 		sum += float64(count)
 		sumSq += float64(count) * float64(count)
 	}
-	mean := sum / float64(len(windowCounts))
+	var mean float64
+	if len(windowCounts) > 0 {
+		mean = sum / float64(len(windowCounts))
+	}
 	variance := (sumSq / float64(len(windowCounts))) - (mean * mean)
 	stdDev := variance
 
@@ -195,7 +206,10 @@ func AnalyzeIOPattern(tcpEvents []*events.Event, startTime time.Time, duration t
 		sendRecvRatio = float64(sendCount) / float64(recvCount)
 	}
 
-	avgThroughput := float64(len(tcpEvents)) / duration.Seconds()
+	var avgThroughput float64
+	if duration.Seconds() > 0 {
+		avgThroughput = float64(len(tcpEvents)) / duration.Seconds()
+	}
 	windowDuration := 1 * time.Second
 	numWindows := int(duration / windowDuration)
 	if numWindows < 1 {

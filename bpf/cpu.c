@@ -31,7 +31,7 @@ int tracepoint_sched_switch(void *ctx) {
 		
 		if (block_start) {
 			u64 block_time = calc_latency(*block_start);
-			if (block_time > 1000000) {
+			if (block_time > MIN_LATENCY_NS) {
 				struct event *e = get_event_buf();
 				if (!e) {
 					bpf_map_delete_elem(&start_times, &key);
@@ -79,15 +79,16 @@ int kprobe_do_futex(struct pt_regs *ctx) {
 			buf[idx++] = '0';
 			buf[idx++] = 'x';
 		}
-		for (int i = 0; i < 16 && idx < MAX_STRING_LEN - 1; i++) {
-			u8 nibble = (addr >> ((15 - i) * 4)) & 0xF;
+		u32 max_idx = MAX_STRING_LEN - 1;
+		for (int i = 0; i < HEX_ADDR_LEN && idx < max_idx; i++) {
+			u8 nibble = (addr >> ((HEX_ADDR_LEN - 1 - i) * 4)) & 0xF;
 			if (nibble < 10) {
 				buf[idx++] = '0' + nibble;
 			} else {
 				buf[idx++] = 'a' + (nibble - 10);
 			}
 		}
-		buf[idx] = '\0';
+		buf[idx < MAX_STRING_LEN ? idx : max_idx] = '\0';
 		bpf_map_update_elem(&lock_targets, &key, buf, BPF_ANY);
 	}
 	return 0;
@@ -103,7 +104,7 @@ int kretprobe_do_futex(struct pt_regs *ctx) {
 		return 0;
 	}
 	u64 latency = calc_latency(*start_ts);
-	if (latency < 1000000) {
+	if (latency < MIN_LATENCY_NS) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}
@@ -155,15 +156,16 @@ int uprobe_pthread_mutex_lock(struct pt_regs *ctx) {
 			buf[idx++] = '0';
 			buf[idx++] = 'x';
 		}
-		for (int i = 0; i < 16 && idx < MAX_STRING_LEN - 1; i++) {
-			u8 nibble = (addr >> ((15 - i) * 4)) & 0xF;
+		u32 max_idx = MAX_STRING_LEN - 1;
+		for (int i = 0; i < HEX_ADDR_LEN && idx < max_idx; i++) {
+			u8 nibble = (addr >> ((HEX_ADDR_LEN - 1 - i) * 4)) & 0xF;
 			if (nibble < 10) {
 				buf[idx++] = '0' + nibble;
 			} else {
 				buf[idx++] = 'a' + (nibble - 10);
 			}
 		}
-		buf[idx] = '\0';
+		buf[idx < MAX_STRING_LEN ? idx : max_idx] = '\0';
 		bpf_map_update_elem(&lock_targets, &key, buf, BPF_ANY);
 	}
 	return 0;
@@ -179,7 +181,7 @@ int uretprobe_pthread_mutex_lock(struct pt_regs *ctx) {
 		return 0;
 	}
 	u64 latency = calc_latency(*start_ts);
-	if (latency < 1000000) {
+	if (latency < MIN_LATENCY_NS) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}

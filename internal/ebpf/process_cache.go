@@ -6,10 +6,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/validation"
 )
-
-const maxProcessCacheSize = 10000
 
 var (
 	processNameCache      = make(map[uint32]string)
@@ -61,8 +60,8 @@ func getProcessNameQuick(pid uint32) string {
 	}
 
 	processNameCacheMutex.Lock()
-	if len(processNameCache) >= maxProcessCacheSize {
-		evictCount := len(processNameCache) - (maxProcessCacheSize * 9 / 10)
+	if len(processNameCache) >= config.MaxProcessCacheSize {
+		evictCount := len(processNameCache) - int(float64(config.MaxProcessCacheSize)*config.ProcessCacheEvictionRatio)
 		for k := range processNameCache {
 			delete(processNameCache, k)
 			evictCount--
