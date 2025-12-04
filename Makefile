@@ -1,4 +1,4 @@
-.PHONY: all build clean test check-go
+.PHONY: all build clean test check-go test-unit test-integration test-bench coverage
 
 CLANG ?= clang
 LLC ?= llc
@@ -48,13 +48,37 @@ clean:
 	rm -f $(BPF_OBJ)
 	rm -f $(BINARY)
 	rm -rf bin
+	rm -f coverage.out coverage.html
 
 deps:
 	$(GO) mod download
 	$(GO) mod tidy
 
-test:
-	@echo "Tests not yet implemented"
+test: test-unit
+
+test-unit:
+	@echo "Running unit tests..."
+	$(GO) test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+test-integration:
+	@echo "Running integration tests..."
+	$(GO) test -v -tags=integration ./test
+
+test-bench:
+	@echo "Running benchmarks..."
+	$(GO) test -bench=. -benchmem ./...
+
+test-all: test-unit test-bench
+	@if [ -n "$$CI" ]; then \
+		$(GO) test -tags=integration ./test; \
+	fi
+
+coverage: test-unit
+	@echo "Generating coverage report..."
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+	@echo "Coverage summary:"
+	$(GO) tool cover -func=coverage.out | tail -1
 
 build-setup: build
 	@echo "Setting capabilities..."
@@ -67,4 +91,9 @@ help:
 	@echo "  build-setup - Build and set capabilities (requires sudo)"
 	@echo "  clean       - Remove build artifacts"
 	@echo "  deps        - Download and tidy Go dependencies"
-	@echo "  test        - Run tests"
+	@echo "  test        - Run unit tests"
+	@echo "  test-unit   - Run unit tests only"
+	@echo "  test-integration - Run integration tests (requires K8s cluster)"
+	@echo "  test-bench  - Run benchmark tests"
+	@echo "  test-all    - Run all tests"
+	@echo "  coverage    - Generate test coverage report"

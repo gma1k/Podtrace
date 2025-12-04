@@ -36,7 +36,9 @@ podtrace/
 │   ├── metricsexporter/    # Prometheus metrics
 │   └── validation/         # Input validation
 ├── scripts/                # Build and setup scripts
-├── test/                   # Test utilities
+├── test/                   # Test utilities and integration tests
+│   ├── integration_test.go # Integration test framework
+│   └── *.sh                # Test setup and utility scripts
 └── doc/                    # Documentation
 ```
 
@@ -62,6 +64,28 @@ make build-setup
 
 # Clean build artifacts
 make clean
+```
+
+### Test Commands
+
+```bash
+# Run all tests
+make test
+
+# Run unit tests only
+make test-unit
+
+# Run integration tests
+make test-integration
+
+# Run benchmarks
+make test-bench
+
+# Run all tests (unit + integration + benchmarks)
+make test-all
+
+# Generate coverage report
+make coverage
 ```
 
 ### Development Workflow
@@ -223,6 +247,85 @@ case events.EventNewType:
 
 ## Testing
 
+Podtrace has a comprehensive test suite ensuring reliability, security, and performance. The test infrastructure includes unit tests, integration tests, benchmarks, and CI/CD integration.
+
+### Test Structure
+
+```
+internal/
+├── ebpf/
+│   ├── parser/
+│   │   ├── parser.go
+│   │   └── parser_test.go          # Unit tests for event parsing
+│   └── filter/
+│       ├── filter.go
+│       └── filter_test.go          # Unit tests for cgroup filtering
+├── validation/
+│   ├── validation.go
+│   └── validation_test.go          # Unit tests for input validation (100% coverage)
+├── events/
+│   ├── events.go
+│   └── events_test.go              # Unit tests for event formatting
+└── diagnose/
+    ├── analyzer/
+    │   ├── *.go
+    │   └── analyzer_test.go        # Unit tests for analysis (100% coverage)
+    ├── detector/
+    │   ├── issues.go
+    │   └── issues_test.go          # Unit tests for issue detection (100% coverage)
+    └── diagnose_test.go            # Unit tests for report generation
+test/
+└── integration_test.go              # Integration tests
+```
+
+### Running Tests
+
+#### Run All Tests
+```bash
+# Run all unit tests
+make test
+
+# Run with race detection
+go test -race ./internal/...
+
+# Run with coverage
+go test -coverprofile=coverage.out ./internal/...
+go tool cover -html=coverage.out
+```
+
+#### Run Specific Test Packages
+```bash
+# Test parser
+go test ./internal/ebpf/parser/...
+
+# Test filter
+go test ./internal/ebpf/filter/...
+
+# Test validation
+go test ./internal/validation/...
+
+# Test analyzer
+go test ./internal/diagnose/analyzer/...
+
+# Test detector
+go test ./internal/diagnose/detector/...
+```
+
+#### Run Benchmarks
+```bash
+# Run all benchmarks
+make test-bench
+
+# Run specific benchmark
+go test -bench=. -benchmem ./internal/ebpf/parser/...
+```
+
+#### Run Integration Tests
+```bash
+# Integration tests (require Kubernetes cluster)
+go test ./test/... -v
+```
+
 ### Manual Testing
 
 1. **Create test pod**:
@@ -237,12 +340,15 @@ case events.EventNewType:
 
 3. **Verify output**: Check diagnostic report
 
-### Test Utilities
+### Test Best Practices
 
-The `test/` directory contains:
-- Test pod definitions
-- Setup/cleanup scripts
-- Quick test scripts
+1. **Test edge cases**: Empty inputs, nil values, boundary conditions
+2. **Test error paths**: Ensure errors are handled correctly
+3. **Use table-driven tests**: For multiple test cases
+4. **Benchmark critical paths**: Identify performance regressions
+5. **Run with race detection**: Catch concurrency bugs
+6. **Maintain high coverage**: Especially for security-critical code
+7. **Document test purpose**: Explain what each test validates
 
 ## Debugging
 
@@ -326,7 +432,10 @@ Dependencies are managed via `go.mod`:
 
 ## Security
 
-- **Input validation**: Always validate user input
-- **Process name sanitization**: Prevent injection
+- **Input validation**: Always validate user input (see `internal/validation/`)
+- **Process name sanitization**: Prevent injection attacks
+- **Format string protection**: All user data is sanitized before use in `fmt.Sprintf`
+- **Path traversal prevention**: Container ID validation prevents `..` and `/` attacks
+- **Command execution security**: Uses `exec.CommandContext` with separate arguments (no shell injection)
 - **Capability requirements**: Document required capabilities
 - **Rate limiting**: Protect metrics endpoint
