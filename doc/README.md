@@ -9,7 +9,7 @@ Welcome to the `podtrace` documentation. This directory contains comprehensive g
 - **[Usage Guide](usage.md)** - Usage examples, command-line options, and tips
 - **[eBPF Internals](ebpf-internals.md)** - Deep dive into eBPF programs and tracing mechanisms
 - **[Metrics](metrics.md)** - Prometheus metrics, Grafana integration, and query examples
-- **[Development](development.md)** - Development guide, code structure, and contributing
+- **[Development](development.md)** - Development guide, code structure, testing, and contributing
 
 ## Quick Start
 

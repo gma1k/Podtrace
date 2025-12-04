@@ -10,6 +10,7 @@ on:
       - "cmd/**"
       - "internal/**"
       - "Makefile"
+      - ".github/workflows/go-ci.yml"
   pull_request:
     branches: ["**"]
     paths:
@@ -19,10 +20,14 @@ on:
       - "cmd/**"
       - "internal/**"
       - "Makefile"
+      - ".github/workflows/go-ci.yml"
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [1.24]
 
     steps:
       - name: Checkout
@@ -40,5 +45,58 @@ jobs:
       - name: Build
         run: GOTOOLCHAIN=auto go build ./...
 
-      - name: Run tests
-        run: GOTOOLCHAIN=auto go test -race -coverprofile=coverage.out ./...
+      - name: Run unit tests with race detection
+        run: GOTOOLCHAIN=auto go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate coverage report
+        run: |
+          GOTOOLCHAIN=auto go tool cover -html=coverage.out -o coverage.html || true
+          GOTOOLCHAIN=auto go tool cover -func=coverage.out | tail -1
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(GOTOOLCHAIN=auto go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//' || echo "0")
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l 2>/dev/null || echo "1") )); then
+            echo "Coverage $COVERAGE% is below 70% threshold"
+            echo "::warning::Test coverage is below 70% threshold"
+          else
+            echo "Coverage $COVERAGE% meets threshold"
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: GOTOOLCHAIN=auto go mod download
+
+      - name: Run benchmarks
+        run: |
+          GOTOOLCHAIN=auto go test -bench=. -benchmem ./... | tee benchmark.txt || true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: benchmark.txt
