@@ -618,9 +618,9 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 	allEvents := d.GetEvents()
 	pidActivity := tracker.AnalyzeProcessActivity(allEvents)
 	if len(pidActivity) > 0 {
-		report += fmt.Sprintf("Process Activity:\n")
+		report += "Process Activity:\n"
 		report += fmt.Sprintf("  Active processes: %d\n", len(pidActivity))
-		report += fmt.Sprintf("  Top active processes:\n")
+		report += "  Top active processes:\n"
 		for i, pidInfo := range pidActivity {
 			if i >= config.TopProcessesLimit {
 				break
@@ -637,7 +637,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 
 	timeline := profiling.AnalyzeTimeline(allEvents, d.startTime, duration)
 	if len(timeline) > 0 {
-		report += fmt.Sprintf("Activity Timeline:\n")
+		report += "Activity Timeline:\n"
 		report += fmt.Sprintf("  Activity distribution:\n")
 		for _, bucket := range timeline {
 			report += fmt.Sprintf("    - %s: %d events (%.1f%%)\n",
