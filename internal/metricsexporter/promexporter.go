@@ -400,6 +400,6 @@ func (s *Server) Shutdown() {
 	if s.server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), config.DefaultMetricsShutdownTimeout)
 		defer cancel()
-		s.server.Shutdown(ctx)
+		_ = s.server.Shutdown(ctx)
 	}
 }

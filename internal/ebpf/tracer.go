@@ -35,12 +35,6 @@ type stackTraceValue struct {
 	Pad uint32
 }
 
-var stackFramePool = sync.Pool{
-	New: func() interface{} {
-		return make([]uint64, 0, 64)
-	},
-}
-
 type Tracer struct {
 	collection        *ebpf.Collection
 	links             []link.Link
@@ -199,12 +193,7 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 							n = len(stack.IPs)
 						}
 						if n > 0 {
-							frames := stackFramePool.Get().([]uint64)
-							if cap(frames) < n {
-								frames = make([]uint64, n)
-							} else {
-								frames = frames[:n]
-							}
+							frames := make([]uint64, n)
 							copy(frames, stack.IPs[:n])
 							event.Stack = frames
 						}
@@ -220,9 +209,6 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 				if t.filter.IsPIDInCgroup(event.PID) {
 					select {
 					case <-ctx.Done():
-						if event.Stack != nil {
-							stackFramePool.Put(event.Stack[:0])
-						}
 						parser.PutEvent(event)
 						return
 					case eventChan <- event:
@@ -232,15 +218,9 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 							zap.String("event_type", event.TypeString()),
 							zap.Uint32("pid", event.PID))
 						metricsexporter.RecordRingBufferDrop()
-						if event.Stack != nil {
-							stackFramePool.Put(event.Stack[:0])
-						}
 						parser.PutEvent(event)
 					}
 				} else {
-					if event.Stack != nil {
-						stackFramePool.Put(event.Stack[:0])
-					}
 					parser.PutEvent(event)
 				}
 			}

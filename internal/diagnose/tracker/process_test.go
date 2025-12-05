@@ -24,7 +24,7 @@ func TestAnalyzeProcessActivity_UsesProcessNameFromEvents(t *testing.T) {
 
 func TestAnalyzeProcessActivity_Empty(t *testing.T) {
 	result := AnalyzeProcessActivity([]*events.Event{})
-	if result != nil && len(result) != 0 {
+	if len(result) != 0 {
 		t.Errorf("Expected empty result, got %d items", len(result))
 	}
 }

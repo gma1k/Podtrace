@@ -150,7 +150,7 @@ func (d *Diagnostician) generateSummarySection(duration time.Duration) string {
 	eventsPerSec := d.calculateRate(len(events), duration)
 	var report string
 	report += fmt.Sprintf("=== Diagnostic Report (collected over %v) ===\n\n", duration)
-	report += fmt.Sprintf("Summary:\n")
+	report += "Summary:\n"
 	report += fmt.Sprintf("  Total events: %d\n", len(events))
 	report += fmt.Sprintf("  Events per second: %.1f\n", eventsPerSec)
 	report += fmt.Sprintf("  Collection period: %v to %v\n\n", d.startTime.Format("15:04:05"), d.endTime.Format("15:04:05"))
@@ -228,7 +228,7 @@ func (d *Diagnostician) generateConnectionSection(duration time.Duration) string
 	report += formatPercentiles(p50, p95, p99)
 	report += fmt.Sprintf("  Failed connections: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(connectEvents)))
 	if len(errorBreakdown) > 0 {
-		report += fmt.Sprintf("  Error breakdown:\n")
+		report += "  Error breakdown:\n"
 		for errCode, count := range errorBreakdown {
 			report += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, count)
 		}
@@ -287,7 +287,7 @@ func (d *Diagnostician) generateFileSystemSection(duration time.Duration) string
 			sort.Slice(fileCounts, func(i, j int) bool {
 				return fileCounts[i].count > fileCounts[j].count
 			})
-			report += fmt.Sprintf("  Top accessed files:\n")
+			report += "  Top accessed files:\n"
 			for i, fc := range fileCounts {
 				if i >= config.TopFilesLimit {
 					break
@@ -699,10 +699,6 @@ type stackSummary struct {
 	Count      int
 	Sample     *events.Event
 	FirstFrame string
-}
-
-func (d *Diagnostician) generateStackTraceSection() string {
-	return d.generateStackTraceSectionWithContext(context.Background())
 }
 
 func (d *Diagnostician) generateStackTraceSectionWithContext(ctx context.Context) string {

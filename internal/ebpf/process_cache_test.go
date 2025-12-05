@@ -42,7 +42,7 @@ func TestGetProcessNameQuick_FromCmdline(t *testing.T) {
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/bin/test-process\x00arg1\x00arg2")
-	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "test-process" {
@@ -62,7 +62,7 @@ func TestGetProcessNameQuick_FromCmdlineWithPath(t *testing.T) {
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/local/bin/my-app\x00")
-	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "my-app" {
@@ -82,7 +82,7 @@ func TestGetProcessNameQuick_FromStat(t *testing.T) {
 
 	statPath := filepath.Join(procDir, "stat")
 	statContent := "12347 (test-process-name) S 1 12347 12347 0 -1 4194560"
-	os.WriteFile(statPath, []byte(statContent), 0644)
+	_ = os.WriteFile(statPath, []byte(statContent), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "test-process-name" {
@@ -122,7 +122,7 @@ func TestGetProcessNameQuick_CacheHit(t *testing.T) {
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/bin/cached-process\x00")
-	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 
 	result1 := getProcessNameQuick(pid)
 	if result1 != "cached-process" {
@@ -162,7 +162,7 @@ func TestGetProcessNameQuick_CacheEviction(t *testing.T) {
 		os.MkdirAll(procDir, 0755)
 		cmdlinePath := filepath.Join(procDir, "cmdline")
 		cmdlineContent := []byte(fmt.Sprintf("/usr/bin/process-%d\x00", i))
-		os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+		_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 		getProcessNameQuick(i)
 	}
 
@@ -235,7 +235,7 @@ func TestGetProcessNameQuick_SanitizeProcessName(t *testing.T) {
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("process%with%special\x00")
-	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 
 	result := getProcessNameQuick(pid)
 	if strings.Contains(result, "%") {
@@ -299,7 +299,7 @@ func TestGetProcessNameQuick_CmdlineWithEmptyFirstPart(t *testing.T) {
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("\x00arg1\x00arg2")
-	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 
 	statPath := filepath.Join(procDir, "stat")
 	statContent := "12355 (fallback-process) S 1 12355 12355 0 -1 4194560"

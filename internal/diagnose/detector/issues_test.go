@@ -147,6 +147,7 @@ func TestDetectIssues_MixedEvents(t *testing.T) {
 	}
 
 	if connectIssues == 0 && len(eventSlice) > 0 {
+		_ = connectIssues
 	}
 }
 

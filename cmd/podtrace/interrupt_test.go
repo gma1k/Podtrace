@@ -15,7 +15,7 @@ func TestInterruptChan(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		proc, _ := os.FindProcess(os.Getpid())
-		proc.Signal(os.Interrupt)
+		_ = proc.Signal(os.Interrupt)
 	}()
 
 	select {
@@ -37,7 +37,7 @@ func TestInterruptChan_PanicRecovery(t *testing.T) {
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		proc, _ := os.FindProcess(os.Getpid())
-		proc.Signal(os.Interrupt)
+		_ = proc.Signal(os.Interrupt)
 	}()
 
 	select {

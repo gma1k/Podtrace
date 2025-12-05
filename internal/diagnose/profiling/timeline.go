@@ -152,7 +152,7 @@ func AnalyzeConnectionPattern(connectEvents []*events.Event, startTime, endTime 
 	variance := (sumSq / float64(len(windowCounts))) - (mean * mean)
 	stdDev := variance
 
-	pattern := "steady"
+	var pattern string
 	if stdDev > mean*0.5 {
 		pattern = "bursty"
 	} else if stdDev < mean*0.1 {

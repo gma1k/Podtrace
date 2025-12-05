@@ -153,7 +153,7 @@ func findCgroupPath(containerID string) (string, error) {
 
 		var foundPath string
 		found := false
-		filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}

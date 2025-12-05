@@ -55,8 +55,8 @@ func TestLoadPodtraceFallback(t *testing.T) {
 	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
 	fallbackPath := filepath.Join(tempDir, "..", "bpf", "podtrace.bpf.o")
 
-	os.MkdirAll(filepath.Dir(primaryPath), 0755)
-	os.MkdirAll(filepath.Dir(fallbackPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(primaryPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(fallbackPath), 0755)
 
 	config.BPFObjectPath = primaryPath
 
@@ -104,8 +104,8 @@ func TestLoadPodtrace_FallbackSuccess(t *testing.T) {
 	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
 	fallbackPath := filepath.Join(tempDir, "..", "bpf", "podtrace.bpf.o")
 
-	os.MkdirAll(filepath.Dir(primaryPath), 0755)
-	os.MkdirAll(filepath.Dir(fallbackPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(primaryPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(fallbackPath), 0755)
 
 	config.BPFObjectPath = primaryPath
 

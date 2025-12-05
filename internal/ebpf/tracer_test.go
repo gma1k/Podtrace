@@ -68,7 +68,7 @@ func TestWaitForInterrupt(t *testing.T) {
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		proc, _ := os.FindProcess(os.Getpid())
-		proc.Signal(os.Interrupt)
+		_ = proc.Signal(os.Interrupt)
 		done <- true
 	}()
 
@@ -199,7 +199,7 @@ func TestWaitForInterrupt_SIGTERM(t *testing.T) {
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		proc, _ := os.FindProcess(os.Getpid())
-		proc.Signal(os.Interrupt)
+		_ = proc.Signal(os.Interrupt)
 		done <- true
 	}()
 
@@ -224,7 +224,7 @@ func TestNewTracer_ErrorPaths(t *testing.T) {
 	tracer, err := NewTracer()
 	if err == nil {
 		if tracer != nil {
-			tracer.Stop()
+			_ = tracer.Stop()
 		}
 		t.Log("NewTracer returned error as expected for non-existent BPF object")
 	}
@@ -295,7 +295,7 @@ func TestTracer_Start_WithRealEBPF(t *testing.T) {
 		t.Skipf("Skipping test - eBPF not available: %v", err)
 		return
 	}
-	defer tracer.Stop()
+	defer func() { _ = tracer.Stop() }()
 
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
 
@@ -304,7 +304,7 @@ func TestTracer_Start_WithRealEBPF(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	tracer.AttachToCgroup("")
+	_ = tracer.AttachToCgroup("")
 
 	time.Sleep(100 * time.Millisecond)
 

@@ -26,7 +26,7 @@ func TestExportReport_JSON(t *testing.T) {
 
 	if err == nil {
 		var buf bytes.Buffer
-		io.Copy(&buf, r)
+		_, _ = io.Copy(&buf, r)
 		t.Logf("JSON export test completed, output length: %d", buf.Len())
 	}
 }
@@ -46,7 +46,7 @@ func TestExportReport_CSV(t *testing.T) {
 	os.Stdout = originalStdout
 
 	if err == nil {
-		io.Copy(&buf, r)
+		_, _ = io.Copy(&buf, r)
 		t.Logf("CSV export test completed, output length: %d", buf.Len())
 	}
 }
@@ -98,7 +98,7 @@ func TestExportReport_FormatVariations(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 			}
 			if !tt.expectError {
-				io.Copy(io.Discard, r)
+				_, _ = io.Copy(io.Discard, r)
 			}
 		})
 	}
