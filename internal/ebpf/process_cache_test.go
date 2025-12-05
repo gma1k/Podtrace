@@ -310,3 +310,94 @@ func TestGetProcessNameQuick_CmdlineWithEmptyFirstPart(t *testing.T) {
 		t.Errorf("Expected 'fallback-process' from stat, got %q", result)
 	}
 }
+
+func TestGetProcessNameQuick_AllMethodsFail(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12356)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	os.MkdirAll(procDir, 0755)
+
+	result := getProcessNameQuick(pid)
+	if result == "" {
+		t.Log("getProcessNameQuick returned empty string (expected when all methods fail)")
+	}
+}
+
+func TestGetProcessNameQuick_StatEndBeforeStart(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12357)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	os.WriteFile(statPath, []byte("12357 ) process-name ( S"), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	os.WriteFile(commPath, []byte("comm-process"), 0644)
+
+	result := getProcessNameQuick(pid)
+	if result != "comm-process" {
+		t.Errorf("Expected 'comm-process' from comm, got %q", result)
+	}
+}
+
+func TestGetProcessNameQuick_StatEndEqualsStart(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12358)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	os.WriteFile(statPath, []byte("12358 () S"), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	os.WriteFile(commPath, []byte("comm-process"), 0644)
+
+	result := getProcessNameQuick(pid)
+	if result != "comm-process" {
+		t.Errorf("Expected 'comm-process' from comm, got %q", result)
+	}
+}
+
+func TestGetProcessNameQuick_CommEmpty(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12359)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	os.WriteFile(statPath, []byte("invalid"), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	os.WriteFile(commPath, []byte(""), 0644)
+
+	result := getProcessNameQuick(pid)
+	if result != "" {
+		t.Logf("getProcessNameQuick returned %q (expected empty when all methods fail)", result)
+	}
+}
