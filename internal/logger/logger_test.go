@@ -52,6 +52,7 @@ func TestLogFunctions(t *testing.T) {
 	Error("test error message", zap.String("key", "value"))
 }
 
+
 func TestSync(t *testing.T) {
 	Sync()
 }

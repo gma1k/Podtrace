@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/validation"
 )
@@ -67,7 +68,7 @@ func getProcessNameFromProc(pid uint32) string {
 
 	name := ""
 
-	statPath := fmt.Sprintf("/proc/%d/stat", pid)
+	statPath := fmt.Sprintf("%s/%d/stat", config.ProcBasePath, pid)
 	if data, err := os.ReadFile(statPath); err == nil {
 		statStr := string(data)
 		start := strings.Index(statStr, "(")
@@ -78,14 +79,14 @@ func getProcessNameFromProc(pid uint32) string {
 	}
 
 	if name == "" {
-		commPath := fmt.Sprintf("/proc/%d/comm", pid)
+		commPath := fmt.Sprintf("%s/%d/comm", config.ProcBasePath, pid)
 		if data, err := os.ReadFile(commPath); err == nil {
 			name = strings.TrimSpace(string(data))
 		}
 	}
 
 	if name == "" {
-		cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+		cmdlinePath := fmt.Sprintf("%s/%d/cmdline", config.ProcBasePath, pid)
 		if cmdline, err := os.ReadFile(cmdlinePath); err == nil {
 			parts := strings.Split(string(cmdline), "\x00")
 			if len(parts) > 0 && parts[0] != "" {
@@ -98,7 +99,7 @@ func getProcessNameFromProc(pid uint32) string {
 	}
 
 	if name == "" {
-		exePath := fmt.Sprintf("/proc/%d/exe", pid)
+		exePath := fmt.Sprintf("%s/%d/exe", config.ProcBasePath, pid)
 		if link, err := os.Readlink(exePath); err == nil {
 			if idx := strings.LastIndex(link, "/"); idx >= 0 {
 				name = link[idx+1:]
@@ -109,7 +110,7 @@ func getProcessNameFromProc(pid uint32) string {
 	}
 
 	if name == "" {
-		statusPath := fmt.Sprintf("/proc/%d/status", pid)
+		statusPath := fmt.Sprintf("%s/%d/status", config.ProcBasePath, pid)
 		if data, err := os.ReadFile(statusPath); err == nil {
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {

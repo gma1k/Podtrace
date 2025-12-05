@@ -188,6 +188,82 @@ func TestParseEvent_BinaryReadError(t *testing.T) {
 	}
 }
 
+func TestPutEvent_NilEvent(t *testing.T) {
+	PutEvent(nil)
+}
+
+func TestPutEvent_ValidEvent(t *testing.T) {
+	event := &events.Event{
+		Timestamp:   1234567890,
+		PID:         1234,
+		Type:        events.EventDNS,
+		LatencyNS:   5000000,
+		Error:       0,
+		Bytes:       1024,
+		TCPState:    0,
+		StackKey:    0,
+		Target:      "example.com",
+		Details:     "details",
+		ProcessName: "test-process",
+		Stack:       []uint64{0x1234, 0x5678},
+	}
+
+	PutEvent(event)
+
+	if event.Stack != nil {
+		t.Error("PutEvent should set Stack to nil")
+	}
+	if event.ProcessName != "" {
+		t.Error("PutEvent should set ProcessName to empty string")
+	}
+	if event.Target != "" {
+		t.Error("PutEvent should set Target to empty string")
+	}
+	if event.Details != "" {
+		t.Error("PutEvent should set Details to empty string")
+	}
+}
+
+func TestPutEvent_EventReuse(t *testing.T) {
+	var raw rawEvent
+	raw.Timestamp = 1234567890
+	raw.PID = 1234
+	raw.Type = uint32(events.EventDNS)
+	copy(raw.Target[:], "first-event.com")
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, raw); err != nil {
+		t.Fatalf("Failed to write binary data: %v", err)
+	}
+
+	event1 := ParseEvent(buf.Bytes())
+	if event1 == nil {
+		t.Fatal("ParseEvent returned nil")
+	}
+
+	PutEvent(event1)
+
+	var raw2 rawEvent
+	raw2.Timestamp = 9876543210
+	raw2.PID = 5678
+	raw2.Type = uint32(events.EventConnect)
+	copy(raw2.Target[:], "second-event.com")
+
+	buf.Reset()
+	if err := binary.Write(&buf, binary.LittleEndian, raw2); err != nil {
+		t.Fatalf("Failed to write binary data: %v", err)
+	}
+
+	event2 := ParseEvent(buf.Bytes())
+	if event2 == nil {
+		t.Fatal("ParseEvent returned nil")
+	}
+
+	if event1 == event2 {
+		t.Log("PutEvent allows event reuse from pool")
+	}
+}
+
 func BenchmarkParseEvent(b *testing.B) {
 	var raw rawEvent
 	raw.Timestamp = 1234567890
@@ -202,7 +278,6 @@ func BenchmarkParseEvent(b *testing.B) {
 	}
 	eventData := buf.Bytes()
 
-	// Pre-allocate to avoid allocation overhead during benchmark
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

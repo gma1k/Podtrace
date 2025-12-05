@@ -1,4 +1,4 @@
-package ebpf
+package cache
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ var (
 	processNameCacheMutex = &sync.RWMutex{}
 )
 
-func getProcessNameQuick(pid uint32) string {
+func GetProcessNameQuick(pid uint32) string {
 	if !validation.ValidatePID(pid) {
 		return ""
 	}
@@ -78,3 +78,4 @@ func getProcessNameQuick(pid uint32) string {
 
 	return validation.SanitizeProcessName(name)
 }
+
