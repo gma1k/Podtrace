@@ -690,14 +690,14 @@ func TestGenerateCPUUsageReport_WithEvents(t *testing.T) {
 	stat1Path := fmt.Sprintf("%s/%d/stat", dir, pid1)
 	stat2Path := fmt.Sprintf("%s/%d/stat", dir, pid2)
 	stat3Path := fmt.Sprintf("%s/%d/stat", dir, pid3)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid1), 0755)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid2), 0755)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid3), 0755)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid1), 0755)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid2), 0755)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid3), 0755)
 
 	statContent := "1234 (test) S 1 1234 1234 0 -1 4194304 100 0 0 0 100 200 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
-	os.WriteFile(stat1Path, []byte(statContent), 0644)
-	os.WriteFile(stat2Path, []byte(statContent), 0644)
-	os.WriteFile(stat3Path, []byte(statContent), 0644)
+	_ = os.WriteFile(stat1Path, []byte(statContent), 0644)
+	_ = os.WriteFile(stat2Path, []byte(statContent), 0644)
+	_ = os.WriteFile(stat3Path, []byte(statContent), 0644)
 
 	events := []*events.Event{
 		{PID: pid1, ProcessName: "test-process", Type: events.EventSchedSwitch},

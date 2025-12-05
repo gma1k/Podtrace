@@ -169,8 +169,8 @@ func TestGetProcessNameFromProc_FromExe(t *testing.T) {
 
 	pid := uint32(1234)
 	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
-	os.Symlink("/usr/bin/test-process", exePath)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	_ = os.Symlink("/usr/bin/test-process", exePath)
 
 	config.SetProcBasePath(dir)
 	result := getProcessNameFromProc(pid)
@@ -186,8 +186,8 @@ func TestGetProcessNameFromProc_FromExeNoSlash(t *testing.T) {
 
 	pid := uint32(1234)
 	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
-	os.Symlink("test-process", exePath)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	_ = os.Symlink("test-process", exePath)
 
 	config.SetProcBasePath(dir)
 	result := getProcessNameFromProc(pid)
@@ -277,9 +277,9 @@ func TestGetProcessNameFromProc_CmdlineEmpty(t *testing.T) {
 	pid := uint32(1234)
 	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", dir, pid)
 	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
-	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
-	os.Symlink("/usr/bin/test-process", exePath)
+	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.Symlink("/usr/bin/test-process", exePath)
 
 	config.SetProcBasePath(dir)
 	result := getProcessNameFromProc(pid)

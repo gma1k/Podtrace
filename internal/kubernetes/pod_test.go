@@ -471,7 +471,9 @@ func TestFindCgroupPath_WalkError(t *testing.T) {
 	targetDir := filepath.Join(kubepodsSlice, "pod_"+containerID)
 	_ = os.MkdirAll(targetDir, 0755)
 	_ = os.Chmod(targetDir, 0000)
-	defer os.Chmod(targetDir, 0755)
+	defer func() {
+		_ = os.Chmod(targetDir, 0755)
+	}()
 
 	path, err := findCgroupPath(containerID)
 	if err != nil && path == "" {

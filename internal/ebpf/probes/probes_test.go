@@ -463,10 +463,8 @@ func TestAttachProbes_ErrorCleanup(t *testing.T) {
 	if err != nil {
 		t.Logf("AttachProbes returned error (expected without kernel support): %v", err)
 	}
-	if links != nil {
-		for _, l := range links {
-			l.Close()
-		}
+	for _, l := range links {
+		l.Close()
 	}
 }
 
@@ -819,10 +817,8 @@ func TestAttachProbes_ErrorPath(t *testing.T) {
 			t.Log("AttachProbes returned expected error")
 		}
 	}
-	if links != nil {
-		for _, l := range links {
-			l.Close()
-		}
+	for _, l := range links {
+		l.Close()
 	}
 }
 
