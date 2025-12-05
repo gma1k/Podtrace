@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose"
 	"github.com/podtrace/podtrace/internal/ebpf"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/kubernetes"
+	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
 	"github.com/podtrace/podtrace/internal/validation"
 )
@@ -29,6 +31,7 @@ var (
 	errorRateThreshold float64
 	rttSpikeThreshold  float64
 	fsSlowThreshold    float64
+	logLevel           string
 )
 
 func main() {
@@ -50,11 +53,19 @@ func main() {
 	rootCmd.Flags().Float64Var(&errorRateThreshold, "error-threshold", config.DefaultErrorRateThreshold, "Error rate threshold percentage for issue detection")
 	rootCmd.Flags().Float64Var(&rttSpikeThreshold, "rtt-threshold", config.DefaultRTTThreshold, "RTT spike threshold in milliseconds")
 	rootCmd.Flags().Float64Var(&fsSlowThreshold, "fs-threshold", config.DefaultFSSlowThreshold, "File system slow operation threshold in milliseconds")
+	rootCmd.Flags().StringVar(&logLevel, "log-level", "", "Set log level (debug, info, warn, error, fatal). Overrides PODTRACE_LOG_LEVEL environment variable")
+
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if logLevel != "" {
+			logger.SetLevel(logLevel)
+		}
+	}
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error("Command execution failed", zap.Error(err))
 		os.Exit(1)
 	}
+	defer logger.Sync()
 }
 
 func runPodtrace(cmd *cobra.Command, args []string) error {
@@ -108,10 +119,11 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resolve pod: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Resolved pod %s/%s:\n", namespace, podName)
-	fmt.Fprintf(os.Stderr, "  Container ID: %s\n", podInfo.ContainerID)
-	fmt.Fprintf(os.Stderr, "  Cgroup path: %s\n", podInfo.CgroupPath)
-	fmt.Fprintf(os.Stderr, "\n")
+	logger.Info("Resolved pod",
+		zap.String("namespace", namespace),
+		zap.String("pod", podName),
+		zap.String("container_id", podInfo.ContainerID),
+		zap.String("cgroup_path", podInfo.CgroupPath))
 
 	tracer, err := ebpf.NewTracer()
 	if err != nil {
@@ -149,9 +161,8 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 }
 
 func runNormalMode(eventChan <-chan *events.Event) error {
-	fmt.Println("Tracing started. Press Ctrl+C to stop.")
-	fmt.Printf("Real-time diagnostic updates every %v...\n", config.DefaultRealtimeUpdateInterval)
-	fmt.Println()
+	logger.Info("Tracing started",
+		zap.Duration("update_interval", config.DefaultRealtimeUpdateInterval))
 
 	diagnostician := diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
 	ticker := time.NewTicker(config.DefaultRealtimeUpdateInterval)
@@ -202,7 +213,7 @@ func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupP
 		return err
 	}
 
-	fmt.Printf("Running diagnose mode for %v...\n\n", duration)
+	logger.Info("Running diagnose mode", zap.Duration("duration", duration))
 
 	diagnostician := diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
 	timeout := time.After(duration)
@@ -236,7 +247,7 @@ func interruptChan() <-chan os.Signal {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "Panic in interrupt handler: %v\n", r)
+				logger.Error("Panic in interrupt handler", zap.Any("panic", r))
 			}
 		}()
 		ebpf.WaitForInterrupt()

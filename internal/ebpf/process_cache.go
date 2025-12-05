@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/metricsexporter"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
@@ -23,9 +24,11 @@ func getProcessNameQuick(pid uint32) string {
 	processNameCacheMutex.RLock()
 	if name, ok := processNameCache[pid]; ok {
 		processNameCacheMutex.RUnlock()
+		metricsexporter.RecordProcessCacheHit()
 		return name
 	}
 	processNameCacheMutex.RUnlock()
+	metricsexporter.RecordProcessCacheMiss()
 
 	name := ""
 

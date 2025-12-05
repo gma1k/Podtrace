@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
+	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -115,6 +116,57 @@ var (
 		},
 		[]string{"type", "process_name", "operation"},
 	)
+
+	ringBufferDropsCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "podtrace_ring_buffer_drops_total",
+			Help: "Total number of events dropped due to ring buffer being full.",
+		},
+	)
+
+	processCacheHitsCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "podtrace_process_cache_hits_total",
+			Help: "Total number of process cache hits.",
+		},
+	)
+
+	processCacheMissesCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "podtrace_process_cache_misses_total",
+			Help: "Total number of process cache misses.",
+		},
+	)
+
+	pidCacheHitsCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "podtrace_pid_cache_hits_total",
+			Help: "Total number of PID cache hits.",
+		},
+	)
+
+	pidCacheMissesCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "podtrace_pid_cache_misses_total",
+			Help: "Total number of PID cache misses.",
+		},
+	)
+
+	eventProcessingLatencyHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "podtrace_event_processing_latency_seconds",
+			Help:    "Time taken to process events from ring buffer to event channel.",
+			Buckets: prometheus.ExponentialBuckets(0.000001, 2, 20),
+		},
+	)
+
+	errorRateCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "podtrace_errors_total",
+			Help: "Total number of errors by event type.",
+		},
+		[]string{"event_type", "error_code"},
+	)
 )
 
 func init() {
@@ -131,12 +183,19 @@ func init() {
 	prometheus.MustRegister(cpuGauge)
 	prometheus.MustRegister(networkBytesCounter)
 	prometheus.MustRegister(filesystemBytesCounter)
+	prometheus.MustRegister(ringBufferDropsCounter)
+	prometheus.MustRegister(processCacheHitsCounter)
+	prometheus.MustRegister(processCacheMissesCounter)
+	prometheus.MustRegister(pidCacheHitsCounter)
+	prometheus.MustRegister(pidCacheMissesCounter)
+	prometheus.MustRegister(eventProcessingLatencyHistogram)
+	prometheus.MustRegister(errorRateCounter)
 }
 
 func HandleEvents(ch <-chan *events.Event) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "Panic in metrics event handler: %v\n", r)
+			logger.Error("Panic in metrics event handler", zap.Any("panic", r))
 		}
 	}()
 	for e := range ch {
@@ -228,6 +287,34 @@ func ExportFilesystemBandwidthMetric(e *events.Event, operation string) {
 	}
 }
 
+func RecordRingBufferDrop() {
+	ringBufferDropsCounter.Inc()
+}
+
+func RecordProcessCacheHit() {
+	processCacheHitsCounter.Inc()
+}
+
+func RecordProcessCacheMiss() {
+	processCacheMissesCounter.Inc()
+}
+
+func RecordPIDCacheHit() {
+	pidCacheHitsCounter.Inc()
+}
+
+func RecordPIDCacheMiss() {
+	pidCacheMissesCounter.Inc()
+}
+
+func RecordEventProcessingLatency(duration time.Duration) {
+	eventProcessingLatencyHistogram.Observe(duration.Seconds())
+}
+
+func RecordError(eventType string, errorCode int32) {
+	errorRateCounter.WithLabelValues(eventType, fmt.Sprintf("%d", errorCode)).Inc()
+}
+
 var (
 	limiter        = rate.NewLimiter(rate.Every(time.Second/time.Duration(config.RateLimitPerSec)), config.RateLimitBurst)
 	maxRequestSize = int64(config.MaxRequestSize)
@@ -268,14 +355,16 @@ func StartServer() *Server {
 
 	addr := config.GetMetricsAddress()
 
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
-			if !config.AllowNonLoopbackMetrics() {
-				fmt.Fprintf(os.Stderr, "Warning: rejecting non-loopback metrics address %q without PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR=1; falling back to %s:%d\n", addr, config.DefaultMetricsHost, config.DefaultMetricsPort)
-				addr = config.DefaultMetricsHost + ":" + fmt.Sprintf("%d", config.DefaultMetricsPort)
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+				if !config.AllowNonLoopbackMetrics() {
+					logger.Warn("Rejecting non-loopback metrics address, falling back to default",
+						zap.String("requested_addr", addr),
+						zap.String("fallback", fmt.Sprintf("%s:%d", config.DefaultMetricsHost, config.DefaultMetricsPort)))
+					addr = config.DefaultMetricsHost + ":" + fmt.Sprintf("%d", config.DefaultMetricsPort)
+				}
 			}
 		}
-	}
 
 	server := &http.Server{
 		Addr:         addr,
@@ -289,11 +378,11 @@ func StartServer() *Server {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "Panic in metrics server: %v\n", r)
+				logger.Error("Panic in metrics server", zap.Any("panic", r))
 			}
 		}()
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "Metrics server error: %v\n", err)
+			logger.Error("Metrics server error", zap.Error(err))
 		}
 	}()
 

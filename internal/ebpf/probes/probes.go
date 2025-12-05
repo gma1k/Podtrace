@@ -7,6 +7,9 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"go.uber.org/zap"
+
+	"github.com/podtrace/podtrace/internal/logger"
 )
 
 func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
@@ -66,7 +69,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("sched", "sched_switch", tracepointProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") {
-				fmt.Fprintf(os.Stderr, "Note: CPU/scheduling tracking unavailable: %v\n", err)
+				logger.Info("CPU/scheduling tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -77,7 +80,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("tcp", "tcp_set_state", tcpStateProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: TCP state tracking unavailable: %v\n", err)
+				logger.Info("TCP state tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -88,7 +91,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("tcp", "tcp_retransmit_skb", tcpRetransProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: TCP retransmission tracking unavailable: %v\n", err)
+				logger.Info("TCP retransmission tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -99,7 +102,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("net", "net_dev_xmit", netDevProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: network device error tracking unavailable: %v\n", err)
+				logger.Info("Network device error tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -110,7 +113,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("exceptions", "page_fault_user", pageFaultProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: Page fault tracking unavailable: %v\n", err)
+				logger.Info("Page fault tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -121,7 +124,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("oom", "oom_kill_process", oomKillProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: OOM kill tracking unavailable: %v\n", err)
+				logger.Info("OOM kill tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -132,7 +135,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("sched", "sched_process_fork", forkProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				fmt.Fprintf(os.Stderr, "Note: process fork tracking unavailable: %v\n", err)
+				logger.Info("Process fork tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -153,7 +156,7 @@ func AttachDNSProbes(coll *ebpf.Collection, containerID string) []link.Link {
 				if err == nil {
 					links = append(links, l)
 				} else {
-					fmt.Fprintf(os.Stderr, "Note: DNS tracking (uprobe) unavailable: %v\n", err)
+					logger.Info("DNS tracking (uprobe) unavailable", zap.Error(err))
 				}
 			}
 			if uretprobeProg := coll.Programs["uretprobe_getaddrinfo"]; uretprobeProg != nil {
@@ -161,14 +164,14 @@ func AttachDNSProbes(coll *ebpf.Collection, containerID string) []link.Link {
 				if err == nil {
 					links = append(links, l)
 				} else {
-					fmt.Fprintf(os.Stderr, "Note: DNS tracking (uretprobe) unavailable: %v\n", err)
+					logger.Info("DNS tracking (uretprobe) unavailable", zap.Error(err))
 				}
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Note: DNS tracking unavailable (libc not found)\n")
+			logger.Info("DNS tracking unavailable (libc not found)")
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "Note: DNS tracking unavailable (libc path not found)\n")
+		logger.Info("DNS tracking unavailable (libc path not found)")
 	}
 	return links
 }
@@ -181,7 +184,7 @@ func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
 	}
 	uprobe, err := link.OpenExecutable(libcPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Note: lock tracking unavailable: %v\n", err)
+		logger.Info("Lock tracking unavailable", zap.Error(err))
 		return links
 	}
 	if prog := coll.Programs["uprobe_pthread_mutex_lock"]; prog != nil {
@@ -189,7 +192,7 @@ func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
 		if err == nil {
 			links = append(links, l)
 		} else if !strings.Contains(err.Error(), "symbol pthread_mutex_lock not found") {
-			fmt.Fprintf(os.Stderr, "Note: pthread mutex lock tracking unavailable: %v\n", err)
+			logger.Info("Pthread mutex lock tracking unavailable", zap.Error(err))
 		}
 	}
 	if prog := coll.Programs["uretprobe_pthread_mutex_lock"]; prog != nil {
@@ -197,7 +200,7 @@ func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
 		if err == nil {
 			links = append(links, l)
 		} else if !strings.Contains(err.Error(), "symbol pthread_mutex_lock not found") {
-			fmt.Fprintf(os.Stderr, "Note: pthread mutex lock tracking unavailable: %v\n", err)
+			logger.Info("Pthread mutex lock tracking unavailable", zap.Error(err))
 		}
 	}
 	return links

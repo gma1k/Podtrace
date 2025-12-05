@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/metricsexporter"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
@@ -40,9 +41,11 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 	f.pidCacheMu.RLock()
 	if cached, ok := f.pidCache[pid]; ok {
 		f.pidCacheMu.RUnlock()
+		metricsexporter.RecordPIDCacheHit()
 		return cached
 	}
 	f.pidCacheMu.RUnlock()
+	metricsexporter.RecordPIDCacheMiss()
 
 	cgroupFile := fmt.Sprintf("%s/%d/cgroup", config.ProcBasePath, pid)
 	if len(cgroupFile) > config.MaxCgroupFilePathLength {
