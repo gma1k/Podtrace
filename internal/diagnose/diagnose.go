@@ -638,7 +638,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 	timeline := profiling.AnalyzeTimeline(allEvents, d.startTime, duration)
 	if len(timeline) > 0 {
 		report += "Activity Timeline:\n"
-		report += fmt.Sprintf("  Activity distribution:\n")
+		report += "  Activity distribution:\n"
 		for _, bucket := range timeline {
 			report += fmt.Sprintf("    - %s: %d events (%.1f%%)\n",
 				bucket.Period, bucket.Count, bucket.Percentage)
@@ -648,7 +648,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 
 	bursts := profiling.DetectBursts(allEvents, d.startTime, duration)
 	if len(bursts) > 0 {
-		report += fmt.Sprintf("Activity Bursts:\n")
+		report += "Activity Bursts:\n"
 		report += fmt.Sprintf("  Detected %d burst period(s):\n", len(bursts))
 		for i, burst := range bursts {
 			if i >= config.MaxBurstsDisplay {
@@ -663,7 +663,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 	connectEvents := d.filterEvents(events.EventConnect)
 	if len(connectEvents) > 0 {
 		pattern := profiling.AnalyzeConnectionPattern(connectEvents, d.startTime, d.endTime, duration)
-		report += fmt.Sprintf("Connection Patterns:\n")
+		report += "Connection Patterns:\n"
 		report += fmt.Sprintf("  Pattern: %s\n", pattern.Pattern)
 		var avgRate float64
 		if duration.Seconds() > 0 {
