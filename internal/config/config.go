@@ -14,6 +14,7 @@ const (
 	DefaultMetricsPort        = 3000
 	DefaultMetricsHost        = "127.0.0.1"
 	DefaultRingBufferSizeKB   = 2048
+	DefaultLogLevel           = "info"
 )
 
 const (
