@@ -32,7 +32,21 @@ var (
 	rttSpikeThreshold  float64
 	fsSlowThreshold    float64
 	logLevel           string
+
+	resolverFactory func() (kubernetes.PodResolverInterface, error)
+	tracerFactory   func() (ebpf.TracerInterface, error)
+	exitFunc        func(int)
 )
+
+func init() {
+	resolverFactory = func() (kubernetes.PodResolverInterface, error) {
+		return kubernetes.NewPodResolver()
+	}
+	tracerFactory = func() (ebpf.TracerInterface, error) {
+		return ebpf.NewTracer()
+	}
+	exitFunc = os.Exit
+}
 
 func main() {
 	var rootCmd = &cobra.Command{
@@ -63,7 +77,7 @@ func main() {
 
 	if err := rootCmd.Execute(); err != nil {
 		logger.Error("Command execution failed", zap.Error(err))
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer logger.Sync()
 }
@@ -107,7 +121,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid file system threshold: %w", err)
 	}
 
-	resolver, err := kubernetes.NewPodResolver()
+	resolver, err := resolverFactory()
 	if err != nil {
 		return fmt.Errorf("failed to create pod resolver: %w", err)
 	}
@@ -125,7 +139,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		zap.String("container_id", podInfo.ContainerID),
 		zap.String("cgroup_path", podInfo.CgroupPath))
 
-	tracer, err := ebpf.NewTracer()
+	tracer, err := tracerFactory()
 	if err != nil {
 		return fmt.Errorf("failed to create tracer: %w", err)
 	}

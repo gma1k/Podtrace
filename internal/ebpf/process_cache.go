@@ -32,7 +32,7 @@ func getProcessNameQuick(pid uint32) string {
 
 	name := ""
 
-	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", config.ProcBasePath, pid)
 	if cmdline, err := os.ReadFile(cmdlinePath); err == nil {
 		parts := strings.Split(string(cmdline), "\x00")
 		if len(parts) > 0 && parts[0] != "" {
@@ -44,7 +44,7 @@ func getProcessNameQuick(pid uint32) string {
 	}
 
 	if name == "" {
-		statPath := fmt.Sprintf("/proc/%d/stat", pid)
+		statPath := fmt.Sprintf("%s/%d/stat", config.ProcBasePath, pid)
 		if data, err := os.ReadFile(statPath); err == nil {
 			statStr := string(data)
 			start := strings.Index(statStr, "(")
@@ -56,7 +56,7 @@ func getProcessNameQuick(pid uint32) string {
 	}
 
 	if name == "" {
-		commPath := fmt.Sprintf("/proc/%d/comm", pid)
+		commPath := fmt.Sprintf("%s/%d/comm", config.ProcBasePath, pid)
 		if data, err := os.ReadFile(commPath); err == nil {
 			name = strings.TrimSpace(string(data))
 		}

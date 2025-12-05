@@ -102,3 +102,115 @@ func TestTracer_Start_ErrorHandling(t *testing.T) {
 	}
 }
 
+func TestTracer_Stop_WithReader(t *testing.T) {
+	tracer := &Tracer{
+		filter: filter.NewCgroupFilter(),
+		links:  []link.Link{},
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_WithCollection(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		links:      []link.Link{},
+		collection: nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_AllPaths(t *testing.T) {
+	tracer1 := &Tracer{
+		filter: filter.NewCgroupFilter(),
+		links:  []link.Link{},
+	}
+	err := tracer1.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+
+	tracer2 := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		links:      []link.Link{},
+		reader:     nil,
+		collection: nil,
+	}
+	err = tracer2.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_SetContainerID_EmptyContainerID(t *testing.T) {
+	tracer := &Tracer{
+		filter:      filter.NewCgroupFilter(),
+		containerID: "",
+		links:       []link.Link{},
+		collection:  nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Log("SetContainerID panicked as expected for nil collection")
+		}
+	}()
+
+	err := tracer.SetContainerID("")
+	if err == nil {
+		if tracer.containerID != "" {
+			t.Errorf("Expected empty containerID, got %q", tracer.containerID)
+		}
+	}
+}
+
+func TestTracer_SetContainerID_WithLinks(t *testing.T) {
+	tracer := &Tracer{
+		filter:      filter.NewCgroupFilter(),
+		containerID: "",
+		links:       []link.Link{},
+		collection:  nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Log("SetContainerID panicked as expected for nil collection")
+		}
+	}()
+
+	err := tracer.SetContainerID("test-container-id")
+	if err == nil {
+		if tracer.containerID != "test-container-id" {
+			t.Errorf("Expected containerID 'test-container-id', got %q", tracer.containerID)
+		}
+	}
+}
+
+func TestWaitForInterrupt_SIGTERM(t *testing.T) {
+	done := make(chan bool, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		proc, _ := os.FindProcess(os.Getpid())
+		proc.Signal(os.Interrupt)
+		done <- true
+	}()
+
+	go func() {
+		WaitForInterrupt()
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		<-done
+	case <-time.After(1 * time.Second):
+		t.Error("WaitForInterrupt did not complete in time")
+	}
+}

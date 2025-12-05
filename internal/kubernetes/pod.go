@@ -22,6 +22,8 @@ type PodResolver struct {
 	clientset *kubernetes.Clientset
 }
 
+var _ PodResolverInterface = (*PodResolver)(nil)
+
 func NewPodResolver() (*PodResolver, error) {
 	var config *rest.Config
 	var err error
