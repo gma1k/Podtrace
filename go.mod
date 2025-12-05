@@ -4,7 +4,8 @@ go 1.24.0
 
 require (
 	github.com/cilium/ebpf v0.20.0
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
+	go.uber.org/zap v1.27.1
 	golang.org/x/sys v0.38.0
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
@@ -15,10 +16,9 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.66.1 // indirect
-	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/prometheus/common v0.67.4 // indirect
+	github.com/prometheus/procfs v0.19.2 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.27.1 // indirect
 )
 
 require (

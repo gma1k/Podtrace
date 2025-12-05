@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -95,7 +96,7 @@ func TestFilterEvents(t *testing.T) {
 				}
 			}()
 
-			go filterEvents(in, out, tt.filter)
+			go filterEvents(context.Background(), in, out, tt.filter)
 
 			count := 0
 			for range out {
@@ -119,7 +120,7 @@ func TestFilterEvents_NilEvent(t *testing.T) {
 		in <- &events.Event{Type: events.EventDNS}
 	}()
 
-	go filterEvents(in, out, "dns")
+	go filterEvents(context.Background(), in, out, "dns")
 
 	count := 0
 	for range out {
@@ -140,7 +141,7 @@ func TestFilterEvents_ChannelFull(t *testing.T) {
 		in <- &events.Event{Type: events.EventDNS}
 	}()
 
-	go filterEvents(in, out, "dns")
+	go filterEvents(context.Background(), in, out, "dns")
 
 	select {
 	case <-out:
@@ -172,7 +173,7 @@ func TestFilterEvents_AllEventTypes(t *testing.T) {
 				in <- tt.event
 			}()
 
-			go filterEvents(in, out, tt.filter)
+			go filterEvents(context.Background(), in, out, tt.filter)
 
 			select {
 			case event := <-out:
@@ -201,7 +202,7 @@ func TestFilterEvents_EmptyFilterMap(t *testing.T) {
 		in <- &events.Event{Type: events.EventConnect}
 	}()
 
-	go filterEvents(in, out, "invalid,filter")
+	go filterEvents(context.Background(), in, out, "invalid,filter")
 
 	count := 0
 	for range out {
@@ -232,7 +233,7 @@ func TestFilterEvents_MultipleFilters(t *testing.T) {
 		}
 	}()
 
-	go filterEvents(in, out, "dns,net,fs,cpu,proc")
+	go filterEvents(context.Background(), in, out, "dns,net,fs,cpu,proc")
 
 	count := 0
 	for range out {

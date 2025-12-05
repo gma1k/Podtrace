@@ -3,12 +3,20 @@ package parser
 import (
 	"bytes"
 	"encoding/binary"
+	"sync"
 	"unsafe"
 
 	"github.com/podtrace/podtrace/internal/events"
 )
 
-var binaryRead = binary.Read
+var (
+	binaryRead = binary.Read
+	eventPool  = sync.Pool{
+		New: func() interface{} {
+			return &events.Event{}
+		},
+	}
+)
 
 type rawEvent struct {
 	Timestamp uint64
@@ -36,16 +44,30 @@ func ParseEvent(data []byte) *events.Event {
 		return nil
 	}
 
-	return &events.Event{
-		Timestamp: e.Timestamp,
-		PID:       e.PID,
-		Type:      events.EventType(e.Type),
-		LatencyNS: e.LatencyNS,
-		Error:     e.Error,
-		Bytes:     e.Bytes,
-		TCPState:  e.TCPState,
-		StackKey:  e.StackKey,
-		Target:    string(bytes.TrimRight(e.Target[:], "\x00")),
-		Details:   string(bytes.TrimRight(e.Details[:], "\x00")),
+	event := eventPool.Get().(*events.Event)
+	event.Timestamp = e.Timestamp
+	event.PID = e.PID
+	event.Type = events.EventType(e.Type)
+	event.LatencyNS = e.LatencyNS
+	event.Error = e.Error
+	event.Bytes = e.Bytes
+	event.TCPState = e.TCPState
+	event.StackKey = e.StackKey
+	event.Target = string(bytes.TrimRight(e.Target[:], "\x00"))
+	event.Details = string(bytes.TrimRight(e.Details[:], "\x00"))
+	event.ProcessName = ""
+	event.Stack = nil
+
+	return event
+}
+
+func PutEvent(event *events.Event) {
+	if event == nil {
+		return
 	}
+	event.Stack = nil
+	event.ProcessName = ""
+	event.Target = ""
+	event.Details = ""
+	eventPool.Put(event)
 }

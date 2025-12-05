@@ -56,9 +56,16 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 		f.pidCacheMu.Lock()
 		f.pidCache[pid] = false
 		if len(f.pidCache) > config.MaxPIDCacheSize {
+			evictCount := len(f.pidCache) / 10
+			if evictCount < 1 {
+				evictCount = 1
+			}
 			for k := range f.pidCache {
 				delete(f.pidCache, k)
-				break
+				evictCount--
+				if evictCount <= 0 {
+					break
+				}
 			}
 		}
 		f.pidCacheMu.Unlock()
@@ -71,9 +78,16 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 		f.pidCacheMu.Lock()
 		f.pidCache[pid] = false
 		if len(f.pidCache) > config.MaxPIDCacheSize {
+			evictCount := len(f.pidCache) / 10
+			if evictCount < 1 {
+				evictCount = 1
+			}
 			for k := range f.pidCache {
 				delete(f.pidCache, k)
-				break
+				evictCount--
+				if evictCount <= 0 {
+					break
+				}
 			}
 		}
 		f.pidCacheMu.Unlock()

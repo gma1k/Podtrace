@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"testing"
@@ -41,7 +42,7 @@ func TestRunNormalMode_WithEvents(t *testing.T) {
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -91,7 +92,7 @@ func TestRunNormalMode_Interrupt(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -141,7 +142,7 @@ func TestRunNormalMode_TickerBeforeInterrupt(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -191,7 +192,7 @@ func TestRunNormalMode_HasPrintedReport(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -241,7 +242,7 @@ func TestRunNormalMode_NoEvents(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -292,7 +293,7 @@ func TestRunNormalMode_WithTicker(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runNormalMode(eventChan)
+		err := runNormalMode(context.Background(), eventChan)
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -336,7 +337,7 @@ func TestRunDiagnoseMode_Timeout(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runDiagnoseMode(eventChan, "100ms", "/test/cgroup")
+	err := runDiagnoseMode(context.Background(), eventChan, "100ms", "/test/cgroup")
 	w.Close()
 	os.Stdout = originalStdout
 	io.Copy(io.Discard, r)
@@ -371,7 +372,7 @@ func TestRunDiagnoseMode_WithExport(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runDiagnoseMode(eventChan, "100ms", "/test/cgroup")
+	err := runDiagnoseMode(context.Background(), eventChan, "100ms", "/test/cgroup")
 	w.Close()
 	os.Stdout = originalStdout
 	io.Copy(io.Discard, r)
@@ -388,7 +389,7 @@ func TestRunDiagnoseMode_InvalidDuration(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runDiagnoseMode(eventChan, "invalid", "/test/cgroup")
+	err := runDiagnoseMode(context.Background(), eventChan, "invalid", "/test/cgroup")
 	w.Close()
 	os.Stdout = originalStdout
 	io.Copy(io.Discard, r)
@@ -423,7 +424,7 @@ func TestRunDiagnoseMode_WithExportFormat(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runDiagnoseMode(eventChan, "100ms", "/test/cgroup")
+	err := runDiagnoseMode(context.Background(), eventChan, "100ms", "/test/cgroup")
 	w.Close()
 	os.Stdout = originalStdout
 	io.Copy(io.Discard, r)
@@ -458,7 +459,7 @@ func TestRunDiagnoseMode_WithExportFormatCSV(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runDiagnoseMode(eventChan, "100ms", "/test/cgroup")
+	err := runDiagnoseMode(context.Background(), eventChan, "100ms", "/test/cgroup")
 	w.Close()
 	os.Stdout = originalStdout
 	io.Copy(io.Discard, r)
@@ -502,7 +503,7 @@ func TestRunDiagnoseMode_Interrupt(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runDiagnoseMode(eventChan, "10s", "/test/cgroup")
+		err := runDiagnoseMode(context.Background(), eventChan, "10s", "/test/cgroup")
 
 		w.Close()
 		os.Stdout = originalStdout
@@ -555,7 +556,7 @@ func TestRunDiagnoseMode_InterruptWithExport(t *testing.T) {
 			proc.Signal(os.Interrupt)
 		}()
 
-		err := runDiagnoseMode(eventChan, "10s", "/test/cgroup")
+		err := runDiagnoseMode(context.Background(), eventChan, "10s", "/test/cgroup")
 
 		w.Close()
 		os.Stdout = originalStdout

@@ -42,6 +42,11 @@ jobs:
       - name: Install dependencies
         run: GOTOOLCHAIN=auto go mod download
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       - name: Build
         run: GOTOOLCHAIN=auto go build ./...
 

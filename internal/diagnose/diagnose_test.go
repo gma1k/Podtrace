@@ -16,8 +16,9 @@ func TestNewDiagnostician(t *testing.T) {
 		t.Fatal("NewDiagnostician returned nil")
 	}
 
-	if len(d.events) != 0 {
-		t.Errorf("Expected empty events, got %d", len(d.events))
+	events := d.GetEvents()
+	if len(events) != 0 {
+		t.Errorf("Expected empty events, got %d", len(events))
 	}
 
 	if d.errorRateThreshold != 10.0 {
@@ -52,13 +53,15 @@ func TestAddEvent(t *testing.T) {
 	event2 := &events.Event{Type: events.EventConnect, PID: 2}
 
 	d.AddEvent(event1)
-	if len(d.events) != 1 {
-		t.Errorf("Expected 1 event, got %d", len(d.events))
+	events := d.GetEvents()
+	if len(events) != 1 {
+		t.Errorf("Expected 1 event, got %d", len(events))
 	}
 
 	d.AddEvent(event2)
-	if len(d.events) != 2 {
-		t.Errorf("Expected 2 events, got %d", len(d.events))
+	events = d.GetEvents()
+	if len(events) != 2 {
+		t.Errorf("Expected 2 events, got %d", len(events))
 	}
 }
 

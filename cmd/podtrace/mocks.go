@@ -28,7 +28,7 @@ func (m *mockPodResolver) ResolvePod(ctx context.Context, podName, namespace, co
 type mockTracer struct {
 	attachToCgroupFunc func(cgroupPath string) error
 	setContainerIDFunc  func(containerID string) error
-	startFunc           func(eventChan chan<- *events.Event) error
+	startFunc           func(ctx context.Context, eventChan chan<- *events.Event) error
 	stopFunc            func() error
 }
 
@@ -46,9 +46,9 @@ func (m *mockTracer) SetContainerID(containerID string) error {
 	return nil
 }
 
-func (m *mockTracer) Start(eventChan chan<- *events.Event) error {
+func (m *mockTracer) Start(ctx context.Context, eventChan chan<- *events.Event) error {
 	if m.startFunc != nil {
-		return m.startFunc(eventChan)
+		return m.startFunc(ctx, eventChan)
 	}
 	return nil
 }

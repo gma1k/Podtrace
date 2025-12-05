@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose/analyzer"
@@ -18,17 +21,22 @@ import (
 	"github.com/podtrace/podtrace/internal/diagnose/profiling"
 	"github.com/podtrace/podtrace/internal/diagnose/tracker"
 	"github.com/podtrace/podtrace/internal/events"
+	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
 // Diagnostician collects and analyzes events
 type Diagnostician struct {
+	mu                 sync.RWMutex
 	events             []*events.Event
 	startTime          time.Time
 	endTime            time.Time
 	errorRateThreshold float64
 	rttSpikeThreshold  float64
 	fsSlowThreshold    float64
+	maxEvents          int
+	eventCount         int
+	droppedEvents      int
 }
 
 func NewDiagnostician() *Diagnostician {
@@ -38,6 +46,7 @@ func NewDiagnostician() *Diagnostician {
 		errorRateThreshold: config.DefaultErrorRateThreshold,
 		rttSpikeThreshold:  config.DefaultRTTThreshold,
 		fsSlowThreshold:    config.DefaultFSSlowThreshold,
+		maxEvents:          config.MaxEvents,
 	}
 }
 
@@ -48,11 +57,43 @@ func NewDiagnosticianWithThresholds(errorRate, rttSpike, fsSlow float64) *Diagno
 		errorRateThreshold: errorRate,
 		rttSpikeThreshold:  rttSpike,
 		fsSlowThreshold:    fsSlow,
+		maxEvents:          config.MaxEvents,
 	}
 }
 
 func (d *Diagnostician) AddEvent(event *events.Event) {
+	if event == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.eventCount++
+	if len(d.events) >= d.maxEvents {
+		if d.eventCount%config.EventSamplingRate == 0 {
+			d.events = append(d.events, event)
+		} else {
+			d.droppedEvents++
+		}
+		if d.droppedEvents%10000 == 0 {
+			logger.Warn("Event limit reached, sampling events",
+				zap.Int("max_events", d.maxEvents),
+				zap.Int("dropped", d.droppedEvents))
+		}
+		return
+	}
+
 	d.events = append(d.events, event)
+}
+
+func (d *Diagnostician) GetEvents() []*events.Event {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	result := make([]*events.Event, len(d.events))
+	copy(result, d.events)
+	return result
 }
 
 func (d *Diagnostician) Finish() {
@@ -66,12 +107,51 @@ func (d *Diagnostician) calculateRate(count int, duration time.Duration) float64
 	return 0
 }
 
+func formatSectionHeader(title string) string {
+	return fmt.Sprintf("%s Statistics:\n", title)
+}
+
+func formatTotalWithRate(label string, count int, rate float64) string {
+	return fmt.Sprintf("  Total %s: %d (%.1f/sec)\n", label, count, rate)
+}
+
+func formatLatencyMetrics(avgLatency, maxLatency float64) string {
+	return fmt.Sprintf("  Average latency: %.2fms\n  Max latency: %.2fms\n", avgLatency, maxLatency)
+}
+
+func formatPercentiles(p50, p95, p99 float64) string {
+	return fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+}
+
+func formatErrorRate(errors, total int) string {
+	if total == 0 {
+		return fmt.Sprintf("  Errors: %d (0.0%%)\n", errors)
+	}
+	return fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(total))
+}
+
+func formatTopTargets(targets []analyzer.TargetCount, limit int, headerLabel, countLabel string) string {
+	if len(targets) == 0 {
+		return ""
+	}
+	var result string
+	result += fmt.Sprintf("  Top %s:\n", headerLabel)
+	for i, target := range targets {
+		if i >= limit {
+			break
+		}
+		result += fmt.Sprintf("    - %s (%d %s)\n", target.Target, target.Count, countLabel)
+	}
+	return result
+}
+
 func (d *Diagnostician) generateSummarySection(duration time.Duration) string {
-	eventsPerSec := d.calculateRate(len(d.events), duration)
+	events := d.GetEvents()
+	eventsPerSec := d.calculateRate(len(events), duration)
 	var report string
 	report += fmt.Sprintf("=== Diagnostic Report (collected over %v) ===\n\n", duration)
 	report += fmt.Sprintf("Summary:\n")
-	report += fmt.Sprintf("  Total events: %d\n", len(d.events))
+	report += fmt.Sprintf("  Total events: %d\n", len(events))
 	report += fmt.Sprintf("  Events per second: %.1f\n", eventsPerSec)
 	report += fmt.Sprintf("  Collection period: %v to %v\n\n", d.startTime.Format("15:04:05"), d.endTime.Format("15:04:05"))
 	return report
@@ -85,22 +165,13 @@ func (d *Diagnostician) generateDNSSection(duration time.Duration) string {
 
 	avgLatency, maxLatency, errors, p50, p95, p99, topTargets := analyzer.AnalyzeDNS(dnsEvents)
 	var report string
-	report += fmt.Sprintf("DNS Statistics:\n")
+	report += formatSectionHeader("DNS")
 	dnsRate := d.calculateRate(len(dnsEvents), duration)
-	report += fmt.Sprintf("  Total lookups: %d (%.1f/sec)\n", len(dnsEvents), dnsRate)
-	report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
-	report += fmt.Sprintf("  Max latency: %.2fms\n", maxLatency)
-	report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
-	report += fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(dnsEvents)))
-	if len(topTargets) > 0 {
-		report += fmt.Sprintf("  Top targets:\n")
-		for i, target := range topTargets {
-			if i >= config.TopTargetsLimit {
-				break
-			}
-			report += fmt.Sprintf("    - %s (%d lookups)\n", target.Target, target.Count)
-		}
-	}
+	report += formatTotalWithRate("lookups", len(dnsEvents), dnsRate)
+	report += formatLatencyMetrics(avgLatency, maxLatency)
+	report += formatPercentiles(p50, p95, p99)
+	report += formatErrorRate(errors, len(dnsEvents))
+	report += formatTopTargets(topTargets, config.TopTargetsLimit, "targets", "lookups")
 	report += "\n"
 	return report
 }
@@ -113,7 +184,7 @@ func (d *Diagnostician) generateTCPSection(duration time.Duration) string {
 	}
 
 	var report string
-	report += fmt.Sprintf("TCP Statistics:\n")
+	report += formatSectionHeader("TCP")
 	sendRate := d.calculateRate(len(tcpSendEvents), duration)
 	recvRate := d.calculateRate(len(tcpRecvEvents), duration)
 	report += fmt.Sprintf("  Send operations: %d (%.1f/sec)\n", len(tcpSendEvents), sendRate)
@@ -124,9 +195,9 @@ func (d *Diagnostician) generateTCPSection(duration time.Duration) string {
 		avgRTT, maxRTT, spikes, p50, p95, p99, errors, totalBytes, avgBytes, peakBytes := analyzer.AnalyzeTCP(allTCP, d.rttSpikeThreshold)
 		report += fmt.Sprintf("  Average RTT: %.2fms\n", avgRTT)
 		report += fmt.Sprintf("  Max RTT: %.2fms\n", maxRTT)
-		report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+		report += formatPercentiles(p50, p95, p99)
 		report += fmt.Sprintf("  RTT spikes (>100ms): %d\n", spikes)
-		report += fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(allTCP)))
+		report += formatErrorRate(errors, len(allTCP))
 		if totalBytes > 0 {
 			report += fmt.Sprintf("  Total bytes transferred: %s\n", analyzer.FormatBytes(totalBytes))
 			report += fmt.Sprintf("  Average bytes per operation: %s\n", analyzer.FormatBytes(avgBytes))
@@ -150,12 +221,11 @@ func (d *Diagnostician) generateConnectionSection(duration time.Duration) string
 
 	avgLatency, maxLatency, errors, p50, p95, p99, topTargets, errorBreakdown := analyzer.AnalyzeConnections(connectEvents)
 	var report string
-	report += fmt.Sprintf("Connection Statistics:\n")
+	report += formatSectionHeader("Connection")
 	connRate := d.calculateRate(len(connectEvents), duration)
-	report += fmt.Sprintf("  Total connections: %d (%.1f/sec)\n", len(connectEvents), connRate)
-	report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
-	report += fmt.Sprintf("  Max latency: %.2fms\n", maxLatency)
-	report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+	report += formatTotalWithRate("connections", len(connectEvents), connRate)
+	report += formatLatencyMetrics(avgLatency, maxLatency)
+	report += formatPercentiles(p50, p95, p99)
 	report += fmt.Sprintf("  Failed connections: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(connectEvents)))
 	if len(errorBreakdown) > 0 {
 		report += fmt.Sprintf("  Error breakdown:\n")
@@ -163,15 +233,7 @@ func (d *Diagnostician) generateConnectionSection(duration time.Duration) string
 			report += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, count)
 		}
 	}
-	if len(topTargets) > 0 {
-		report += fmt.Sprintf("  Top connection targets:\n")
-		for i, target := range topTargets {
-			if i >= config.TopTargetsLimit {
-				break
-			}
-			report += fmt.Sprintf("    - %s (%d connections)\n", target.Target, target.Count)
-		}
-	}
+	report += formatTopTargets(topTargets, config.TopTargetsLimit, "connection targets", "connections")
 	report += "\n"
 	return report
 }
@@ -185,7 +247,7 @@ func (d *Diagnostician) generateFileSystemSection(duration time.Duration) string
 	}
 
 	var report string
-	report += fmt.Sprintf("File System Statistics:\n")
+	report += formatSectionHeader("File System")
 	writeRate := d.calculateRate(len(writeEvents), duration)
 	readRate := d.calculateRate(len(readEvents), duration)
 	fsyncRate := d.calculateRate(len(fsyncEvents), duration)
@@ -196,9 +258,8 @@ func (d *Diagnostician) generateFileSystemSection(duration time.Duration) string
 	allFS := append(append(writeEvents, readEvents...), fsyncEvents...)
 	if len(allFS) > 0 {
 		avgLatency, maxLatency, slowOps, p50, p95, p99, totalBytes, avgBytes := analyzer.AnalyzeFS(allFS, d.fsSlowThreshold)
-		report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
-		report += fmt.Sprintf("  Max latency: %.2fms\n", maxLatency)
-		report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+		report += formatLatencyMetrics(avgLatency, maxLatency)
+		report += formatPercentiles(p50, p95, p99)
 		thresholdMs := d.fsSlowThreshold
 		report += fmt.Sprintf("  Slow operations (>%.1fms): %d\n", thresholdMs, slowOps)
 		if totalBytes > 0 {
@@ -247,7 +308,7 @@ func (d *Diagnostician) generateUDPSection(duration time.Duration) string {
 	}
 
 	var report string
-	report += fmt.Sprintf("UDP Statistics:\n")
+	report += formatSectionHeader("UDP")
 	report += fmt.Sprintf("  Send operations: %d (%.1f/sec)\n", len(udpSendEvents), d.calculateRate(len(udpSendEvents), duration))
 	report += fmt.Sprintf("  Receive operations: %d (%.1f/sec)\n", len(udpRecvEvents), d.calculateRate(len(udpRecvEvents), duration))
 
@@ -281,8 +342,8 @@ func (d *Diagnostician) generateUDPSection(duration time.Duration) string {
 			p95 := analyzer.Percentile(latencies, 95)
 			p99 := analyzer.Percentile(latencies, 99)
 			report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
-			report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
-			report += fmt.Sprintf("  Errors: %d (%.1f%%)\n", errors, float64(errors)*100/float64(len(allUDP)))
+			report += formatPercentiles(p50, p95, p99)
+			report += formatErrorRate(errors, len(allUDP))
 			if totalBytes > 0 {
 				report += fmt.Sprintf("  Total bytes transferred: %s\n", analyzer.FormatBytes(totalBytes))
 				report += fmt.Sprintf("  Average bytes per operation: %s\n", analyzer.FormatBytes(avgBytes))
@@ -307,7 +368,7 @@ func (d *Diagnostician) generateHTTPSection(duration time.Duration) string {
 	}
 
 	var report string
-	report += fmt.Sprintf("HTTP Statistics:\n")
+	report += formatSectionHeader("HTTP")
 	reqRate := d.calculateRate(len(httpReqEvents), duration)
 	respRate := d.calculateRate(len(httpRespEvents), duration)
 	report += fmt.Sprintf("  Requests: %d (%.1f/sec)\n", len(httpReqEvents), reqRate)
@@ -336,7 +397,7 @@ func (d *Diagnostician) generateHTTPSection(duration time.Duration) string {
 			p95 := analyzer.Percentile(latencies, 95)
 			p99 := analyzer.Percentile(latencies, 99)
 			report += fmt.Sprintf("  Average latency: %.2fms\n", avgLatency)
-			report += fmt.Sprintf("  Percentiles: P50=%.2fms, P95=%.2fms, P99=%.2fms\n", p50, p95, p99)
+			report += formatPercentiles(p50, p95, p99)
 			if totalBytes > 0 {
 				report += fmt.Sprintf("  Total bytes transferred: %s\n", analyzer.FormatBytes(totalBytes))
 				report += fmt.Sprintf("  Average bytes per response: %s\n", analyzer.FormatBytes(avgBytes))
@@ -385,7 +446,7 @@ func (d *Diagnostician) generateCPUSection(duration time.Duration) string {
 
 	avgBlock, maxBlock, p50, p95, p99 := analyzer.AnalyzeCPU(schedEvents)
 	var report string
-	report += fmt.Sprintf("CPU Statistics:\n")
+	report += formatSectionHeader("CPU")
 	schedRate := d.calculateRate(len(schedEvents), duration)
 	report += fmt.Sprintf("  Thread switches: %d (%.1f/sec)\n", len(schedEvents), schedRate)
 	report += fmt.Sprintf("  Average block time: %.2fms\n", avgBlock)
@@ -442,7 +503,7 @@ func (d *Diagnostician) generateMemorySection(duration time.Duration) string {
 	}
 
 	var report string
-	report += fmt.Sprintf("Memory Statistics:\n")
+	report += formatSectionHeader("Memory")
 	if len(pageFaultEvents) > 0 {
 		faultRate := d.calculateRate(len(pageFaultEvents), duration)
 		report += fmt.Sprintf("  Page faults: %d (%.1f/sec)\n", len(pageFaultEvents), faultRate)
@@ -486,7 +547,8 @@ func (d *Diagnostician) generateMemorySection(duration time.Duration) string {
 }
 
 func (d *Diagnostician) generateIssuesSection() string {
-	issues := detector.DetectIssues(d.events, d.errorRateThreshold, d.rttSpikeThreshold)
+	events := d.GetEvents()
+	issues := detector.DetectIssues(events, d.errorRateThreshold, d.rttSpikeThreshold)
 	if len(issues) == 0 {
 		return ""
 	}
@@ -501,8 +563,19 @@ func (d *Diagnostician) generateIssuesSection() string {
 }
 
 func (d *Diagnostician) GenerateReport() string {
-	if len(d.events) == 0 {
+	return d.GenerateReportWithContext(context.Background())
+}
+
+func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
+	allEvents := d.GetEvents()
+	if len(allEvents) == 0 {
 		return "No events collected during the diagnostic period.\n"
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Sprintf("Report generation cancelled: %v\n", ctx.Err())
+	default:
 	}
 
 	duration := d.endTime.Sub(d.startTime)
@@ -518,19 +591,20 @@ func (d *Diagnostician) GenerateReport() string {
 	report += d.generateCPUSection(duration)
 	report += d.generateTCPStateSection(duration)
 	report += d.generateMemorySection(duration)
-	report += profiling.GenerateCPUUsageReport(d.events, duration)
-	report += d.generateStackTraceSection()
+	report += profiling.GenerateCPUUsageReport(allEvents, duration)
+	report += d.generateStackTraceSectionWithContext(ctx)
 	report += d.generateSyscallSection(duration)
 	report += d.generateApplicationTracing(duration)
-	report += tracker.GenerateConnectionCorrelation(d.events)
+	report += tracker.GenerateConnectionCorrelation(allEvents)
 	report += d.generateIssuesSection()
 
 	return report
 }
 
 func (d *Diagnostician) filterEvents(eventType events.EventType) []*events.Event {
+	allEvents := d.GetEvents()
 	var filtered []*events.Event
-	for _, e := range d.events {
+	for _, e := range allEvents {
 		if e.Type == eventType {
 			filtered = append(filtered, e)
 		}
@@ -541,7 +615,8 @@ func (d *Diagnostician) filterEvents(eventType events.EventType) []*events.Event
 func (d *Diagnostician) generateApplicationTracing(duration time.Duration) string {
 	var report string
 
-	pidActivity := tracker.AnalyzeProcessActivity(d.events)
+	allEvents := d.GetEvents()
+	pidActivity := tracker.AnalyzeProcessActivity(allEvents)
 	if len(pidActivity) > 0 {
 		report += fmt.Sprintf("Process Activity:\n")
 		report += fmt.Sprintf("  Active processes: %d\n", len(pidActivity))
@@ -560,7 +635,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 		report += "\n"
 	}
 
-	timeline := profiling.AnalyzeTimeline(d.events, d.startTime, duration)
+	timeline := profiling.AnalyzeTimeline(allEvents, d.startTime, duration)
 	if len(timeline) > 0 {
 		report += fmt.Sprintf("Activity Timeline:\n")
 		report += fmt.Sprintf("  Activity distribution:\n")
@@ -571,7 +646,7 @@ func (d *Diagnostician) generateApplicationTracing(duration time.Duration) strin
 		report += "\n"
 	}
 
-	bursts := profiling.DetectBursts(d.events, d.startTime, duration)
+	bursts := profiling.DetectBursts(allEvents, d.startTime, duration)
 	if len(bursts) > 0 {
 		report += fmt.Sprintf("Activity Bursts:\n")
 		report += fmt.Sprintf("  Detected %d burst period(s):\n", len(bursts))
@@ -627,14 +702,25 @@ type stackSummary struct {
 }
 
 func (d *Diagnostician) generateStackTraceSection() string {
+	return d.generateStackTraceSectionWithContext(context.Background())
+}
+
+func (d *Diagnostician) generateStackTraceSectionWithContext(ctx context.Context) string {
 	var report string
-	if len(d.events) == 0 {
+	allEvents := d.GetEvents()
+	if len(allEvents) == 0 {
 		return ""
 	}
 	type resolver struct {
 		cache map[string]string
 	}
 	resolve := func(r *resolver, pid uint32, addr uint64) string {
+		select {
+		case <-ctx.Done():
+			return ""
+		default:
+		}
+
 		if addr == 0 {
 			return ""
 		}
@@ -649,9 +735,9 @@ func (d *Diagnostician) generateStackTraceSection() string {
 		if v, ok := r.cache[key]; ok {
 			return v
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), config.DefaultAddr2lineTimeout)
+		timeoutCtx, cancel := context.WithTimeout(ctx, config.DefaultAddr2lineTimeout)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "addr2line", "-e", exePath, fmt.Sprintf("%#x", addr))
+		cmd := exec.CommandContext(timeoutCtx, "addr2line", "-e", exePath, fmt.Sprintf("%#x", addr))
 		out, err := cmd.Output()
 		if err != nil {
 			v := fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
@@ -670,7 +756,7 @@ func (d *Diagnostician) generateStackTraceSection() string {
 	r := &resolver{cache: make(map[string]string)}
 	stackMap := make(map[string]*stackSummary)
 	processed := 0
-	for _, e := range d.events {
+	for _, e := range allEvents {
 		if processed >= config.MaxEventsForStacks {
 			break
 		}
@@ -739,11 +825,12 @@ func (d *Diagnostician) generateStackTraceSection() string {
 
 func (d *Diagnostician) generateSyscallSection(duration time.Duration) string {
 	var report string
-	if len(d.events) == 0 {
+	allEvents := d.GetEvents()
+	if len(allEvents) == 0 {
 		return ""
 	}
 	var execEvents, forkEvents, openEvents, closeEvents []*events.Event
-	for _, e := range d.events {
+	for _, e := range allEvents {
 		if e == nil {
 			continue
 		}
@@ -834,11 +921,12 @@ type ExportData struct {
 
 func (d *Diagnostician) ExportJSON() ExportData {
 	duration := d.endTime.Sub(d.startTime)
-	eventsPerSec := float64(len(d.events)) / duration.Seconds()
+	allEvents := d.GetEvents()
+	eventsPerSec := float64(len(allEvents)) / duration.Seconds()
 
 	data := ExportData{
 		Summary: map[string]interface{}{
-			"total_events":      len(d.events),
+			"total_events":      len(allEvents),
 			"events_per_second": eventsPerSec,
 			"start_time":        d.startTime.Format(time.RFC3339),
 			"end_time":          d.endTime.Format(time.RFC3339),
@@ -956,7 +1044,7 @@ func (d *Diagnostician) ExportJSON() ExportData {
 		}
 	}
 
-	pidActivity := tracker.AnalyzeProcessActivity(d.events)
+	pidActivity := tracker.AnalyzeProcessActivity(allEvents)
 	for _, info := range pidActivity {
 		data.ProcessActivity = append(data.ProcessActivity, map[string]interface{}{
 			"pid":         info.Pid,
@@ -966,7 +1054,7 @@ func (d *Diagnostician) ExportJSON() ExportData {
 		})
 	}
 
-	issues := detector.DetectIssues(d.events, d.errorRateThreshold, d.rttSpikeThreshold)
+	issues := detector.DetectIssues(allEvents, d.errorRateThreshold, d.rttSpikeThreshold)
 	data.PotentialIssues = issues
 
 	return data
@@ -981,7 +1069,8 @@ func (d *Diagnostician) ExportCSV(w io.Writer) error {
 		return err
 	}
 
-	for _, event := range d.events {
+	allEvents := d.GetEvents()
+	for _, event := range allEvents {
 		if event == nil {
 			continue
 		}

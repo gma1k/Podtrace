@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestTracer_Start_ErrorHandling(t *testing.T) {
 		}
 	}()
 
-	err := tracer.Start(eventChan)
+	err := tracer.Start(context.Background(), eventChan)
 	if err == nil {
 		t.Log("Start returned without error (expected when collection is nil)")
 	}
@@ -243,7 +244,7 @@ func TestTracer_Start_WithNilReader(t *testing.T) {
 		}
 	}()
 
-	err := tracer.Start(eventChan)
+	err := tracer.Start(context.Background(), eventChan)
 	if err != nil {
 		t.Logf("Start returned error as expected for nil reader: %v", err)
 	}
@@ -264,7 +265,7 @@ func TestTracer_Start_WithNilCollection(t *testing.T) {
 		}
 	}()
 
-	err := tracer.Start(eventChan)
+	err := tracer.Start(context.Background(), eventChan)
 	if err != nil {
 		t.Logf("Start returned error as expected for nil collection: %v", err)
 	}
@@ -298,7 +299,7 @@ func TestTracer_Start_WithRealEBPF(t *testing.T) {
 
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
 
-	err = tracer.Start(eventChan)
+	err = tracer.Start(context.Background(), eventChan)
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -355,7 +356,7 @@ func TestTracer_Start_ErrorPaths(t *testing.T) {
 				}
 			}()
 
-			err := tt.tracer.Start(eventChan)
+			err := tt.tracer.Start(context.Background(), eventChan)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Start() error = %v, wantErr %v", err, tt.wantErr)
 			}

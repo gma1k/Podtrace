@@ -1,6 +1,10 @@
 package ebpf
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -31,12 +35,20 @@ type stackTraceValue struct {
 	Pad uint32
 }
 
+var stackFramePool = sync.Pool{
+	New: func() interface{} {
+		return make([]uint64, 0, 64)
+	},
+}
+
 type Tracer struct {
-	collection  *ebpf.Collection
-	links       []link.Link
-	reader      *ringbuf.Reader
-	filter      *filter.CgroupFilter
-	containerID string
+	collection        *ebpf.Collection
+	links             []link.Link
+	reader            *ringbuf.Reader
+	filter            *filter.CgroupFilter
+	containerID       string
+	processNameCache  map[uint32]string
+	processCacheMutex *sync.RWMutex
 }
 
 var _ TracerInterface = (*Tracer)(nil)
@@ -96,10 +108,12 @@ func NewTracer() (*Tracer, error) {
 	}
 
 	return &Tracer{
-		collection: coll,
-		links:      links,
-		reader:     rd,
-		filter:     filter.NewCgroupFilter(),
+		collection:        coll,
+		links:             links,
+		reader:            rd,
+		filter:            filter.NewCgroupFilter(),
+		processNameCache:  make(map[uint32]string),
+		processCacheMutex: &sync.RWMutex{},
 	}, nil
 }
 
@@ -126,7 +140,7 @@ func (t *Tracer) SetContainerID(containerID string) error {
 }
 
 
-func (t *Tracer) Start(eventChan chan<- *events.Event) error {
+func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) error {
 	var errorCount int
 	var lastErrorLog time.Time
 	var errorCountMu sync.Mutex
@@ -139,9 +153,15 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 			}
 		}()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			record, err := t.reader.Read()
 			if err != nil {
-				if err.Error() != "" && strings.Contains(err.Error(), "closed") {
+				if errors.Is(err, io.EOF) || errors.Is(err, ringbuf.ErrClosed) || strings.Contains(err.Error(), "closed") {
 					return
 				}
 				errorCountMu.Lock()
@@ -179,13 +199,18 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 							n = len(stack.IPs)
 						}
 						if n > 0 {
-							frames := make([]uint64, n)
+							frames := stackFramePool.Get().([]uint64)
+							if cap(frames) < n {
+								frames = make([]uint64, n)
+							} else {
+								frames = frames[:n]
+							}
 							copy(frames, stack.IPs[:n])
 							event.Stack = frames
 						}
 					}
 				}
-				event.ProcessName = getProcessNameQuick(event.PID)
+				event.ProcessName = t.getProcessNameQuick(event.PID)
 				event.ProcessName = validation.SanitizeProcessName(event.ProcessName)
 
 				if event.Error != 0 {
@@ -194,6 +219,12 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 
 				if t.filter.IsPIDInCgroup(event.PID) {
 					select {
+					case <-ctx.Done():
+						if event.Stack != nil {
+							stackFramePool.Put(event.Stack[:0])
+						}
+						parser.PutEvent(event)
+						return
 					case eventChan <- event:
 						metricsexporter.RecordEventProcessingLatency(time.Since(processingStart))
 					default:
@@ -201,7 +232,16 @@ func (t *Tracer) Start(eventChan chan<- *events.Event) error {
 							zap.String("event_type", event.TypeString()),
 							zap.Uint32("pid", event.PID))
 						metricsexporter.RecordRingBufferDrop()
+						if event.Stack != nil {
+							stackFramePool.Put(event.Stack[:0])
+						}
+						parser.PutEvent(event)
 					}
+				} else {
+					if event.Stack != nil {
+						stackFramePool.Put(event.Stack[:0])
+					}
+					parser.PutEvent(event)
 				}
 			}
 		}
@@ -226,6 +266,68 @@ func (t *Tracer) Stop() error {
 	return nil
 }
 
+func (t *Tracer) getProcessNameQuick(pid uint32) string {
+	if !validation.ValidatePID(pid) {
+		return ""
+	}
+
+	t.processCacheMutex.RLock()
+	if name, ok := t.processNameCache[pid]; ok {
+		t.processCacheMutex.RUnlock()
+		metricsexporter.RecordProcessCacheHit()
+		return name
+	}
+	t.processCacheMutex.RUnlock()
+	metricsexporter.RecordProcessCacheMiss()
+
+	name := ""
+
+	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", config.ProcBasePath, pid)
+	if cmdline, err := os.ReadFile(cmdlinePath); err == nil {
+		parts := strings.Split(string(cmdline), "\x00")
+		if len(parts) > 0 && parts[0] != "" {
+			name = parts[0]
+			if idx := strings.LastIndex(name, "/"); idx >= 0 {
+				name = name[idx+1:]
+			}
+		}
+	}
+
+	if name == "" {
+		statPath := fmt.Sprintf("%s/%d/stat", config.ProcBasePath, pid)
+		if data, err := os.ReadFile(statPath); err == nil {
+			statStr := string(data)
+			start := strings.Index(statStr, "(")
+			end := strings.LastIndex(statStr, ")")
+			if start >= 0 && end > start {
+				name = statStr[start+1 : end]
+			}
+		}
+	}
+
+	if name == "" {
+		commPath := fmt.Sprintf("%s/%d/comm", config.ProcBasePath, pid)
+		if data, err := os.ReadFile(commPath); err == nil {
+			name = strings.TrimSpace(string(data))
+		}
+	}
+
+	t.processCacheMutex.Lock()
+	if len(t.processNameCache) >= config.MaxProcessCacheSize {
+		evictCount := len(t.processNameCache) - int(float64(config.MaxProcessCacheSize)*config.ProcessCacheEvictionRatio)
+		for k := range t.processNameCache {
+			delete(t.processNameCache, k)
+			evictCount--
+			if evictCount <= 0 {
+				break
+			}
+		}
+	}
+	t.processNameCache[pid] = name
+	t.processCacheMutex.Unlock()
+
+	return validation.SanitizeProcessName(name)
+}
 
 func WaitForInterrupt() {
 	sig := make(chan os.Signal, 1)

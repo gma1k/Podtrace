@@ -409,7 +409,7 @@ func TestRunPodtrace_StartError(t *testing.T) {
 	}
 	tracerFactory = func() (ebpf.TracerInterface, error) {
 		return &mockTracer{
-			startFunc: func(eventChan chan<- *events.Event) error {
+			startFunc: func(ctx context.Context, eventChan chan<- *events.Event) error {
 				return errors.New("start error")
 			},
 		}, nil

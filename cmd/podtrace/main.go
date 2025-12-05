@@ -126,9 +126,9 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create pod resolver: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), config.DefaultPodResolveTimeout)
-	defer cancel()
-	podInfo, err := resolver.ResolvePod(ctx, podName, namespace, containerName)
+	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), config.DefaultPodResolveTimeout)
+	defer resolveCancel()
+	podInfo, err := resolver.ResolvePod(resolveCtx, podName, namespace, containerName)
 	if err != nil {
 		return fmt.Errorf("failed to resolve pod: %w", err)
 	}
@@ -152,29 +152,49 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to set container ID: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
 	if enableMetrics {
-		go metricsexporter.HandleEvents(eventChan)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Panic in metrics event handler", zap.Any("panic", r))
+				}
+			}()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case event, ok := <-eventChan:
+					if !ok {
+						return
+					}
+					metricsexporter.HandleEvent(event)
+				}
+			}
+		}()
 	}
 
 	filteredChan := eventChan
 	if eventFilter != "" {
 		filteredChan = make(chan *events.Event, config.EventChannelBufferSize)
-		go filterEvents(eventChan, filteredChan, eventFilter)
+		go filterEvents(ctx, eventChan, filteredChan, eventFilter)
 	}
 
-	if err := tracer.Start(eventChan); err != nil {
+	if err := tracer.Start(ctx, eventChan); err != nil {
 		return fmt.Errorf("failed to start tracer: %w", err)
 	}
 
 	if diagnoseDuration != "" {
-		return runDiagnoseMode(filteredChan, diagnoseDuration, podInfo.CgroupPath)
+		return runDiagnoseMode(ctx, filteredChan, diagnoseDuration, podInfo.CgroupPath)
 	}
 
-	return runNormalMode(filteredChan)
+	return runNormalMode(ctx, filteredChan)
 }
 
-func runNormalMode(eventChan <-chan *events.Event) error {
+func runNormalMode(ctx context.Context, eventChan <-chan *events.Event) error {
 	logger.Info("Tracing started",
 		zap.Duration("update_interval", config.DefaultRealtimeUpdateInterval))
 
@@ -186,6 +206,8 @@ func runNormalMode(eventChan <-chan *events.Event) error {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case event := <-eventChan:
 			diagnostician.AddEvent(event)
 
@@ -217,7 +239,7 @@ func runNormalMode(eventChan <-chan *events.Event) error {
 	}
 }
 
-func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupPath string) error {
+func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, cgroupPath string) error {
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return fmt.Errorf("invalid duration: %w", err)
@@ -234,6 +256,14 @@ func runDiagnoseMode(eventChan <-chan *events.Event, durationStr string, cgroupP
 
 	for {
 		select {
+		case <-ctx.Done():
+			diagnostician.Finish()
+			report := diagnostician.GenerateReport()
+			if exportFormat != "" {
+				return exportReport(report, exportFormat, diagnostician)
+			}
+			fmt.Println(report)
+			return ctx.Err()
 		case event := <-eventChan:
 			diagnostician.AddEvent(event)
 		case <-timeout:
@@ -270,7 +300,7 @@ func interruptChan() <-chan os.Signal {
 	return sigChan
 }
 
-func filterEvents(in <-chan *events.Event, out chan<- *events.Event, filter string) {
+func filterEvents(ctx context.Context, in <-chan *events.Event, out chan<- *events.Event, filter string) {
 	defer close(out)
 	filters := strings.Split(strings.ToLower(filter), ",")
 	filterMap := make(map[string]bool, len(filters))
@@ -281,27 +311,41 @@ func filterEvents(in <-chan *events.Event, out chan<- *events.Event, filter stri
 		}
 	}
 
-	for event := range in {
-		if event == nil {
-			continue
-		}
-		shouldInclude := false
-		switch {
-		case filterMap["dns"] && event.Type == events.EventDNS:
-			shouldInclude = true
-		case filterMap["net"] && (event.Type == events.EventConnect || event.Type == events.EventTCPSend || event.Type == events.EventTCPRecv):
-			shouldInclude = true
-		case filterMap["fs"] && (event.Type == events.EventRead || event.Type == events.EventWrite || event.Type == events.EventFsync):
-			shouldInclude = true
-		case filterMap["cpu"] && event.Type == events.EventSchedSwitch:
-			shouldInclude = true
-		case filterMap["proc"] && (event.Type == events.EventExec || event.Type == events.EventFork || event.Type == events.EventOpen || event.Type == events.EventClose):
-			shouldInclude = true
-		}
-		if shouldInclude {
-			select {
-			case out <- event:
-			default:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-in:
+			if !ok {
+				return
+			}
+			if event == nil {
+				continue
+			}
+			shouldInclude := false
+			switch {
+			case filterMap["dns"] && event.Type == events.EventDNS:
+				shouldInclude = true
+			case filterMap["net"] && (event.Type == events.EventConnect || event.Type == events.EventTCPSend || event.Type == events.EventTCPRecv):
+				shouldInclude = true
+			case filterMap["fs"] && (event.Type == events.EventRead || event.Type == events.EventWrite || event.Type == events.EventFsync):
+				shouldInclude = true
+			case filterMap["cpu"] && event.Type == events.EventSchedSwitch:
+				shouldInclude = true
+			case filterMap["proc"] && (event.Type == events.EventExec || event.Type == events.EventFork || event.Type == events.EventOpen || event.Type == events.EventClose):
+				shouldInclude = true
+			}
+			if shouldInclude {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- event:
+				default:
+					logger.Warn("Filtered event channel full, dropping event",
+						zap.String("event_type", event.TypeString()),
+						zap.Uint32("pid", event.PID))
+					metricsexporter.RecordRingBufferDrop()
+				}
 			}
 		}
 	}

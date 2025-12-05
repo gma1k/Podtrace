@@ -18,7 +18,6 @@ const (
 )
 
 const (
-	EventChannelBufferSize    = 100
 	MaxProcessCacheSize       = 10000
 	ProcessCacheEvictionRatio = 0.9
 	MaxPIDCacheSize           = 10000
@@ -27,6 +26,10 @@ const (
 	MaxTargetStringLength     = 256
 	MaxCgroupFilePathLength   = 64
 	MaxContainerIDLength      = 128
+)
+
+var (
+	EventChannelBufferSize = getIntEnvOrDefault("PODTRACE_EVENT_BUFFER_SIZE", 100)
 )
 
 const (
@@ -69,6 +72,8 @@ const (
 	MinLatencyForStackNS    = 1000000
 	MaxBytesForBandwidth    = 10 * 1024 * 1024
 	EAGAIN                  = 11
+	MaxEvents               = 1000000
+	EventSamplingRate       = 100
 )
 
 const (
@@ -109,6 +114,15 @@ func getFloatEnvOrDefault(key string, defaultValue float64) float64 {
 	if value := os.Getenv(key); value != "" {
 		if f, err := strconv.ParseFloat(value, 64); err == nil {
 			return f
+		}
+	}
+	return defaultValue
+}
+
+func getIntEnvOrDefault(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if i, err := strconv.Atoi(value); err == nil && i > 0 {
+			return i
 		}
 	}
 	return defaultValue
