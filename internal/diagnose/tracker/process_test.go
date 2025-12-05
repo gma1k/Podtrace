@@ -1,8 +1,11 @@
 package tracker
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -78,5 +81,240 @@ func TestAnalyzeProcessActivity_NoProcessName(t *testing.T) {
 	}
 	if result[0].Name == "" {
 		t.Log("Process name is empty (may be expected if /proc not accessible)")
+	}
+}
+
+func TestGetProcessNameFromProc_InvalidPID(t *testing.T) {
+	result := getProcessNameFromProc(0)
+	if result != "" {
+		t.Errorf("Expected empty string for invalid PID, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromStat(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	statPath := fmt.Sprintf("%s/%d/stat", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	statContent := "1234 (test-process) S 1 1234 1234 0 -1 4194304"
+	os.WriteFile(statPath, []byte(statContent), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from stat, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromComm(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	commPath := fmt.Sprintf("%s/%d/comm", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.WriteFile(commPath, []byte("test-process\n"), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from comm, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromCmdline(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	cmdlineContent := []byte("/usr/bin/test-process\x00arg1\x00arg2")
+	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from cmdline, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromCmdlineNoSlash(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	cmdlineContent := []byte("test-process\x00arg1")
+	os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from cmdline, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromExe(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.Symlink("/usr/bin/test-process", exePath)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from exe, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromExeNoSlash(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.Symlink("test-process", exePath)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from exe, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_FromStatus(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	statusPath := fmt.Sprintf("%s/%d/status", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	statusContent := "Name:\ttest-process\nState:\tS\n"
+	os.WriteFile(statusPath, []byte(statusContent), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from status, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_StatError(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	commPath := fmt.Sprintf("%s/%d/comm", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.WriteFile(commPath, []byte("test-process\n"), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from comm when stat fails, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_StatInvalidFormat(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	statPath := fmt.Sprintf("%s/%d/stat", dir, pid)
+	commPath := fmt.Sprintf("%s/%d/comm", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.WriteFile(statPath, []byte("invalid format"), 0644)
+	os.WriteFile(commPath, []byte("test-process\n"), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from comm when stat invalid, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_StatNoParentheses(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	statPath := fmt.Sprintf("%s/%d/stat", dir, pid)
+	commPath := fmt.Sprintf("%s/%d/comm", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.WriteFile(statPath, []byte("1234 test-process S 1"), 0644)
+	os.WriteFile(commPath, []byte("test-process\n"), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from comm when stat has no parentheses, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_CmdlineEmpty(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	cmdlinePath := fmt.Sprintf("%s/%d/cmdline", dir, pid)
+	exePath := fmt.Sprintf("%s/%d/exe", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	os.Symlink("/usr/bin/test-process", exePath)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "test-process" {
+		t.Errorf("Expected 'test-process' from exe when cmdline empty, got %q", result)
+	}
+}
+
+func TestGetProcessNameFromProc_StatusInvalidFormat(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(1234)
+	statusPath := fmt.Sprintf("%s/%d/status", dir, pid)
+	os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)
+	statusContent := "Name:\nState:\tS\n"
+	os.WriteFile(statusPath, []byte(statusContent), 0644)
+
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result == "" {
+		t.Log("Expected empty result when status format invalid")
+	}
+}
+
+func TestGetProcessNameFromProc_AllPathsFail(t *testing.T) {
+	dir := t.TempDir()
+	origProcBasePath := config.ProcBasePath
+	defer func() { config.SetProcBasePath(origProcBasePath) }()
+
+	pid := uint32(999999)
+	config.SetProcBasePath(dir)
+	result := getProcessNameFromProc(pid)
+	if result != "" {
+		t.Errorf("Expected empty string when all paths fail, got %q", result)
 	}
 }

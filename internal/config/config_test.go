@@ -207,3 +207,43 @@ func TestConstants(t *testing.T) {
 	}
 }
 
+func TestGetIntEnvOrDefault(t *testing.T) {
+	key := "TEST_INT_ENV_VAR"
+	originalValue := os.Getenv(key)
+	defer func() {
+		if originalValue != "" {
+			os.Setenv(key, originalValue)
+		} else {
+			os.Unsetenv(key)
+		}
+	}()
+
+	tests := []struct {
+		name         string
+		setValue     string
+		defaultValue int
+		expected     int
+	}{
+		{"valid int", "123", 0, 123},
+		{"invalid int", "invalid", 50, 50},
+		{"negative int", "-5", 50, 50},
+		{"zero", "0", 50, 50},
+		{"env not set", "", 50, 50},
+		{"empty string", "", 50, 50},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setValue != "" {
+				os.Setenv(key, tt.setValue)
+			} else {
+				os.Unsetenv(key)
+			}
+			result := getIntEnvOrDefault(key, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("Expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}
+

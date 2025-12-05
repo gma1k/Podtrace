@@ -19,7 +19,7 @@ import (
 )
 
 type PodResolver struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 }
 
 var _ PodResolverInterface = (*PodResolver)(nil)

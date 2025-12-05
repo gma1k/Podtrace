@@ -1,4 +1,4 @@
-package ebpf
+package loader
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"github.com/podtrace/podtrace/internal/config"
 )
 
-func loadPodtrace() (*ebpf.CollectionSpec, error) {
+func LoadPodtrace() (*ebpf.CollectionSpec, error) {
 	spec, err := ebpf.LoadCollectionSpec(config.BPFObjectPath)
 	if err != nil {
 		spec, err = ebpf.LoadCollectionSpec("../" + config.BPFObjectPath)
@@ -19,3 +19,4 @@ func loadPodtrace() (*ebpf.CollectionSpec, error) {
 
 	return spec, nil
 }
+

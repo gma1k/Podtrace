@@ -1,4 +1,4 @@
-package ebpf
+package loader
 
 import (
 	"os"
@@ -29,7 +29,7 @@ func TestLoadPodtrace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config.BPFObjectPath = tt.setupPath
-			spec, err := loadPodtrace()
+			spec, err := LoadPodtrace()
 
 			if tt.expectError && err == nil {
 				t.Error("Expected error but got none")
@@ -60,9 +60,9 @@ func TestLoadPodtraceFallback(t *testing.T) {
 
 	config.BPFObjectPath = primaryPath
 
-	spec, err := loadPodtrace()
+	spec, err := LoadPodtrace()
 	if err == nil && spec == nil {
-		t.Log("loadPodtrace returned nil spec without error (expected for non-existent BPF object)")
+		t.Log("LoadPodtrace returned nil spec without error (expected for non-existent BPF object)")
 	}
 }
 
@@ -79,9 +79,9 @@ func TestLoadPodtrace_FallbackPath(t *testing.T) {
 
 	config.BPFObjectPath = primaryPath
 
-	spec, err := loadPodtrace()
+	spec, err := LoadPodtrace()
 	if err == nil && spec == nil {
-		t.Log("loadPodtrace attempted fallback path (expected for non-existent BPF object)")
+		t.Log("LoadPodtrace attempted fallback path (expected for non-existent BPF object)")
 	}
 }
 
@@ -90,9 +90,9 @@ func TestLoadPodtrace_SuccessPath(t *testing.T) {
 	defer func() { config.BPFObjectPath = originalPath }()
 
 	config.BPFObjectPath = "/nonexistent/path/to/bpf.o"
-	spec, err := loadPodtrace()
+	spec, err := LoadPodtrace()
 	if err == nil && spec == nil {
-		t.Log("loadPodtrace returned nil spec without error (expected for non-existent BPF object)")
+		t.Log("LoadPodtrace returned nil spec without error (expected for non-existent BPF object)")
 	}
 }
 
@@ -109,11 +109,12 @@ func TestLoadPodtrace_FallbackSuccess(t *testing.T) {
 
 	config.BPFObjectPath = primaryPath
 
-	spec, err := loadPodtrace()
+	spec, err := LoadPodtrace()
 	if err != nil {
-		t.Logf("loadPodtrace returned error (expected for non-existent BPF object): %v", err)
+		t.Logf("LoadPodtrace returned error (expected for non-existent BPF object): %v", err)
 	}
 	if spec == nil && err != nil {
-		t.Log("loadPodtrace attempted fallback path and failed as expected")
+		t.Log("LoadPodtrace attempted fallback path and failed as expected")
 	}
 }
+

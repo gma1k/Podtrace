@@ -1,4 +1,4 @@
-package ebpf
+package tracer
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/ebpf/filter"
+	"github.com/podtrace/podtrace/internal/ebpf/loader"
 	"github.com/podtrace/podtrace/internal/ebpf/parser"
 	"github.com/podtrace/podtrace/internal/ebpf/probes"
 	"github.com/podtrace/podtrace/internal/events"
@@ -76,7 +77,7 @@ func NewTracer() (*Tracer, error) {
 		}
 	}
 
-	spec, err := loadPodtrace()
+	spec, err := loader.LoadPodtrace()
 	if err != nil {
 		return nil, err
 	}
