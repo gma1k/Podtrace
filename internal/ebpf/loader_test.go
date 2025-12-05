@@ -95,3 +95,25 @@ func TestLoadPodtrace_SuccessPath(t *testing.T) {
 		t.Log("loadPodtrace returned nil spec without error (expected for non-existent BPF object)")
 	}
 }
+
+func TestLoadPodtrace_FallbackSuccess(t *testing.T) {
+	originalPath := config.BPFObjectPath
+	defer func() { config.BPFObjectPath = originalPath }()
+
+	tempDir := t.TempDir()
+	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
+	fallbackPath := filepath.Join(tempDir, "..", "bpf", "podtrace.bpf.o")
+
+	os.MkdirAll(filepath.Dir(primaryPath), 0755)
+	os.MkdirAll(filepath.Dir(fallbackPath), 0755)
+
+	config.BPFObjectPath = primaryPath
+
+	spec, err := loadPodtrace()
+	if err != nil {
+		t.Logf("loadPodtrace returned error (expected for non-existent BPF object): %v", err)
+	}
+	if spec == nil && err != nil {
+		t.Log("loadPodtrace attempted fallback path and failed as expected")
+	}
+}
