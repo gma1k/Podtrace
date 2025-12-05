@@ -143,7 +143,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create tracer: %w", err)
 	}
-	defer tracer.Stop()
+	defer func() { _ = tracer.Stop() }()
 
 	if err := tracer.AttachToCgroup(podInfo.CgroupPath); err != nil {
 		return fmt.Errorf("failed to attach to cgroup: %w", err)

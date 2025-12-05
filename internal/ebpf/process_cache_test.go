@@ -38,7 +38,7 @@ func TestGetProcessNameQuick_FromCmdline(t *testing.T) {
 
 	pid := uint32(12345)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/bin/test-process\x00arg1\x00arg2")
@@ -58,7 +58,7 @@ func TestGetProcessNameQuick_FromCmdlineWithPath(t *testing.T) {
 
 	pid := uint32(12346)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/local/bin/my-app\x00")
@@ -78,7 +78,7 @@ func TestGetProcessNameQuick_FromStat(t *testing.T) {
 
 	pid := uint32(12347)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	statPath := filepath.Join(procDir, "stat")
 	statContent := "12347 (test-process-name) S 1 12347 12347 0 -1 4194560"
@@ -98,11 +98,11 @@ func TestGetProcessNameQuick_FromComm(t *testing.T) {
 
 	pid := uint32(12348)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	commPath := filepath.Join(procDir, "comm")
 	commContent := "  comm-process  \n"
-	os.WriteFile(commPath, []byte(commContent), 0644)
+	_ = os.WriteFile(commPath, []byte(commContent), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -118,7 +118,7 @@ func TestGetProcessNameQuick_CacheHit(t *testing.T) {
 
 	pid := uint32(12349)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("/usr/bin/cached-process\x00")
@@ -159,7 +159,7 @@ func TestGetProcessNameQuick_CacheEviction(t *testing.T) {
 
 	for i := uint32(20000); i < 20010; i++ {
 		procDir := filepath.Join(tempDir, fmt.Sprintf("%d", i))
-		os.MkdirAll(procDir, 0755)
+		_ = os.MkdirAll(procDir, 0755)
 		cmdlinePath := filepath.Join(procDir, "cmdline")
 		cmdlineContent := []byte(fmt.Sprintf("/usr/bin/process-%d\x00", i))
 		_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
@@ -183,14 +183,14 @@ func TestGetProcessNameQuick_EmptyCmdline(t *testing.T) {
 
 	pid := uint32(12350)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
 
 	statPath := filepath.Join(procDir, "stat")
 	statContent := "12350 (fallback-process) S 1 12350 12350 0 -1 4194560"
-	os.WriteFile(statPath, []byte(statContent), 0644)
+	_ = os.WriteFile(statPath, []byte(statContent), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "fallback-process" {
@@ -206,16 +206,16 @@ func TestGetProcessNameQuick_InvalidStatFormat(t *testing.T) {
 
 	pid := uint32(12351)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("invalid stat format"), 0644)
+	_ = os.WriteFile(statPath, []byte("invalid stat format"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte("comm-process"), 0644)
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -231,7 +231,7 @@ func TestGetProcessNameQuick_SanitizeProcessName(t *testing.T) {
 
 	pid := uint32(12352)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("process%with%special\x00")
@@ -251,13 +251,13 @@ func TestGetProcessNameQuick_StatWithInvalidFormat(t *testing.T) {
 
 	pid := uint32(12353)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("invalid format no parentheses"), 0644)
+	_ = os.WriteFile(statPath, []byte("invalid format no parentheses"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte("comm-process"), 0644)
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -273,13 +273,13 @@ func TestGetProcessNameQuick_StatWithStartButNoEnd(t *testing.T) {
 
 	pid := uint32(12354)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("12354 (process-name"), 0644)
+	_ = os.WriteFile(statPath, []byte("12354 (process-name"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte("comm-process"), 0644)
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -295,7 +295,7 @@ func TestGetProcessNameQuick_CmdlineWithEmptyFirstPart(t *testing.T) {
 
 	pid := uint32(12355)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
 	cmdlineContent := []byte("\x00arg1\x00arg2")
@@ -303,7 +303,7 @@ func TestGetProcessNameQuick_CmdlineWithEmptyFirstPart(t *testing.T) {
 
 	statPath := filepath.Join(procDir, "stat")
 	statContent := "12355 (fallback-process) S 1 12355 12355 0 -1 4194560"
-	os.WriteFile(statPath, []byte(statContent), 0644)
+	_ = os.WriteFile(statPath, []byte(statContent), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "fallback-process" {
@@ -319,7 +319,7 @@ func TestGetProcessNameQuick_AllMethodsFail(t *testing.T) {
 
 	pid := uint32(12356)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	result := getProcessNameQuick(pid)
 	if result == "" {
@@ -335,16 +335,16 @@ func TestGetProcessNameQuick_StatEndBeforeStart(t *testing.T) {
 
 	pid := uint32(12357)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("12357 ) process-name ( S"), 0644)
+	_ = os.WriteFile(statPath, []byte("12357 ) process-name ( S"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte("comm-process"), 0644)
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -360,16 +360,16 @@ func TestGetProcessNameQuick_StatEndEqualsStart(t *testing.T) {
 
 	pid := uint32(12358)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("12358 () S"), 0644)
+	_ = os.WriteFile(statPath, []byte("12358 () S"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte("comm-process"), 0644)
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "comm-process" {
@@ -385,16 +385,16 @@ func TestGetProcessNameQuick_CommEmpty(t *testing.T) {
 
 	pid := uint32(12359)
 	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
-	os.MkdirAll(procDir, 0755)
+	_ = os.MkdirAll(procDir, 0755)
 
 	cmdlinePath := filepath.Join(procDir, "cmdline")
-	os.WriteFile(cmdlinePath, []byte(""), 0644)
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
 
 	statPath := filepath.Join(procDir, "stat")
-	os.WriteFile(statPath, []byte("invalid"), 0644)
+	_ = os.WriteFile(statPath, []byte("invalid"), 0644)
 
 	commPath := filepath.Join(procDir, "comm")
-	os.WriteFile(commPath, []byte(""), 0644)
+	_ = os.WriteFile(commPath, []byte(""), 0644)
 
 	result := getProcessNameQuick(pid)
 	if result != "" {

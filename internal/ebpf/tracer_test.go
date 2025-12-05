@@ -308,7 +308,7 @@ func TestTracer_Start_WithRealEBPF(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	tracer.Stop()
+	_ = tracer.Stop()
 
 	close(eventChan)
 

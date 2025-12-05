@@ -423,7 +423,7 @@ func (d *Diagnostician) generateHTTPSection(duration time.Duration) string {
 					sort.Slice(urlCounts, func(i, j int) bool {
 						return urlCounts[i].count > urlCounts[j].count
 					})
-					report += fmt.Sprintf("  Top requested URLs:\n")
+					report += "  Top requested URLs:\n"
 					for i, uc := range urlCounts {
 						if i >= config.TopURLsLimit {
 							break
@@ -463,7 +463,7 @@ func (d *Diagnostician) generateTCPStateSection(duration time.Duration) string {
 	}
 
 	var report string
-	report += fmt.Sprintf("TCP Connection State Tracking:\n")
+	report += "TCP Connection State Tracking:\n"
 	stateRate := d.calculateRate(len(tcpStateEvents), duration)
 	report += fmt.Sprintf("  State changes: %d (%.1f/sec)\n", len(tcpStateEvents), stateRate)
 	stateCounts := make(map[string]int)
@@ -472,7 +472,7 @@ func (d *Diagnostician) generateTCPStateSection(duration time.Duration) string {
 		stateCounts[stateStr]++
 	}
 	if len(stateCounts) > 0 {
-		report += fmt.Sprintf("  State distribution:\n")
+		report += "  State distribution:\n"
 		type stateInfo struct {
 			state string
 			count int
