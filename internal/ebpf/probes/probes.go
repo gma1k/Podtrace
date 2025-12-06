@@ -1082,7 +1082,7 @@ func getArchitectureTLSPaths(libPatterns []string) []string {
 }
 
 func AttachTLSProbes(coll *ebpf.Collection, containerID string) []link.Link {
-	var links []link.Link
+	links := []link.Link{}
 
 	tlsLibPaths := findTLSLibs(containerID)
 	tlsSymbols := map[string][]string{

@@ -104,6 +104,8 @@ func TestParseEvent_AllEventTypes(t *testing.T) {
 		events.EventFork,
 		events.EventOpen,
 		events.EventClose,
+		events.EventTLSHandshake,
+		events.EventTLSError,
 	}
 
 	for i, et := range eventTypes {
