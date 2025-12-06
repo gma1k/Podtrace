@@ -2,6 +2,7 @@ package tracer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -862,6 +863,403 @@ func TestTracer_GetProcessNameQuick_StackNrGreaterThanMax(t *testing.T) {
 				t.Error("Expected n to be limited to stack.IPs length")
 			}
 		}
+	}
+}
+
+func TestErrorRateLimiter_IntervalCalculation(t *testing.T) {
+	limiter := newErrorRateLimiter()
+	limiter.backoffFactor = 200
+	limiter.lastLogTime = time.Now().Add(-200 * time.Second)
+
+	interval := limiter.minInterval * time.Duration(limiter.backoffFactor)
+	expectedInterval := limiter.maxInterval
+	if interval > limiter.maxInterval {
+		interval = limiter.maxInterval
+	}
+
+	if interval != expectedInterval {
+		t.Errorf("Expected interval to be capped at maxInterval (%v), got %v", expectedInterval, interval)
+	}
+
+	result := limiter.shouldLog()
+	if !result {
+		t.Error("Expected shouldLog to return true when enough time has passed")
+	}
+}
+
+func TestSlidingWindow_NewBucketCreation(t *testing.T) {
+	window := newSlidingWindow(1*time.Second, 5)
+	window.mu.Lock()
+	window.buckets = []timeBucket{}
+	window.mu.Unlock()
+
+	window.addError()
+	rate := window.getErrorRate()
+	if rate != 1 {
+		t.Errorf("Expected error rate 1 after adding first error, got %d", rate)
+	}
+}
+
+func TestSlidingWindow_BucketIncrement(t *testing.T) {
+	window := newSlidingWindow(1*time.Second, 5)
+	window.addError()
+	time.Sleep(10 * time.Millisecond)
+	window.addError()
+
+	rate := window.getErrorRate()
+	if rate != 2 {
+		t.Errorf("Expected error rate 2, got %d", rate)
+	}
+}
+
+func TestCircuitBreaker_StateTransitions(t *testing.T) {
+	cb := newCircuitBreaker(2, 50*time.Millisecond)
+
+	cb.mu.Lock()
+	initialState := cb.state
+	cb.mu.Unlock()
+	if initialState != circuitBreakerClosed {
+		t.Errorf("Expected initial state to be closed, got %d", initialState)
+	}
+
+	cb.recordFailure()
+	cb.recordFailure()
+
+	cb.mu.Lock()
+	openState := cb.state
+	cb.mu.Unlock()
+	if openState != circuitBreakerOpen {
+		t.Errorf("Expected state to be open after threshold failures, got %d", openState)
+	}
+
+	cb.lastFailure = time.Now().Add(-100 * time.Millisecond)
+	cb.canProceed()
+
+	cb.mu.Lock()
+	halfOpenState := cb.state
+	cb.mu.Unlock()
+	if halfOpenState != circuitBreakerHalfOpen {
+		t.Errorf("Expected state to be half-open after timeout, got %d", halfOpenState)
+	}
+}
+
+func TestCircuitBreaker_RecordSuccessInHalfOpen(t *testing.T) {
+	cb := newCircuitBreaker(2, 50*time.Millisecond)
+	cb.recordFailure()
+	cb.recordFailure()
+	cb.lastFailure = time.Now().Add(-100 * time.Millisecond)
+	cb.canProceed()
+
+	cb.recordSuccess()
+	cb.recordSuccess()
+	cb.recordSuccess()
+
+	cb.mu.Lock()
+	if cb.state != circuitBreakerClosed {
+		t.Errorf("Expected state to be closed after 3 successes in half-open, got %d", cb.state)
+	}
+	cb.mu.Unlock()
+}
+
+func TestClassifyError_AllCategories(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected ErrorCategory
+	}{
+		{"EAGAIN", errors.New("EAGAIN"), ErrorCategoryTransient},
+		{"temporary", errors.New("temporary error"), ErrorCategoryTransient},
+		{"closed", errors.New("connection closed"), ErrorCategoryTransient},
+		{"EOF", errors.New("EOF"), ErrorCategoryTransient},
+		{"permission", errors.New("permission denied"), ErrorCategoryPermanent},
+		{"denied", errors.New("access denied"), ErrorCategoryPermanent},
+		{"other", errors.New("some other error"), ErrorCategoryRecoverable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			category := classifyError(tt.err)
+			if category != tt.expected {
+				t.Errorf("Expected %d, got %d", tt.expected, category)
+			}
+		})
+	}
+}
+
+func TestTracer_Stop_WithProcessCache(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	cache := cache.NewLRUCache(config.CacheMaxSize, ttl)
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		processNameCache: cache,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_EmptyCmdline(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50001)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50001 (stat-process) S"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "stat-process" {
+		t.Errorf("Expected 'stat-process' from stat, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_CmdlineWithEmptyFirstPart(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50002)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte("\x00arg1"), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50002 (stat-process) S"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "stat-process" {
+		t.Errorf("Expected 'stat-process' from stat when cmdline first part is empty, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_StatNoParentheses(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50003)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50003 no parentheses S"), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "comm-process" {
+		t.Errorf("Expected 'comm-process' from comm when stat has no parentheses, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_StatEndBeforeStart(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50004)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50004 ) end before start ( S"), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "comm-process" {
+		t.Errorf("Expected 'comm-process' from comm when stat has invalid parentheses, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_AllFilesMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50005)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "" {
+		t.Errorf("Expected empty string when all files are missing, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_CmdlineReadError(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50006)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50006 (stat-process) S"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "stat-process" {
+		t.Errorf("Expected 'stat-process' from stat when cmdline read fails, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_StatReadError(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50007)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	commPath := filepath.Join(procDir, "comm")
+	_ = os.WriteFile(commPath, []byte("comm-process"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "comm-process" {
+		t.Errorf("Expected 'comm-process' from comm when stat read fails, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_CommReadError(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50008)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	_ = os.WriteFile(cmdlinePath, []byte(""), 0644)
+
+	statPath := filepath.Join(procDir, "stat")
+	_ = os.WriteFile(statPath, []byte("50008 (stat-process) S"), 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "stat-process" {
+		t.Errorf("Expected 'stat-process' from stat when comm read fails, got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_CmdlineWithPath(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50009)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	cmdlineContent := []byte("/usr/local/bin/my-process\x00arg1\x00arg2")
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "my-process" {
+		t.Errorf("Expected 'my-process', got %q", result)
+	}
+}
+
+func TestTracer_GetProcessNameQuick_CmdlineRootPath(t *testing.T) {
+	tempDir := t.TempDir()
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tempDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+	}
+
+	pid := uint32(50010)
+	procDir := filepath.Join(tempDir, fmt.Sprintf("%d", pid))
+	_ = os.MkdirAll(procDir, 0755)
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	cmdlineContent := []byte("/process-name\x00")
+	_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
+
+	result := tracer.getProcessNameQuick(pid)
+	if result != "process-name" {
+		t.Errorf("Expected 'process-name', got %q", result)
 	}
 }
 
