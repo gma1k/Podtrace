@@ -71,8 +71,8 @@ func TestStartServerAndShutdown(t *testing.T) {
 		t.Fatalf("server did not shut down in time")
 	}
 
-	os.Unsetenv("PODTRACE_METRICS_ADDR")
-	os.Unsetenv("PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR")
+	_ = os.Unsetenv("PODTRACE_METRICS_ADDR")
+	_ = os.Unsetenv("PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR")
 }
 
 func TestExportRTTMetric(t *testing.T) {

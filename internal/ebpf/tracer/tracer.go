@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/ebpf/cache"
 	"github.com/podtrace/podtrace/internal/ebpf/filter"
 	"github.com/podtrace/podtrace/internal/ebpf/loader"
 	"github.com/podtrace/podtrace/internal/ebpf/parser"
@@ -37,13 +37,12 @@ type stackTraceValue struct {
 }
 
 type Tracer struct {
-	collection        *ebpf.Collection
-	links             []link.Link
-	reader            *ringbuf.Reader
-	filter            *filter.CgroupFilter
-	containerID       string
-	processNameCache  map[uint32]string
-	processCacheMutex *sync.RWMutex
+	collection       *ebpf.Collection
+	links            []link.Link
+	reader           *ringbuf.Reader
+	filter           *filter.CgroupFilter
+	containerID      string
+	processNameCache *cache.LRUCache
 }
 
 var _ TracerInterface = (*Tracer)(nil)
@@ -84,7 +83,7 @@ func NewTracer() (*Tracer, error) {
 
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
-		return nil, err
+		return nil, NewCollectionError(err)
 	}
 
 	links, err := probes.AttachProbes(coll)
@@ -96,19 +95,21 @@ func NewTracer() (*Tracer, error) {
 	rd, err := ringbuf.NewReader(coll.Maps["events"])
 	if err != nil {
 		for _, l := range links {
-			l.Close()
+			_ = l.Close()
 		}
 		coll.Close()
-		return nil, err
+		return nil, NewRingBufferError(err)
 	}
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	processCache := cache.NewLRUCache(config.CacheMaxSize, ttl)
+
 	return &Tracer{
-		collection:        coll,
-		links:             links,
-		reader:            rd,
-		filter:            filter.NewCgroupFilter(),
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		collection:       coll,
+		links:            links,
+		reader:           rd,
+		filter:           filter.NewCgroupFilter(),
+		processNameCache: processCache,
 	}, nil
 }
 
@@ -134,11 +135,10 @@ func (t *Tracer) SetContainerID(containerID string) error {
 	return nil
 }
 
-
 func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) error {
-	var errorCount int
-	var lastErrorLog time.Time
-	var errorCountMu sync.Mutex
+	errorLimiter := newErrorRateLimiter()
+	slidingWindow := newSlidingWindow(config.DefaultSlidingWindowSize, config.DefaultSlidingWindowBuckets)
+	circuitBreaker := newCircuitBreaker(config.DefaultCircuitBreakerThreshold, config.DefaultCircuitBreakerTimeout)
 	stackMap := t.collection.Maps["stack_traces"]
 
 	go func() {
@@ -159,27 +159,45 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 				if errors.Is(err, io.EOF) || errors.Is(err, ringbuf.ErrClosed) || strings.Contains(err.Error(), "closed") {
 					return
 				}
-				errorCountMu.Lock()
-				errorCount++
-				now := time.Now()
-				shouldLog := now.Sub(lastErrorLog) > config.DefaultErrorLogInterval
-				count := errorCount
-				if shouldLog {
-					errorCount = 0
-					lastErrorLog = now
+
+				if !circuitBreaker.canProceed() {
+					continue
 				}
-				errorCountMu.Unlock()
+
+				category := classifyError(err)
+				if category == ErrorCategoryTransient {
+					circuitBreaker.recordSuccess()
+				} else {
+					circuitBreaker.recordFailure()
+				}
+
+				slidingWindow.addError()
+				errorRate := slidingWindow.getErrorRate()
 				metricsexporter.RecordRingBufferDrop()
-				if shouldLog {
-					if count > config.HighErrorCountThreshold {
+
+				if config.ErrorBackoffEnabled && errorLimiter.shouldLog() {
+					if errorRate > config.HighErrorCountThreshold {
 						logger.Warn("High ring buffer error rate, events may be dropped",
-							zap.Int("error_count", count),
-							zap.Duration("period", config.DefaultErrorLogInterval))
+							zap.Int("error_rate", errorRate),
+							zap.String("error_category", errorCategoryString(category)),
+							zap.Duration("window", config.DefaultSlidingWindowSize))
+					} else {
+						logger.Error("Error reading ring buffer", zap.Error(err))
+					}
+				} else if !config.ErrorBackoffEnabled {
+					if errorRate > config.HighErrorCountThreshold {
+						logger.Warn("High ring buffer error rate, events may be dropped",
+							zap.Int("error_rate", errorRate),
+							zap.Duration("window", config.DefaultSlidingWindowSize))
 					} else {
 						logger.Error("Error reading ring buffer", zap.Error(err))
 					}
 				}
 				continue
+			}
+
+			if circuitBreaker.canProceed() {
+				circuitBreaker.recordSuccess()
 			}
 
 			processingStart := time.Now()
@@ -233,15 +251,19 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 
 func (t *Tracer) Stop() error {
 	if t.reader != nil {
-		t.reader.Close()
+		_ = t.reader.Close()
 	}
 
 	for _, l := range t.links {
-		l.Close()
+		_ = l.Close()
 	}
 
 	if t.collection != nil {
 		t.collection.Close()
+	}
+
+	if t.processNameCache != nil {
+		t.processNameCache.Close()
 	}
 
 	return nil
@@ -252,13 +274,10 @@ func (t *Tracer) getProcessNameQuick(pid uint32) string {
 		return ""
 	}
 
-	t.processCacheMutex.RLock()
-	if name, ok := t.processNameCache[pid]; ok {
-		t.processCacheMutex.RUnlock()
-		metricsexporter.RecordProcessCacheHit()
+	if name, ok := t.processNameCache.Get(pid); ok {
 		return name
 	}
-	t.processCacheMutex.RUnlock()
+
 	metricsexporter.RecordProcessCacheMiss()
 
 	name := ""
@@ -293,21 +312,9 @@ func (t *Tracer) getProcessNameQuick(pid uint32) string {
 		}
 	}
 
-	t.processCacheMutex.Lock()
-	if len(t.processNameCache) >= config.MaxProcessCacheSize {
-		evictCount := len(t.processNameCache) - int(float64(config.MaxProcessCacheSize)*config.ProcessCacheEvictionRatio)
-		for k := range t.processNameCache {
-			delete(t.processNameCache, k)
-			evictCount--
-			if evictCount <= 0 {
-				break
-			}
-		}
-	}
-	t.processNameCache[pid] = name
-	t.processCacheMutex.Unlock()
-
-	return validation.SanitizeProcessName(name)
+	sanitized := validation.SanitizeProcessName(name)
+	t.processNameCache.Set(pid, sanitized)
+	return sanitized
 }
 
 func WaitForInterrupt() {

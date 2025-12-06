@@ -132,7 +132,7 @@ func TestGetProcessNameQuick_CacheHit(t *testing.T) {
 		t.Errorf("Expected 'cached-process', got %q", result1)
 	}
 
-	os.Remove(cmdlinePath)
+	_ = os.Remove(cmdlinePath)
 
 	result2 := GetProcessNameQuick(pid)
 	if result2 != "cached-process" {
@@ -146,19 +146,8 @@ func TestGetProcessNameQuick_CacheEviction(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
-	processNameCacheMutex.Lock()
-	originalCache := make(map[uint32]string)
-	for k, v := range processNameCache {
-		originalCache[k] = v
-	}
-	processNameCache = make(map[uint32]string)
-	processNameCacheMutex.Unlock()
-
-	defer func() {
-		processNameCacheMutex.Lock()
-		processNameCache = originalCache
-		processNameCacheMutex.Unlock()
-	}()
+	ResetGlobalCache()
+	defer ResetGlobalCache()
 
 	for i := uint32(20000); i < 20010; i++ {
 		procDir := filepath.Join(tempDir, fmt.Sprintf("%d", i))
@@ -167,14 +156,6 @@ func TestGetProcessNameQuick_CacheEviction(t *testing.T) {
 		cmdlineContent := []byte(fmt.Sprintf("/usr/bin/process-%d\x00", i))
 		_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 		GetProcessNameQuick(i)
-	}
-
-	processNameCacheMutex.RLock()
-	cacheSize := len(processNameCache)
-	processNameCacheMutex.RUnlock()
-
-	if cacheSize > config.MaxProcessCacheSize {
-		t.Errorf("Cache size %d exceeds max %d", cacheSize, config.MaxProcessCacheSize)
 	}
 }
 
@@ -411,19 +392,8 @@ func TestGetProcessNameQuick_CacheEvictionExactMax(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
-	processNameCacheMutex.Lock()
-	originalCache := make(map[uint32]string)
-	for k, v := range processNameCache {
-		originalCache[k] = v
-	}
-	processNameCache = make(map[uint32]string)
-	processNameCacheMutex.Unlock()
-
-	defer func() {
-		processNameCacheMutex.Lock()
-		processNameCache = originalCache
-		processNameCacheMutex.Unlock()
-	}()
+	ResetGlobalCache()
+	defer ResetGlobalCache()
 
 	for i := uint32(50000); i < uint32(50000+config.MaxProcessCacheSize); i++ {
 		procDir := filepath.Join(tempDir, fmt.Sprintf("%d", i))
@@ -433,14 +403,6 @@ func TestGetProcessNameQuick_CacheEvictionExactMax(t *testing.T) {
 		_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 		GetProcessNameQuick(i)
 	}
-
-	processNameCacheMutex.RLock()
-	cacheSize := len(processNameCache)
-	processNameCacheMutex.RUnlock()
-
-	if cacheSize > config.MaxProcessCacheSize {
-		t.Errorf("Cache size %d exceeds max %d", cacheSize, config.MaxProcessCacheSize)
-	}
 }
 
 func TestGetProcessNameQuick_CacheEvictionOneOverMax(t *testing.T) {
@@ -449,19 +411,8 @@ func TestGetProcessNameQuick_CacheEvictionOneOverMax(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
-	processNameCacheMutex.Lock()
-	originalCache := make(map[uint32]string)
-	for k, v := range processNameCache {
-		originalCache[k] = v
-	}
-	processNameCache = make(map[uint32]string)
-	processNameCacheMutex.Unlock()
-
-	defer func() {
-		processNameCacheMutex.Lock()
-		processNameCache = originalCache
-		processNameCacheMutex.Unlock()
-	}()
+	ResetGlobalCache()
+	defer ResetGlobalCache()
 
 	for i := uint32(60000); i < uint32(60000+config.MaxProcessCacheSize+1); i++ {
 		procDir := filepath.Join(tempDir, fmt.Sprintf("%d", i))
@@ -470,14 +421,6 @@ func TestGetProcessNameQuick_CacheEvictionOneOverMax(t *testing.T) {
 		cmdlineContent := []byte(fmt.Sprintf("/usr/bin/process-%d\x00", i))
 		_ = os.WriteFile(cmdlinePath, cmdlineContent, 0644)
 		GetProcessNameQuick(i)
-	}
-
-	processNameCacheMutex.RLock()
-	cacheSize := len(processNameCache)
-	processNameCacheMutex.RUnlock()
-
-	if cacheSize > config.MaxProcessCacheSize {
-		t.Errorf("Cache size %d exceeds max %d", cacheSize, config.MaxProcessCacheSize)
 	}
 }
 

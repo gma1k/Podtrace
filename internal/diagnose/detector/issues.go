@@ -40,7 +40,7 @@ func DetectIssues(allEvents []*events.Event, errorRateThreshold, rttSpikeThresho
 	if len(tcpEvents) > 0 {
 		spikes := 0
 		for _, e := range tcpEvents {
-			if float64(e.LatencyNS)/1e6 > rttSpikeThreshold {
+			if float64(e.LatencyNS)/float64(config.NSPerMS) > rttSpikeThreshold {
 				spikes++
 			}
 		}

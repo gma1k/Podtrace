@@ -15,7 +15,7 @@ func AnalyzeFS(events []*events.Event, fsSlowThreshold float64) (avgLatency, max
 	totalBytes = 0
 
 	for _, e := range events {
-		latencyMs := float64(e.LatencyNS) / 1e6
+		latencyMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 		latencies = append(latencies, latencyMs)
 		totalLatency += latencyMs
 		if latencyMs > maxLatency {

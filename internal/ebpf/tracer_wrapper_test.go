@@ -19,10 +19,6 @@ func TestNewTracer(t *testing.T) {
 }
 
 func TestWaitForInterrupt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping WaitForInterrupt test in short mode")
-	}
-	
 	done := make(chan bool, 1)
 	go func() {
 		defer func() {

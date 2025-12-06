@@ -3,7 +3,6 @@ package kubernetes
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,13 +56,13 @@ func NewPodResolver() (*PodResolver, error) {
 
 		config, err = kubeConfig.ClientConfig()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
+			return nil, NewKubeconfigError(err)
 		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, NewClientsetError(err)
 	}
 
 	return &PodResolver{clientset: clientset}, nil
@@ -72,11 +71,11 @@ func NewPodResolver() (*PodResolver, error) {
 func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, containerName string) (*PodInfo, error) {
 	pod, err := r.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod: %w", err)
+		return nil, NewPodNotFoundError(podName, namespace, err)
 	}
 
 	if len(pod.Status.ContainerStatuses) == 0 {
-		return nil, fmt.Errorf("pod has no containers")
+		return nil, NewNoContainersError()
 	}
 
 	var containerStatus *corev1.ContainerStatus
@@ -96,7 +95,7 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, contai
 			}
 		}
 		if containerStatus == nil {
-			return nil, fmt.Errorf("container %s not found in pod", containerName)
+			return nil, NewContainerNotFoundError(containerName)
 		}
 	} else {
 		containerStatus = &pod.Status.ContainerStatuses[0]
@@ -107,17 +106,17 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, contai
 
 	parts := strings.Split(containerID, "://")
 	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid container ID format")
+		return nil, NewInvalidContainerIDError("invalid container ID format")
 	}
 	shortID := parts[1]
 
 	if !validation.ValidateContainerID(shortID) {
-		return nil, fmt.Errorf("invalid container ID")
+		return nil, NewInvalidContainerIDError("validation failed")
 	}
 
 	cgroupPath, err := findCgroupPath(shortID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find cgroup path: %w", err)
+		return nil, NewCgroupNotFoundError(shortID)
 	}
 
 	return &PodInfo{
@@ -170,5 +169,5 @@ func findCgroupPath(containerID string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("cgroup path not found for container")
+	return "", NewCgroupNotFoundError(containerID)
 }

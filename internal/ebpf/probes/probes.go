@@ -3,12 +3,16 @@ package probes
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"go.uber.org/zap"
 
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/logger"
 )
 
@@ -57,9 +61,9 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 
 		if err != nil {
 			for _, existingLink := range links {
-				existingLink.Close()
+				_ = existingLink.Close()
 			}
-			return nil, fmt.Errorf("failed to attach %s: %w", progName, err)
+			return nil, NewProbeAttachError(progName, err)
 		}
 
 		links = append(links, l)
@@ -208,15 +212,9 @@ func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
 
 func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
 	var links []link.Link
-	dbLibs := []string{
-		"/usr/lib/x86_64-linux-gnu/libpq.so.5",
-		"/usr/lib64/libpq.so.5",
-		"/usr/lib/libpq.so.5",
-		"/usr/lib/x86_64-linux-gnu/libmysqlclient.so.21",
-		"/usr/lib64/libmysqlclient.so.21",
-		"/usr/lib/libmysqlclient.so.21",
-	}
-	for _, path := range dbLibs {
+
+	libpqPaths := findDBLibs(containerID, []string{"libpq.so.5", "libpq.so"})
+	for _, path := range libpqPaths {
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
@@ -237,6 +235,18 @@ func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
 				links = append(links, l)
 			}
 		}
+	}
+
+	mysqlPaths := findDBLibs(containerID, []string{"libmysqlclient.so.21", "libmysqlclient.so"})
+	for _, path := range mysqlPaths {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		exe, err := link.OpenExecutable(path)
+		if err != nil {
+			continue
+		}
 		if prog := coll.Programs["uprobe_mysql_real_query"]; prog != nil {
 			l, err := exe.Uprobe("mysql_real_query", prog, nil)
 			if err == nil {
@@ -250,63 +260,498 @@ func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
 			}
 		}
 	}
+
 	return links
 }
 
 func FindLibcPath(containerID string) string {
-	libcPaths := []string{
-		"/lib/x86_64-linux-gnu/libc.so.6",
-		"/lib64/libc.so.6",
-		"/lib/libc.so.6",
-		"/usr/lib/x86_64-linux-gnu/libc.so.6",
-		"/usr/lib64/libc.so.6",
-		"/usr/lib/libc.so.6",
-		"/lib/aarch64-linux-gnu/libc.so.6",
-		"/usr/lib/aarch64-linux-gnu/libc.so.6",
-	}
-
-	for _, path := range libcPaths {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+	if containerID != "" {
+		if path := findLibcInContainer(containerID); path != "" {
 			return path
 		}
 	}
 
-	if containerID != "" {
-		containerPaths := FindLibcInContainer(containerID)
-		for _, path := range containerPaths {
+	if path := findLibcViaLdconfig(); path != "" {
+		return path
+	}
+
+	if path := findLibcViaLdSoConf(); path != "" {
+		return path
+	}
+
+	return findLibcViaCommonPaths()
+}
+
+func findLibcViaLdconfig() string {
+	cmd := exec.Command("ldconfig", "-p")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "libc.so.6") || strings.Contains(line, "libc.musl") {
+			parts := strings.Fields(line)
+			for i, part := range parts {
+				if part == "=>" && i+1 < len(parts) {
+					path := strings.TrimSpace(parts[i+1])
+					if info, err := os.Stat(path); err == nil && !info.IsDir() {
+						return path
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func getMuslLibcNames() []string {
+	names := []string{"libc.so.6"}
+	arch := runtime.GOARCH
+
+	muslArchMap := map[string]string{
+		"amd64":   "x86_64",
+		"arm64":   "aarch64",
+		"riscv64": "riscv64",
+		"ppc64le": "ppc64le",
+		"s390x":   "s390x",
+	}
+
+	if muslArch, ok := muslArchMap[arch]; ok {
+		names = append(names, fmt.Sprintf("libc.musl-%s.so.1", muslArch))
+	}
+
+	return names
+}
+
+func findLibcViaLdSoConf() string {
+	searchPaths := config.GetDefaultLibSearchPaths()
+
+	if data, err := os.ReadFile(config.GetLdSoConfPath()); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				searchPaths = append(searchPaths, line)
+			}
+		}
+	}
+
+	if matches, err := filepath.Glob(config.GetLdSoConfDPattern()); err == nil {
+		for _, confFile := range matches {
+			if data, err := os.ReadFile(confFile); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" && !strings.HasPrefix(line, "#") {
+						searchPaths = append(searchPaths, line)
+					}
+				}
+			}
+		}
+	}
+
+	libcNames := getMuslLibcNames()
+	for _, searchPath := range searchPaths {
+		for _, libcName := range libcNames {
+			path := filepath.Join(searchPath, libcName)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+func findLibcViaProcessMaps(pid uint32) string {
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "libc.so") || strings.Contains(line, "libc.musl") {
+			parts := strings.Fields(line)
+			if len(parts) >= 6 {
+				path := parts[5]
+				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					return path
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func findContainerProcess(containerID string) uint32 {
+	entries, err := os.ReadDir(config.ProcBasePath)
+	if err != nil {
+		return 0
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		pidStr := entry.Name()
+		if len(pidStr) == 0 || pidStr[0] < '0' || pidStr[0] > '9' {
+			continue
+		}
+
+		cgroupPath := filepath.Join(config.ProcBasePath, pidStr, "cgroup")
+		if data, err := os.ReadFile(cgroupPath); err == nil {
+			if strings.Contains(string(data), containerID) {
+				var pid uint32
+				if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil {
+					return pid
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func findLibcInContainer(containerID string) string {
+	if pid := findContainerProcess(containerID); pid > 0 {
+		if path := findLibcViaProcessMaps(pid); path != "" {
+			return path
+		}
+
+		procRootPaths := getArchitecturePaths()
+		for _, basePath := range procRootPaths {
+			path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", basePath)
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
 				return path
 			}
 		}
 	}
 
+	rootfsPaths := []string{
+		config.GetDockerContainerRootfs(containerID),
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	for _, rootfs := range rootfsPaths {
+		if _, err := os.Stat(rootfs); err == nil {
+			libcPaths := getArchitecturePaths()
+			for _, libcPath := range libcPaths {
+				path := filepath.Join(rootfs, libcPath)
+				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					return path
+				}
+			}
+		}
+	}
+
+	procPaths := getArchitecturePaths()
+	for _, basePath := range procPaths {
+		path := filepath.Join(config.GetDefaultProcRootPath(), basePath)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+
 	return ""
+}
+
+func getArchitecturePaths() []string {
+	arch := runtime.GOARCH
+	paths := []string{}
+
+	archSuffixes := map[string][]string{
+		"amd64":   {"x86_64-linux-gnu", "x86_64"},
+		"arm64":   {"aarch64-linux-gnu", "aarch64"},
+		"riscv64": {"riscv64-linux-gnu", "riscv64"},
+		"ppc64le": {"powerpc64le-linux-gnu", "ppc64le"},
+		"s390x":   {"s390x-linux-gnu", "s390x"},
+	}
+
+	if suffixes, ok := archSuffixes[arch]; ok {
+		for _, suffix := range suffixes {
+			paths = append(paths,
+				fmt.Sprintf("lib/%s/libc.so.6", suffix),
+				fmt.Sprintf("usr/lib/%s/libc.so.6", suffix),
+			)
+		}
+	}
+
+	paths = append(paths,
+		"lib64/libc.so.6",
+		"lib/libc.so.6",
+		"usr/lib64/libc.so.6",
+		"usr/lib/libc.so.6",
+	)
+
+	return paths
+}
+
+func findLibcViaCommonPaths() string {
+	paths := getArchitecturePaths()
+	for _, relPath := range paths {
+		path := filepath.Join("/", relPath)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+func findDBLibsViaLdconfig(libNames []string) []string {
+	var paths []string
+	cmd := exec.Command("ldconfig", "-p")
+	output, err := cmd.Output()
+	if err != nil {
+		return paths
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		for _, libName := range libNames {
+			if strings.Contains(line, libName) {
+				parts := strings.Fields(line)
+				for i, part := range parts {
+					if part == "=>" && i+1 < len(parts) {
+						path := strings.TrimSpace(parts[i+1])
+						if info, err := os.Stat(path); err == nil && !info.IsDir() {
+							paths = append(paths, path)
+						}
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
+func findDBLibsViaLdSoConf(libNames []string) []string {
+	var paths []string
+	searchPaths := config.GetDefaultLibSearchPaths()
+
+	if data, err := os.ReadFile(config.GetLdSoConfPath()); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				searchPaths = append(searchPaths, line)
+			}
+		}
+	}
+
+	if matches, err := filepath.Glob(config.GetLdSoConfDPattern()); err == nil {
+		for _, confFile := range matches {
+			if data, err := os.ReadFile(confFile); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" && !strings.HasPrefix(line, "#") {
+						searchPaths = append(searchPaths, line)
+					}
+				}
+			}
+		}
+	}
+
+	for _, searchPath := range searchPaths {
+		for _, libName := range libNames {
+			path := filepath.Join(searchPath, libName)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
+}
+
+func getArchitectureDBPaths(libNames []string) []string {
+	var paths []string
+	arch := runtime.GOARCH
+
+	archSuffixes := map[string][]string{
+		"amd64":   {"x86_64-linux-gnu", "x86_64"},
+		"arm64":   {"aarch64-linux-gnu", "aarch64"},
+		"riscv64": {"riscv64-linux-gnu", "riscv64"},
+		"ppc64le": {"powerpc64le-linux-gnu", "ppc64le"},
+		"s390x":   {"s390x-linux-gnu", "s390x"},
+	}
+
+	if suffixes, ok := archSuffixes[arch]; ok {
+		for _, suffix := range suffixes {
+			for _, libName := range libNames {
+				paths = append(paths,
+					fmt.Sprintf("/usr/lib/%s/%s", suffix, libName),
+					fmt.Sprintf("/lib/%s/%s", suffix, libName),
+				)
+			}
+		}
+	}
+
+	for _, libName := range libNames {
+		paths = append(paths,
+			fmt.Sprintf("/usr/lib64/%s", libName),
+			fmt.Sprintf("/usr/lib/%s", libName),
+			fmt.Sprintf("/lib64/%s", libName),
+			fmt.Sprintf("/lib/%s", libName),
+		)
+	}
+
+	return paths
+}
+
+func findDBLibsViaProcessMaps(pid uint32, libNames []string) []string {
+	var paths []string
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		return paths
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, libName := range libNames {
+			if strings.Contains(line, libName) {
+				parts := strings.Fields(line)
+				if len(parts) >= 6 {
+					path := parts[5]
+					if info, err := os.Stat(path); err == nil && !info.IsDir() {
+						paths = append(paths, path)
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
+func findDBLibsInContainer(containerID string, libNames []string) []string {
+	var paths []string
+
+	if pid := findContainerProcess(containerID); pid > 0 {
+		if foundPaths := findDBLibsViaProcessMaps(pid, libNames); len(foundPaths) > 0 {
+			paths = append(paths, foundPaths...)
+		}
+
+		archPaths := getArchitectureDBPaths(libNames)
+		for _, basePath := range archPaths {
+			path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", strings.TrimPrefix(basePath, "/"))
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				paths = append(paths, path)
+			}
+		}
+	}
+
+	rootfsPaths := []string{
+		config.GetDockerContainerRootfs(containerID),
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	for _, rootfs := range rootfsPaths {
+		if _, err := os.Stat(rootfs); err == nil {
+			archPaths := getArchitectureDBPaths(libNames)
+			for _, basePath := range archPaths {
+				path := filepath.Join(rootfs, strings.TrimPrefix(basePath, "/"))
+				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					paths = append(paths, path)
+				}
+			}
+		}
+	}
+
+	archPaths := getArchitectureDBPaths(libNames)
+	for _, basePath := range archPaths {
+		path := filepath.Join(config.GetDefaultProcRootPath(), strings.TrimPrefix(basePath, "/"))
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			paths = append(paths, path)
+		}
+	}
+
+	return paths
+}
+
+func findDBLibs(containerID string, libNames []string) []string {
+	var paths []string
+	seen := make(map[string]bool)
+
+	if containerID != "" {
+		containerPaths := findDBLibsInContainer(containerID, libNames)
+		for _, path := range containerPaths {
+			if !seen[path] {
+				paths = append(paths, path)
+				seen[path] = true
+			}
+		}
+	}
+
+	ldconfigPaths := findDBLibsViaLdconfig(libNames)
+	for _, path := range ldconfigPaths {
+		if !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+
+	ldSoConfPaths := findDBLibsViaLdSoConf(libNames)
+	for _, path := range ldSoConfPaths {
+		if !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+
+	commonPaths := getArchitectureDBPaths(libNames)
+	for _, path := range commonPaths {
+		if !seen[path] {
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				paths = append(paths, path)
+				seen[path] = true
+			}
+		}
+	}
+
+	return paths
 }
 
 func FindLibcInContainer(containerID string) []string {
 	var paths []string
-	containerRoot := fmt.Sprintf("/var/lib/docker/containers/%s/rootfs", containerID)
+	containerRoot := config.GetDockerContainerRootfs(containerID)
 	if _, err := os.Stat(containerRoot); err == nil {
-		libcPaths := []string{
-			containerRoot + "/lib/x86_64-linux-gnu/libc.so.6",
-			containerRoot + "/lib64/libc.so.6",
-			containerRoot + "/lib/libc.so.6",
-			containerRoot + "/usr/lib/x86_64-linux-gnu/libc.so.6",
-			containerRoot + "/usr/lib64/libc.so.6",
-			containerRoot + "/usr/lib/libc.so.6",
+		libcPaths := getArchitecturePaths()
+		for _, libcPath := range libcPaths {
+			paths = append(paths, filepath.Join(containerRoot, libcPath))
 		}
-		paths = append(paths, libcPaths...)
 	}
 
-	procPaths := []string{
-		"/proc/1/root/lib/x86_64-linux-gnu/libc.so.6",
-		"/proc/1/root/lib64/libc.so.6",
-		"/proc/1/root/lib/libc.so.6",
-		"/proc/1/root/usr/lib/x86_64-linux-gnu/libc.so.6",
-		"/proc/1/root/usr/lib64/libc.so.6",
-		"/proc/1/root/usr/lib/libc.so.6",
+	procPaths := getArchitecturePaths()
+	for _, basePath := range procPaths {
+		paths = append(paths, filepath.Join(config.GetDefaultProcRootPath(), basePath))
 	}
-	paths = append(paths, procPaths...)
 
 	return paths
 }

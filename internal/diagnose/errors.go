@@ -9,6 +9,10 @@ const (
 	ErrCodeContextCancelled
 	ErrCodeTimeout
 	ErrCodeInvalidOperation
+	ErrCodeReportGenerationFailed
+	ErrCodeStackResolveFailed
+	ErrCodeAddr2lineFailed
+	ErrCodeNoEvents
 )
 
 type DiagnoseError struct {
@@ -57,3 +61,33 @@ func NewInvalidOperationError(operation string) *DiagnoseError {
 	}
 }
 
+func NewReportGenerationError(err error) *DiagnoseError {
+	return &DiagnoseError{
+		Code:    ErrCodeReportGenerationFailed,
+		Message: "failed to generate report",
+		Err:     err,
+	}
+}
+
+func NewStackResolveError(pid uint32, addr uint64, err error) *DiagnoseError {
+	return &DiagnoseError{
+		Code:    ErrCodeStackResolveFailed,
+		Message: fmt.Sprintf("failed to resolve stack trace for PID %d at address 0x%x", pid, addr),
+		Err:     err,
+	}
+}
+
+func NewAddr2lineError(exePath string, addr uint64, err error) *DiagnoseError {
+	return &DiagnoseError{
+		Code:    ErrCodeAddr2lineFailed,
+		Message: fmt.Sprintf("addr2line failed for %s at 0x%x", exePath, addr),
+		Err:     err,
+	}
+}
+
+func NewNoEventsError() *DiagnoseError {
+	return &DiagnoseError{
+		Code:    ErrCodeNoEvents,
+		Message: "no events collected during the diagnostic period",
+	}
+}

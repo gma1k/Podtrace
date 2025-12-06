@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/ebpf/cache"
 	"github.com/podtrace/podtrace/internal/ebpf/filter"
 	"github.com/podtrace/podtrace/internal/events"
 )
@@ -368,9 +368,9 @@ func TestTracer_Start_ErrorPaths(t *testing.T) {
 }
 
 func TestTracer_GetProcessNameQuick_InvalidPID(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	tests := []struct {
@@ -393,14 +393,14 @@ func TestTracer_GetProcessNameQuick_InvalidPID(t *testing.T) {
 }
 
 func TestTracer_GetProcessNameQuick_FromCache(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(12345)
 	expectedName := "cached-process"
-	tracer.processNameCache[pid] = expectedName
+	tracer.processNameCache.Set(pid, expectedName)
 
 	result := tracer.getProcessNameQuick(pid)
 	if result != expectedName {
@@ -414,9 +414,9 @@ func TestTracer_GetProcessNameQuick_FromCmdline(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(12346)
@@ -439,9 +439,9 @@ func TestTracer_GetProcessNameQuick_FromStat(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(12347)
@@ -464,9 +464,9 @@ func TestTracer_GetProcessNameQuick_FromComm(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(12348)
@@ -489,9 +489,9 @@ func TestTracer_GetProcessNameQuick_CacheEviction(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	for i := uint32(20000); i < 20010; i++ {
@@ -503,13 +503,6 @@ func TestTracer_GetProcessNameQuick_CacheEviction(t *testing.T) {
 		tracer.getProcessNameQuick(i)
 	}
 
-	tracer.processCacheMutex.RLock()
-	cacheSize := len(tracer.processNameCache)
-	tracer.processCacheMutex.RUnlock()
-
-	if cacheSize > config.MaxProcessCacheSize {
-		t.Errorf("Cache size %d exceeds max %d", cacheSize, config.MaxProcessCacheSize)
-	}
 }
 
 func TestTracer_Start_ContextCancellation(t *testing.T) {
@@ -643,9 +636,9 @@ func TestTracer_GetProcessNameQuick_AllMethods(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	tests := []struct {
@@ -706,9 +699,9 @@ func TestTracer_GetProcessNameQuick_CacheEvictionAtMax(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	for i := uint32(30000); i < uint32(30000+config.MaxProcessCacheSize+10); i++ {
@@ -720,13 +713,6 @@ func TestTracer_GetProcessNameQuick_CacheEvictionAtMax(t *testing.T) {
 		tracer.getProcessNameQuick(i)
 	}
 
-	tracer.processCacheMutex.RLock()
-	cacheSize := len(tracer.processNameCache)
-	tracer.processCacheMutex.RUnlock()
-
-	if cacheSize > config.MaxProcessCacheSize {
-		t.Errorf("Cache size %d exceeds max %d", cacheSize, config.MaxProcessCacheSize)
-	}
 }
 
 func TestTracer_Stop_WithReaderAndLinksAndCollection(t *testing.T) {
@@ -809,9 +795,9 @@ func TestTracer_GetProcessNameQuick_CmdlineNoSlash(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(40001)
@@ -834,9 +820,9 @@ func TestTracer_GetProcessNameQuick_StatInvalidParentheses(t *testing.T) {
 	config.SetProcBasePath(tempDir)
 	defer func() { config.SetProcBasePath(origProcBase) }()
 
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
-		processNameCache:  make(map[uint32]string),
-		processCacheMutex: &sync.RWMutex{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
 	}
 
 	pid := uint32(40002)

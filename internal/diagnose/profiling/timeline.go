@@ -194,9 +194,10 @@ func AnalyzeIOPattern(tcpEvents []*events.Event, startTime time.Time, duration t
 	sendCount := 0
 	recvCount := 0
 	for _, e := range tcpEvents {
-		if e.Type == events.EventTCPSend {
+		switch e.Type {
+		case events.EventTCPSend:
 			sendCount++
-		} else if e.Type == events.EventTCPRecv {
+		case events.EventTCPRecv:
 			recvCount++
 		}
 	}

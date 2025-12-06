@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -30,6 +32,10 @@ const (
 
 var (
 	EventChannelBufferSize = getIntEnvOrDefault("PODTRACE_EVENT_BUFFER_SIZE", 100)
+	CacheMaxSize           = getIntEnvOrDefault("PODTRACE_CACHE_MAX_SIZE", MaxProcessCacheSize)
+	CacheTTLSeconds        = getIntEnvOrDefault("PODTRACE_CACHE_TTL_SECONDS", DefaultCacheTTLSeconds)
+	ErrorBackoffEnabled    = getEnvOrDefault("PODTRACE_ERROR_BACKOFF_ENABLED", "true") == "true"
+	CircuitBreakerEnabled  = getEnvOrDefault("PODTRACE_CIRCUIT_BREAKER_ENABLED", "true") == "true"
 )
 
 const (
@@ -77,15 +83,63 @@ const (
 )
 
 const (
+	PriorityCritical = 1
+	PriorityHigh     = 2
+	PriorityNormal   = 3
+	PriorityLow      = 4
+)
+
+const (
+	ErrorCategoryTransient   = 1
+	ErrorCategoryRecoverable = 2
+	ErrorCategoryPermanent   = 3
+)
+
+const (
+	DefaultCacheTTLSeconds         = 3600
+	CacheEvictionThreshold         = 0.9
+	DefaultErrorBackoffMinInterval = 1 * time.Second
+	DefaultErrorBackoffMaxInterval = 60 * time.Second
+	DefaultCircuitBreakerThreshold = 100
+	DefaultCircuitBreakerTimeout   = 30 * time.Second
+	DefaultSlidingWindowSize       = 5 * time.Second
+	DefaultSlidingWindowBuckets    = 10
+)
+
+const (
 	KB = 1024
 	MB = 1024 * KB
 	GB = 1024 * MB
 )
 
+const (
+	DefaultFileMode       = 0644
+	DefaultDirMode        = 0755
+	DefaultContainerPID   = 1
+	LdSoConfPath          = "/etc/ld.so.conf"
+	LdSoConfDPattern      = "/etc/ld.so.conf.d/*.conf"
+	DockerContainersPath  = "/var/lib/docker/containers"
+	ContainerdOverlayPath = "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/*/fs"
+	ContainerdNativePath  = "/var/lib/containerd/io.containerd.snapshotter.v1.native/snapshots/*/fs"
+	DefaultLibPaths       = "/lib:/usr/lib:/lib64:/usr/lib64"
+)
+
+const (
+	NSPerMS              = 1000000
+	NSPerSecond          = 1000000000
+	DroppedEventsLogRate = 10000
+	RTTSpikeThresholdMS  = 100
+	Percent100           = 100.0
+	TruncateEllipsisLen  = 3
+)
+
 var (
-	CgroupBasePath = getEnvOrDefault("PODTRACE_CGROUP_BASE", "/sys/fs/cgroup")
-	ProcBasePath   = getEnvOrDefault("PODTRACE_PROC_BASE", "/proc")
-	BPFObjectPath  = getEnvOrDefault("PODTRACE_BPF_OBJECT", "bpf/podtrace.bpf.o")
+	CgroupBasePath     = getEnvOrDefault("PODTRACE_CGROUP_BASE", "/sys/fs/cgroup")
+	ProcBasePath       = getEnvOrDefault("PODTRACE_PROC_BASE", "/proc")
+	BPFObjectPath      = getEnvOrDefault("PODTRACE_BPF_OBJECT", "bpf/podtrace.bpf.o")
+	DockerBasePath     = getEnvOrDefault("PODTRACE_DOCKER_BASE", DockerContainersPath)
+	ContainerdBasePath = getEnvOrDefault("PODTRACE_CONTAINERD_BASE", "/var/lib/containerd")
+	LdSoConfBasePath   = getEnvOrDefault("PODTRACE_LDSOCONF_BASE", "/etc")
 )
 
 func SetCgroupBasePath(path string) {
@@ -94,6 +148,38 @@ func SetCgroupBasePath(path string) {
 
 func SetProcBasePath(path string) {
 	ProcBasePath = path
+}
+
+func GetDefaultLibSearchPaths() []string {
+	return []string{"/lib", "/usr/lib", "/lib64", "/usr/lib64"}
+}
+
+func GetDockerContainerRootfs(containerID string) string {
+	return filepath.Join(DockerBasePath, containerID, "rootfs")
+}
+
+func GetContainerdOverlayPattern() string {
+	return ContainerdOverlayPath
+}
+
+func GetContainerdNativePattern() string {
+	return ContainerdNativePath
+}
+
+func GetLdSoConfPath() string {
+	return filepath.Join(LdSoConfBasePath, "ld.so.conf")
+}
+
+func GetLdSoConfDPattern() string {
+	return filepath.Join(LdSoConfBasePath, "ld.so.conf.d", "*.conf")
+}
+
+func GetProcRootPath(pid uint32) string {
+	return filepath.Join(ProcBasePath, fmt.Sprintf("%d", pid), "root")
+}
+
+func GetDefaultProcRootPath() string {
+	return filepath.Join(ProcBasePath, fmt.Sprintf("%d", DefaultContainerPID), "root")
 }
 
 var (

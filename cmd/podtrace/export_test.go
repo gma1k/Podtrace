@@ -21,7 +21,7 @@ func TestExportReport_JSON(t *testing.T) {
 	os.Stdout = w
 
 	err := exportReport("test report", "json", d)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = originalStdout
 
 	if err == nil {
@@ -42,7 +42,7 @@ func TestExportReport_CSV(t *testing.T) {
 	os.Stdout = w
 
 	err := exportReport("test report", "csv", d)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = originalStdout
 
 	if err == nil {
@@ -88,7 +88,7 @@ func TestExportReport_FormatVariations(t *testing.T) {
 			os.Stdout = w
 
 			err := exportReport("test report", tt.format, d)
-			w.Close()
+			_ = w.Close()
 			os.Stdout = originalStdout
 
 			if tt.expectError && err == nil {
