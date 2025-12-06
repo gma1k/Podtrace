@@ -26,7 +26,7 @@ var (
 			Help:    "RTT observed by podtrace.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)
 
 	latencyHistogram = prometheus.NewHistogramVec(
@@ -35,7 +35,7 @@ var (
 			Help:    "Latency observed by podtrace.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)
 
 	dnsGauge = prometheus.NewGaugeVec(
@@ -43,7 +43,7 @@ var (
 			Name: "podtrace_dns_latency_seconds_gauge",
 			Help: "Latest DNS query latency per process.",
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 	dnsHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -51,7 +51,7 @@ var (
 			Help:    "Distribution of DNS query latencies per process.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 
 	fsGauge = prometheus.NewGaugeVec(
@@ -59,7 +59,7 @@ var (
 			Name: "podtrace_fs_latency_seconds_gauge",
 			Help: "Latest file system operation latency per process.",
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 	fsHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -67,7 +67,7 @@ var (
 			Help:    "Distribution of file system latencies per process and type.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 
 	cpuGauge = prometheus.NewGaugeVec(
@@ -75,7 +75,7 @@ var (
 			Name: "podtrace_cpu_block_seconds_gauge",
 			Help: "Latest CPU block time per process.",
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 	cpuHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -83,14 +83,14 @@ var (
 			Help:    "Distribution of CPU block times per process.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace"},
 	)
 	rttGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "podtrace_rtt_latest_seconds",
 			Help: "Most recent RTT observed by podtrace.",
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)
 
 	latencyGauge = prometheus.NewGaugeVec(
@@ -98,7 +98,7 @@ var (
 			Name: "podtrace_latency_latest_seconds",
 			Help: "Most recent latency observed by podtrace.",
 		},
-		[]string{"type", "process_name"},
+		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)
 
 	networkBytesCounter = prometheus.NewCounterVec(
@@ -106,7 +106,7 @@ var (
 			Name: "podtrace_network_bytes_total",
 			Help: "Total bytes transferred over network (TCP/UDP send/receive). Use rate() to get bytes/second.",
 		},
-		[]string{"type", "process_name", "direction"},
+		[]string{"type", "process_name", "direction", "namespace", "target_pod", "target_service"},
 	)
 
 	filesystemBytesCounter = prometheus.NewCounterVec(
@@ -114,7 +114,7 @@ var (
 			Name: "podtrace_filesystem_bytes_total",
 			Help: "Total bytes transferred via filesystem operations (read/write). Use rate() to get bytes/second.",
 		},
-		[]string{"type", "process_name", "operation"},
+		[]string{"type", "process_name", "operation", "namespace"},
 	)
 
 	ringBufferDropsCounter = prometheus.NewCounter(
@@ -207,90 +207,131 @@ func HandleEvents(ch <-chan *events.Event) {
 }
 
 func HandleEvent(e *events.Event) {
+	HandleEventWithContext(e, nil)
+}
+
+func HandleEventWithContext(e *events.Event, k8sContext map[string]interface{}) {
 	if e == nil {
 		return
 	}
+	namespace := getLabel(k8sContext, "namespace", "")
+	targetPod := getLabel(k8sContext, "target_pod", "")
+	targetService := getLabel(k8sContext, "target_service", "")
+
 	switch e.Type {
 	case events.EventConnect:
-		ExportTCPMetric(e)
+		ExportTCPMetricWithContext(e, namespace, targetPod, targetService)
 
 	case events.EventTCPSend:
-		ExportRTTMetric(e)
-		ExportNetworkBandwidthMetric(e, "send")
+		ExportRTTMetricWithContext(e, namespace, targetPod, targetService)
+		ExportNetworkBandwidthMetricWithContext(e, "send", namespace, targetPod, targetService)
 
 	case events.EventTCPRecv:
-		ExportRTTMetric(e)
-		ExportNetworkBandwidthMetric(e, "recv")
+		ExportRTTMetricWithContext(e, namespace, targetPod, targetService)
+		ExportNetworkBandwidthMetricWithContext(e, "recv", namespace, targetPod, targetService)
 
 	case events.EventDNS:
-		ExportDNSMetric(e)
+		ExportDNSMetricWithContext(e, namespace)
 
 	case events.EventWrite:
-		ExportFileSystemMetric(e)
-		ExportFilesystemBandwidthMetric(e, "write")
+		ExportFileSystemMetricWithContext(e, namespace)
+		ExportFilesystemBandwidthMetricWithContext(e, "write", namespace)
 
 	case events.EventRead:
-		ExportFileSystemMetric(e)
-		ExportFilesystemBandwidthMetric(e, "read")
+		ExportFileSystemMetricWithContext(e, namespace)
+		ExportFilesystemBandwidthMetricWithContext(e, "read", namespace)
 
 	case events.EventFsync:
-		ExportFileSystemMetric(e)
+		ExportFileSystemMetricWithContext(e, namespace)
 
 	case events.EventUDPSend:
-		ExportNetworkBandwidthMetric(e, "send")
+		ExportNetworkBandwidthMetricWithContext(e, "send", namespace, targetPod, targetService)
 
 	case events.EventUDPRecv:
-		ExportNetworkBandwidthMetric(e, "recv")
+		ExportNetworkBandwidthMetricWithContext(e, "recv", namespace, targetPod, targetService)
 
 	case events.EventSchedSwitch:
-		ExportSchedSwitchMetric(e)
+		ExportSchedSwitchMetricWithContext(e, namespace)
 	}
 }
 
+func getLabel(ctx map[string]interface{}, key, defaultValue string) string {
+	if ctx == nil {
+		return defaultValue
+	}
+	if val, ok := ctx[key].(string); ok && val != "" {
+		return val
+	}
+	return defaultValue
+}
+
 func ExportRTTMetric(e *events.Event) {
+	ExportRTTMetricWithContext(e, "", "", "")
+}
+
+func ExportRTTMetricWithContext(e *events.Event, namespace, targetPod, targetService string) {
 	rttSec := float64(e.LatencyNS) / 1e9
-	rttHistogram.WithLabelValues(e.TypeString(), e.ProcessName).Observe(rttSec)
-	rttGauge.WithLabelValues(e.TypeString(), e.ProcessName).Set(rttSec)
+	rttHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace, targetPod, targetService).Observe(rttSec)
+	rttGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace, targetPod, targetService).Set(rttSec)
 }
 
 func ExportTCPMetric(e *events.Event) {
+	ExportTCPMetricWithContext(e, "", "", "")
+}
+
+func ExportTCPMetricWithContext(e *events.Event, namespace, targetPod, targetService string) {
 	latencySec := float64(e.LatencyNS) / 1e9
-	latencyHistogram.WithLabelValues(e.TypeString(), e.ProcessName).Observe(latencySec)
-	latencyGauge.WithLabelValues(e.TypeString(), e.ProcessName).Set(latencySec)
+	latencyHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace, targetPod, targetService).Observe(latencySec)
+	latencyGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace, targetPod, targetService).Set(latencySec)
 }
 
 func ExportDNSMetric(e *events.Event) {
+	ExportDNSMetricWithContext(e, "")
+}
 
+func ExportDNSMetricWithContext(e *events.Event, namespace string) {
 	latencySec := float64(e.LatencyNS) / 1e9
-	dnsGauge.WithLabelValues(e.TypeString(), e.ProcessName).Set(latencySec)
-	dnsHistogram.WithLabelValues(e.TypeString(), e.ProcessName).Observe(latencySec)
+	dnsGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Set(latencySec)
+	dnsHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Observe(latencySec)
 }
 
 func ExportFileSystemMetric(e *events.Event) {
+	ExportFileSystemMetricWithContext(e, "")
+}
 
+func ExportFileSystemMetricWithContext(e *events.Event, namespace string) {
 	latencySec := float64(e.LatencyNS) / 1e9
-	fsGauge.WithLabelValues(e.TypeString(), e.ProcessName).Set(latencySec)
-	fsHistogram.WithLabelValues(e.TypeString(), e.ProcessName).Observe(latencySec)
-
+	fsGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Set(latencySec)
+	fsHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Observe(latencySec)
 }
 
 func ExportSchedSwitchMetric(e *events.Event) {
+	ExportSchedSwitchMetricWithContext(e, "")
+}
 
+func ExportSchedSwitchMetricWithContext(e *events.Event, namespace string) {
 	blockSec := float64(e.LatencyNS) / 1e9
-	cpuGauge.WithLabelValues(e.TypeString(), e.ProcessName).Set(blockSec)
-	cpuHistogram.WithLabelValues(e.TypeString(), e.ProcessName).Observe(blockSec)
-
+	cpuGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Set(blockSec)
+	cpuHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Observe(blockSec)
 }
 
 func ExportNetworkBandwidthMetric(e *events.Event, direction string) {
+	ExportNetworkBandwidthMetricWithContext(e, direction, "", "", "")
+}
+
+func ExportNetworkBandwidthMetricWithContext(e *events.Event, direction, namespace, targetPod, targetService string) {
 	if e.Bytes > 0 {
-		networkBytesCounter.WithLabelValues(e.TypeString(), e.ProcessName, direction).Add(float64(e.Bytes))
+		networkBytesCounter.WithLabelValues(e.TypeString(), e.ProcessName, direction, namespace, targetPod, targetService).Add(float64(e.Bytes))
 	}
 }
 
 func ExportFilesystemBandwidthMetric(e *events.Event, operation string) {
+	ExportFilesystemBandwidthMetricWithContext(e, operation, "")
+}
+
+func ExportFilesystemBandwidthMetricWithContext(e *events.Event, operation, namespace string) {
 	if e.Bytes > 0 {
-		filesystemBytesCounter.WithLabelValues(e.TypeString(), e.ProcessName, operation).Add(float64(e.Bytes))
+		filesystemBytesCounter.WithLabelValues(e.TypeString(), e.ProcessName, operation, namespace).Add(float64(e.Bytes))
 	}
 }
 
@@ -362,16 +403,16 @@ func StartServer() *Server {
 
 	addr := config.GetMetricsAddress()
 
-		if host, _, err := net.SplitHostPort(addr); err == nil {
-			if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
-				if !config.AllowNonLoopbackMetrics() {
-					logger.Warn("Rejecting non-loopback metrics address, falling back to default",
-						zap.String("requested_addr", addr),
-						zap.String("fallback", fmt.Sprintf("%s:%d", config.DefaultMetricsHost, config.DefaultMetricsPort)))
-					addr = config.DefaultMetricsHost + ":" + fmt.Sprintf("%d", config.DefaultMetricsPort)
-				}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+			if !config.AllowNonLoopbackMetrics() {
+				logger.Warn("Rejecting non-loopback metrics address, falling back to default",
+					zap.String("requested_addr", addr),
+					zap.String("fallback", fmt.Sprintf("%s:%d", config.DefaultMetricsHost, config.DefaultMetricsPort)))
+				addr = config.DefaultMetricsHost + ":" + fmt.Sprintf("%d", config.DefaultMetricsPort)
 			}
 		}
+	}
 
 	server := &http.Server{
 		Addr:         addr,

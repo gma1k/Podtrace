@@ -155,6 +155,24 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var enricher *kubernetes.ContextEnricher
+	var eventsCorrelator *kubernetes.EventsCorrelator
+	enrichmentEnabled := os.Getenv("PODTRACE_K8S_ENRICHMENT_ENABLED") != "false"
+	if enrichmentEnabled {
+		if clientsetProvider, ok := resolver.(kubernetes.ClientsetProvider); ok {
+			clientset := clientsetProvider.GetClientset()
+			if clientset != nil {
+				enricher = kubernetes.NewContextEnricher(clientset, podInfo)
+				eventsCorrelator = kubernetes.NewEventsCorrelator(clientset, podName, namespace)
+				if err := eventsCorrelator.Start(ctx); err != nil {
+					logger.Warn("Failed to start Kubernetes events correlator", zap.Error(err))
+				} else {
+					defer eventsCorrelator.Stop()
+				}
+			}
+		}
+	}
+
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
 	if enableMetrics {
 		go func() {
@@ -171,16 +189,32 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 					if !ok {
 						return
 					}
-					metricsexporter.HandleEvent(event)
+					if enricher != nil {
+						enriched := enricher.EnrichEvent(ctx, event)
+						if enriched != nil && enriched.KubernetesContext != nil {
+							k8sCtx := map[string]interface{}{
+								"namespace":      enriched.KubernetesContext.SourceNamespace,
+								"target_pod":     enriched.KubernetesContext.TargetPodName,
+								"target_service": enriched.KubernetesContext.ServiceName,
+							}
+							metricsexporter.HandleEventWithContext(event, k8sCtx)
+						} else {
+							metricsexporter.HandleEvent(event)
+						}
+					} else {
+						metricsexporter.HandleEvent(event)
+					}
 				}
 			}
 		}()
 	}
 
-	filteredChan := eventChan
+	enrichedChan := eventChan
+
+	filteredChan := enrichedChan
 	if eventFilter != "" {
 		filteredChan = make(chan *events.Event, config.EventChannelBufferSize)
-		go filterEvents(ctx, eventChan, filteredChan, eventFilter)
+		go filterEvents(ctx, enrichedChan, filteredChan, eventFilter)
 	}
 
 	if err := tracer.Start(ctx, eventChan); err != nil {
@@ -188,17 +222,22 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	}
 
 	if diagnoseDuration != "" {
-		return runDiagnoseMode(ctx, filteredChan, diagnoseDuration, podInfo.CgroupPath)
+		return runDiagnoseMode(ctx, filteredChan, diagnoseDuration, podInfo, enricher, eventsCorrelator)
 	}
 
-	return runNormalMode(ctx, filteredChan)
+	return runNormalMode(ctx, filteredChan, podInfo, enricher, eventsCorrelator)
 }
 
-func runNormalMode(ctx context.Context, eventChan <-chan *events.Event) error {
+func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator) error {
 	logger.Info("Tracing started",
 		zap.Duration("update_interval", config.DefaultRealtimeUpdateInterval))
 
-	diagnostician := diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	var diagnostician *diagnose.Diagnostician
+	if podInfo != nil && enricher != nil {
+		diagnostician = diagnose.NewDiagnosticianWithK8sAndThresholds(podInfo.PodName, podInfo.Namespace, errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	} else {
+		diagnostician = diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	}
 	ticker := time.NewTicker(config.DefaultRealtimeUpdateInterval)
 	defer ticker.Stop()
 
@@ -209,7 +248,22 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case event := <-eventChan:
-			diagnostician.AddEvent(event)
+			if enricher != nil {
+				enriched := enricher.EnrichEvent(ctx, event)
+				if enriched != nil && enriched.KubernetesContext != nil {
+					k8sCtx := map[string]interface{}{
+						"target_pod":       enriched.KubernetesContext.TargetPodName,
+						"target_service":   enriched.KubernetesContext.ServiceName,
+						"target_namespace": enriched.KubernetesContext.TargetNamespace,
+						"target_labels":    enriched.KubernetesContext.TargetLabels,
+					}
+					diagnostician.AddEventWithContext(event, k8sCtx)
+				} else {
+					diagnostician.AddEvent(event)
+				}
+			} else {
+				diagnostician.AddEvent(event)
+			}
 
 		case <-ticker.C:
 			diagnostician.Finish()
@@ -239,7 +293,7 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event) error {
 	}
 }
 
-func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, _ string) error {
+func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator) error {
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return fmt.Errorf("invalid duration: %w", err)
@@ -251,7 +305,12 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 
 	logger.Info("Running diagnose mode", zap.Duration("duration", duration))
 
-	diagnostician := diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	var diagnostician *diagnose.Diagnostician
+	if podInfo != nil && enricher != nil {
+		diagnostician = diagnose.NewDiagnosticianWithK8sAndThresholds(podInfo.PodName, podInfo.Namespace, errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	} else {
+		diagnostician = diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
+	}
 	timeout := time.After(duration)
 
 	for {
@@ -265,7 +324,22 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 			fmt.Println(report)
 			return ctx.Err()
 		case event := <-eventChan:
-			diagnostician.AddEvent(event)
+			if enricher != nil {
+				enriched := enricher.EnrichEvent(ctx, event)
+				if enriched != nil && enriched.KubernetesContext != nil {
+					k8sCtx := map[string]interface{}{
+						"target_pod":       enriched.KubernetesContext.TargetPodName,
+						"target_service":   enriched.KubernetesContext.ServiceName,
+						"target_namespace": enriched.KubernetesContext.TargetNamespace,
+						"target_labels":    enriched.KubernetesContext.TargetLabels,
+					}
+					diagnostician.AddEventWithContext(event, k8sCtx)
+				} else {
+					diagnostician.AddEvent(event)
+				}
+			} else {
+				diagnostician.AddEvent(event)
+			}
 		case <-timeout:
 			diagnostician.Finish()
 			report := diagnostician.GenerateReport()

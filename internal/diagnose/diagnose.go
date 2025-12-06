@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/diagnose/correlator"
 	"github.com/podtrace/podtrace/internal/diagnose/export"
 	"github.com/podtrace/podtrace/internal/diagnose/profiling"
 	"github.com/podtrace/podtrace/internal/diagnose/report"
@@ -30,41 +31,70 @@ func (d *Diagnostician) ExportCSV(w io.Writer) error {
 type ExportData = export.ExportData
 
 type Diagnostician struct {
-	mu                 sync.RWMutex
-	events             []*events.Event
-	startTime          time.Time
-	endTime            time.Time
-	errorRateThreshold float64
-	rttSpikeThreshold  float64
-	fsSlowThreshold    float64
-	maxEvents          int
-	eventCount         int
-	droppedEvents      int
+	mu                    sync.RWMutex
+	events                []*events.Event
+	enrichedEvents        []map[string]interface{}
+	startTime             time.Time
+	endTime               time.Time
+	errorRateThreshold    float64
+	rttSpikeThreshold     float64
+	fsSlowThreshold       float64
+	maxEvents             int
+	eventCount            int
+	droppedEvents         int
+	podCommTracker        *tracker.PodCommunicationTracker
+	errorCorrelator       *correlator.ErrorCorrelator
+	sourcePod             string
+	sourceNamespace       string
 }
 
 func NewDiagnostician() *Diagnostician {
 	return &Diagnostician{
 		events:             make([]*events.Event, 0),
+		enrichedEvents:    make([]map[string]interface{}, 0),
 		startTime:          time.Now(),
 		errorRateThreshold: config.DefaultErrorRateThreshold,
 		rttSpikeThreshold:  config.DefaultRTTThreshold,
 		fsSlowThreshold:    config.DefaultFSSlowThreshold,
 		maxEvents:          config.MaxEvents,
+		errorCorrelator:    correlator.NewErrorCorrelator(30 * time.Second),
 	}
 }
 
 func NewDiagnosticianWithThresholds(errorRate, rttSpike, fsSlow float64) *Diagnostician {
 	return &Diagnostician{
 		events:             make([]*events.Event, 0),
+		enrichedEvents:    make([]map[string]interface{}, 0),
 		startTime:          time.Now(),
 		errorRateThreshold: errorRate,
 		rttSpikeThreshold:  rttSpike,
 		fsSlowThreshold:    fsSlow,
 		maxEvents:          config.MaxEvents,
+		errorCorrelator:    correlator.NewErrorCorrelator(30 * time.Second),
 	}
 }
 
+func NewDiagnosticianWithK8s(sourcePod, sourceNamespace string) *Diagnostician {
+	d := NewDiagnostician()
+	d.sourcePod = sourcePod
+	d.sourceNamespace = sourceNamespace
+	d.podCommTracker = tracker.NewPodCommunicationTracker(sourcePod, sourceNamespace)
+	return d
+}
+
+func NewDiagnosticianWithK8sAndThresholds(sourcePod, sourceNamespace string, errorRate, rttSpike, fsSlow float64) *Diagnostician {
+	d := NewDiagnosticianWithThresholds(errorRate, rttSpike, fsSlow)
+	d.sourcePod = sourcePod
+	d.sourceNamespace = sourceNamespace
+	d.podCommTracker = tracker.NewPodCommunicationTracker(sourcePod, sourceNamespace)
+	return d
+}
+
 func (d *Diagnostician) AddEvent(event *events.Event) {
+	d.AddEventWithContext(event, nil)
+}
+
+func (d *Diagnostician) AddEventWithContext(event *events.Event, k8sContext map[string]interface{}) {
 	if event == nil {
 		return
 	}
@@ -76,6 +106,11 @@ func (d *Diagnostician) AddEvent(event *events.Event) {
 	if len(d.events) >= d.maxEvents {
 		if shouldSampleEvent(event, d.eventCount) {
 			d.events = append(d.events, event)
+			if k8sContext != nil {
+				d.enrichedEvents = append(d.enrichedEvents, k8sContext)
+			} else {
+				d.enrichedEvents = append(d.enrichedEvents, nil)
+			}
 		} else {
 			d.droppedEvents++
 		}
@@ -88,6 +123,19 @@ func (d *Diagnostician) AddEvent(event *events.Event) {
 	}
 
 	d.events = append(d.events, event)
+	if k8sContext != nil {
+		d.enrichedEvents = append(d.enrichedEvents, k8sContext)
+	} else {
+		d.enrichedEvents = append(d.enrichedEvents, nil)
+	}
+
+	if d.podCommTracker != nil && k8sContext != nil {
+		d.podCommTracker.ProcessEvent(event, k8sContext)
+	}
+
+	if d.errorCorrelator != nil {
+		d.errorCorrelator.AddEvent(event, k8sContext)
+	}
 }
 
 func (d *Diagnostician) GetEvents() []*events.Event {
@@ -175,6 +223,16 @@ func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
 	result += report.GenerateSyscallSection(d, duration)
 	result += report.GenerateApplicationTracing(d, duration)
 	result += tracker.GenerateConnectionCorrelation(allEvents)
+
+	if d.podCommTracker != nil {
+		summaries := d.podCommTracker.GetSummary()
+		result += tracker.GeneratePodCommunicationReport(summaries)
+	}
+
+	if d.errorCorrelator != nil {
+		result += d.errorCorrelator.GetErrorSummary()
+	}
+
 	result += report.GenerateIssuesSection(d)
 
 	return result

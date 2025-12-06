@@ -23,6 +23,10 @@ type PodResolver struct {
 
 var _ PodResolverInterface = (*PodResolver)(nil)
 
+func (r *PodResolver) GetClientset() kubernetes.Interface {
+	return r.clientset
+}
+
 func NewPodResolver() (*PodResolver, error) {
 	var config *rest.Config
 	var err error
@@ -119,12 +123,29 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, contai
 		return nil, NewCgroupNotFoundError(shortID)
 	}
 
+	labels := make(map[string]string)
+	if pod.Labels != nil {
+		for k, v := range pod.Labels {
+			labels[k] = v
+		}
+	}
+
+	var ownerKind, ownerName string
+	if len(pod.OwnerReferences) > 0 {
+		ownerKind = pod.OwnerReferences[0].Kind
+		ownerName = pod.OwnerReferences[0].Name
+	}
+
 	return &PodInfo{
 		PodName:       podName,
 		Namespace:     namespace,
 		ContainerID:   shortID,
 		CgroupPath:    cgroupPath,
 		ContainerName: containerSpec.Name,
+		Labels:        labels,
+		PodIP:         pod.Status.PodIP,
+		OwnerKind:     ownerKind,
+		OwnerName:     ownerName,
 	}, nil
 }
 
@@ -134,6 +155,10 @@ type PodInfo struct {
 	ContainerID   string
 	CgroupPath    string
 	ContainerName string
+	Labels        map[string]string
+	PodIP         string
+	OwnerKind     string
+	OwnerName     string
 }
 
 func findCgroupPath(containerID string) (string, error) {
