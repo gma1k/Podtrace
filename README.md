@@ -39,6 +39,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **HTTP Tracing**: Framework for HTTP request/response tracking via uprobes (requires per-application configuration)
 - **DNS Tracking**: Monitors DNS lookups with latency and error tracking
 - **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution with pattern extraction and latency analysis
+- **TLS/SSL Handshake Tracking**: Track TLS handshake latency, errors and failures
 
 ### System Monitoring
 - **CPU/Scheduling Tracking**: Monitors thread blocking and CPU scheduling events
