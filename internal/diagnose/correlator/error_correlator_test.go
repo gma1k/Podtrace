@@ -116,8 +116,20 @@ func TestErrorCorrelator_GetErrorSummary(t *testing.T) {
 	correlator := NewErrorCorrelator(30 * time.Second)
 
 	summary := correlator.GetErrorSummary()
+	if summary != "" {
+		t.Error("expected empty summary when no errors")
+	}
+
+	event := &events.Event{
+		Type:      events.EventConnect,
+		Target:    "10.244.1.5:8080",
+		Error:     -111,
+		Timestamp: uint64(time.Now().UnixNano()),
+	}
+
+	correlator.AddEvent(event, nil)
+	summary = correlator.GetErrorSummary()
 	if summary == "" {
-		t.Error("expected non-empty summary even with no errors")
+		t.Error("expected non-empty summary with errors")
 	}
 }
-
