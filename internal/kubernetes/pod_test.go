@@ -533,25 +533,25 @@ func TestNewPodResolver_NoKubeconfig(t *testing.T) {
 
 	defer func() {
 		if origKubeconfig != "" {
-			os.Setenv("KUBECONFIG", origKubeconfig)
+			_ = os.Setenv("KUBECONFIG", origKubeconfig)
 		} else {
-			os.Unsetenv("KUBECONFIG")
+			_ = os.Unsetenv("KUBECONFIG")
 		}
 		if origSudoUser != "" {
-			os.Setenv("SUDO_USER", origSudoUser)
+			_ = os.Setenv("SUDO_USER", origSudoUser)
 		} else {
-			os.Unsetenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
 		}
 		if origHome != "" {
-			os.Setenv("HOME", origHome)
+			_ = os.Setenv("HOME", origHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 	}()
 
-	os.Unsetenv("KUBECONFIG")
-	os.Unsetenv("SUDO_USER")
-	os.Unsetenv("HOME")
+	_ = os.Unsetenv("KUBECONFIG")
+	_ = os.Unsetenv("SUDO_USER")
+	_ = os.Unsetenv("HOME")
 
 	_, err := NewPodResolver()
 	if err == nil {
@@ -568,19 +568,19 @@ func TestNewPodResolver_WithKUBECONFIG(t *testing.T) {
 
 	defer func() {
 		if origKubeconfig != "" {
-			os.Setenv("KUBECONFIG", origKubeconfig)
+			_ = os.Setenv("KUBECONFIG", origKubeconfig)
 		} else {
-			os.Unsetenv("KUBECONFIG")
+			_ = os.Unsetenv("KUBECONFIG")
 		}
 		if origSudoUser != "" {
-			os.Setenv("SUDO_USER", origSudoUser)
+			_ = os.Setenv("SUDO_USER", origSudoUser)
 		} else {
-			os.Unsetenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
 		}
 		if origHome != "" {
-			os.Setenv("HOME", origHome)
+			_ = os.Setenv("HOME", origHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 	}()
 
@@ -607,9 +607,9 @@ users:
 		t.Fatalf("failed to write kubeconfig: %v", err)
 	}
 
-	os.Setenv("KUBECONFIG", kubeconfigPath)
-	os.Unsetenv("SUDO_USER")
-	os.Unsetenv("HOME")
+	_ = os.Setenv("KUBECONFIG", kubeconfigPath)
+	_ = os.Unsetenv("SUDO_USER")
+	_ = os.Unsetenv("HOME")
 
 	_, err := NewPodResolver()
 	if err != nil {
@@ -624,19 +624,19 @@ func TestNewPodResolver_WithSUDO_USER(t *testing.T) {
 
 	defer func() {
 		if origKubeconfig != "" {
-			os.Setenv("KUBECONFIG", origKubeconfig)
+			_ = os.Setenv("KUBECONFIG", origKubeconfig)
 		} else {
-			os.Unsetenv("KUBECONFIG")
+			_ = os.Unsetenv("KUBECONFIG")
 		}
 		if origSudoUser != "" {
-			os.Setenv("SUDO_USER", origSudoUser)
+			_ = os.Setenv("SUDO_USER", origSudoUser)
 		} else {
-			os.Unsetenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
 		}
 		if origHome != "" {
-			os.Setenv("HOME", origHome)
+			_ = os.Setenv("HOME", origHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 	}()
 
@@ -669,9 +669,9 @@ users:
 		t.Fatalf("failed to write kubeconfig: %v", err)
 	}
 
-	os.Unsetenv("KUBECONFIG")
-	os.Setenv("SUDO_USER", "testuser")
-	os.Unsetenv("HOME")
+	_ = os.Unsetenv("KUBECONFIG")
+	_ = os.Setenv("SUDO_USER", "testuser")
+	_ = os.Unsetenv("HOME")
 
 	_, err := NewPodResolver()
 	if err != nil {
@@ -686,19 +686,19 @@ func TestNewPodResolver_WithHOME(t *testing.T) {
 
 	defer func() {
 		if origKubeconfig != "" {
-			os.Setenv("KUBECONFIG", origKubeconfig)
+			_ = os.Setenv("KUBECONFIG", origKubeconfig)
 		} else {
-			os.Unsetenv("KUBECONFIG")
+			_ = os.Unsetenv("KUBECONFIG")
 		}
 		if origSudoUser != "" {
-			os.Setenv("SUDO_USER", origSudoUser)
+			_ = os.Setenv("SUDO_USER", origSudoUser)
 		} else {
-			os.Unsetenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
 		}
 		if origHome != "" {
-			os.Setenv("HOME", origHome)
+			_ = os.Setenv("HOME", origHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 	}()
 
@@ -731,9 +731,9 @@ users:
 		t.Fatalf("failed to write kubeconfig: %v", err)
 	}
 
-	os.Unsetenv("KUBECONFIG")
-	os.Unsetenv("SUDO_USER")
-	os.Setenv("HOME", testHome)
+	_ = os.Unsetenv("KUBECONFIG")
+	_ = os.Unsetenv("SUDO_USER")
+	_ = os.Setenv("HOME", testHome)
 
 	_, err := NewPodResolver()
 	if err != nil {
@@ -748,25 +748,25 @@ func TestNewPodResolver_HOME_IsRoot(t *testing.T) {
 
 	defer func() {
 		if origKubeconfig != "" {
-			os.Setenv("KUBECONFIG", origKubeconfig)
+			_ = os.Setenv("KUBECONFIG", origKubeconfig)
 		} else {
-			os.Unsetenv("KUBECONFIG")
+			_ = os.Unsetenv("KUBECONFIG")
 		}
 		if origSudoUser != "" {
-			os.Setenv("SUDO_USER", origSudoUser)
+			_ = os.Setenv("SUDO_USER", origSudoUser)
 		} else {
-			os.Unsetenv("SUDO_USER")
+			_ = os.Unsetenv("SUDO_USER")
 		}
 		if origHome != "" {
-			os.Setenv("HOME", origHome)
+			_ = os.Setenv("HOME", origHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 	}()
 
-	os.Unsetenv("KUBECONFIG")
-	os.Unsetenv("SUDO_USER")
-	os.Setenv("HOME", "/root")
+	_ = os.Unsetenv("KUBECONFIG")
+	_ = os.Unsetenv("SUDO_USER")
+	_ = os.Setenv("HOME", "/root")
 
 	_, err := NewPodResolver()
 	if err != nil {

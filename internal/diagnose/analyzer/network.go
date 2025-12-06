@@ -17,7 +17,7 @@ func AnalyzeTCP(events []*events.Event, rttSpikeThreshold float64) (avgRTT, maxR
 	peakBytes = 0
 
 	for _, e := range events {
-		rttMs := float64(e.LatencyNS) / 1e6
+		rttMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 		rtts = append(rtts, rttMs)
 		totalRTT += rttMs
 		if rttMs > maxRTT {
@@ -59,7 +59,7 @@ func AnalyzeConnections(events []*events.Event) (avgLatency, maxLatency float64,
 	errorBreakdown = make(map[int32]int)
 
 	for _, e := range events {
-		latencyMs := float64(e.LatencyNS) / 1e6
+		latencyMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 		latencies = append(latencies, latencyMs)
 		totalLatency += latencyMs
 		if latencyMs > maxLatency {

@@ -62,9 +62,9 @@ func TestParseLogLevel(t *testing.T) {
 	originalValue := os.Getenv(key)
 	defer func() {
 		if originalValue != "" {
-			os.Setenv(key, originalValue)
+			_ = os.Setenv(key, originalValue)
 		} else {
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 	}()
 

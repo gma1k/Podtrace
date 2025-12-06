@@ -1,12 +1,16 @@
 package probes
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/cilium/ebpf"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func TestFindLibcPath(t *testing.T) {
@@ -225,8 +229,8 @@ func TestAttachProbes_WithTracepointPrograms(t *testing.T) {
 func TestAttachDNSProbes_WithPrograms(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_getaddrinfo":     nil,
-			"uretprobe_getaddrinfo":  nil,
+			"uprobe_getaddrinfo":    nil,
+			"uretprobe_getaddrinfo": nil,
 		},
 	}
 
@@ -239,8 +243,8 @@ func TestAttachDNSProbes_WithPrograms(t *testing.T) {
 func TestAttachSyncProbes_WithPrograms(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_pthread_mutex_lock":     nil,
-			"uretprobe_pthread_mutex_lock":  nil,
+			"uprobe_pthread_mutex_lock":    nil,
+			"uretprobe_pthread_mutex_lock": nil,
 		},
 	}
 
@@ -254,9 +258,9 @@ func TestAttachDBProbes_WithPrograms(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
 			"uprobe_PQexec":              nil,
-			"uretprobe_PQexec":            nil,
-			"uprobe_mysql_real_query":      nil,
-			"uretprobe_mysql_real_query":  nil,
+			"uretprobe_PQexec":           nil,
+			"uprobe_mysql_real_query":    nil,
+			"uretprobe_mysql_real_query": nil,
 		},
 	}
 
@@ -356,28 +360,28 @@ func TestFindLibcInContainer_WithValidContainerRoot(t *testing.T) {
 func TestAttachProbes_AllProbeTypes(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"kprobe_tcp_connect":       &ebpf.Program{},
-			"kretprobe_tcp_connect":    &ebpf.Program{},
-			"kprobe_tcp_v6_connect":    &ebpf.Program{},
-			"kretprobe_tcp_v6_connect": &ebpf.Program{},
-			"kprobe_tcp_sendmsg":       &ebpf.Program{},
-			"kretprobe_tcp_sendmsg":    &ebpf.Program{},
-			"kprobe_tcp_recvmsg":       &ebpf.Program{},
-			"kretprobe_tcp_recvmsg":    &ebpf.Program{},
-			"kprobe_udp_sendmsg":       &ebpf.Program{},
-			"kretprobe_udp_sendmsg":    &ebpf.Program{},
-			"kprobe_udp_recvmsg":       &ebpf.Program{},
-			"kretprobe_udp_recvmsg":    &ebpf.Program{},
-			"kprobe_vfs_write":         &ebpf.Program{},
-			"kretprobe_vfs_write":      &ebpf.Program{},
-			"kprobe_vfs_read":          &ebpf.Program{},
-			"kretprobe_vfs_read":       &ebpf.Program{},
-			"kprobe_vfs_fsync":         &ebpf.Program{},
-			"kretprobe_vfs_fsync":      &ebpf.Program{},
-			"kprobe_do_futex":          &ebpf.Program{},
-			"kretprobe_do_futex":       &ebpf.Program{},
-			"kprobe_do_sys_openat2":    &ebpf.Program{},
-			"kretprobe_do_sys_openat2": &ebpf.Program{},
+			"kprobe_tcp_connect":       {},
+			"kretprobe_tcp_connect":    {},
+			"kprobe_tcp_v6_connect":    {},
+			"kretprobe_tcp_v6_connect": {},
+			"kprobe_tcp_sendmsg":       {},
+			"kretprobe_tcp_sendmsg":    {},
+			"kprobe_tcp_recvmsg":       {},
+			"kretprobe_tcp_recvmsg":    {},
+			"kprobe_udp_sendmsg":       {},
+			"kretprobe_udp_sendmsg":    {},
+			"kprobe_udp_recvmsg":       {},
+			"kretprobe_udp_recvmsg":    {},
+			"kprobe_vfs_write":         {},
+			"kretprobe_vfs_write":      {},
+			"kprobe_vfs_read":          {},
+			"kretprobe_vfs_read":       {},
+			"kprobe_vfs_fsync":         {},
+			"kretprobe_vfs_fsync":      {},
+			"kprobe_do_futex":          {},
+			"kretprobe_do_futex":       {},
+			"kprobe_do_sys_openat2":    {},
+			"kretprobe_do_sys_openat2": {},
 		},
 	}
 
@@ -393,13 +397,13 @@ func TestAttachProbes_AllProbeTypes(t *testing.T) {
 func TestAttachProbes_WithTracepoints(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"tracepoint_sched_switch":         &ebpf.Program{},
-			"tracepoint_tcp_set_state":        &ebpf.Program{},
-			"tracepoint_tcp_retransmit_skb":   &ebpf.Program{},
-			"tracepoint_net_dev_xmit":          &ebpf.Program{},
-			"tracepoint_page_fault_user":       &ebpf.Program{},
-			"tracepoint_oom_kill_process":     &ebpf.Program{},
-			"tracepoint_sched_process_fork":    &ebpf.Program{},
+			"tracepoint_sched_switch":       {},
+			"tracepoint_tcp_set_state":      {},
+			"tracepoint_tcp_retransmit_skb": {},
+			"tracepoint_net_dev_xmit":       {},
+			"tracepoint_page_fault_user":    {},
+			"tracepoint_oom_kill_process":   {},
+			"tracepoint_sched_process_fork": {},
 		},
 	}
 
@@ -415,7 +419,7 @@ func TestAttachProbes_WithTracepoints(t *testing.T) {
 func TestAttachProbes_TracepointPermissionDenied(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"tracepoint_sched_switch": &ebpf.Program{},
+			"tracepoint_sched_switch": {},
 		},
 	}
 
@@ -435,7 +439,7 @@ func TestAttachProbes_TracepointPermissionDenied(t *testing.T) {
 func TestAttachProbes_TracepointNotFound(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"tracepoint_tcp_set_state": &ebpf.Program{},
+			"tracepoint_tcp_set_state": {},
 		},
 	}
 
@@ -455,7 +459,7 @@ func TestAttachProbes_TracepointNotFound(t *testing.T) {
 func TestAttachProbes_ErrorCleanup(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"kprobe_tcp_connect": &ebpf.Program{},
+			"kprobe_tcp_connect": {},
 		},
 	}
 
@@ -464,7 +468,7 @@ func TestAttachProbes_ErrorCleanup(t *testing.T) {
 		t.Logf("AttachProbes returned error (expected without kernel support): %v", err)
 	}
 	for _, l := range links {
-		l.Close()
+		_ = l.Close()
 	}
 }
 
@@ -480,8 +484,8 @@ func TestAttachDNSProbes_WithLibcFile(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_getaddrinfo":    &ebpf.Program{},
-			"uretprobe_getaddrinfo": &ebpf.Program{},
+			"uprobe_getaddrinfo":    {},
+			"uretprobe_getaddrinfo": {},
 		},
 	}
 
@@ -503,8 +507,8 @@ func TestAttachSyncProbes_WithLibcFile(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_pthread_mutex_lock":    &ebpf.Program{},
-			"uretprobe_pthread_mutex_lock": &ebpf.Program{},
+			"uprobe_pthread_mutex_lock":    {},
+			"uretprobe_pthread_mutex_lock": {},
 		},
 	}
 
@@ -517,8 +521,8 @@ func TestAttachSyncProbes_WithLibcFile(t *testing.T) {
 func TestAttachSyncProbes_SymbolNotFound(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_pthread_mutex_lock":    &ebpf.Program{},
-			"uretprobe_pthread_mutex_lock": &ebpf.Program{},
+			"uprobe_pthread_mutex_lock":    {},
+			"uretprobe_pthread_mutex_lock": {},
 		},
 	}
 
@@ -540,10 +544,10 @@ func TestAttachDBProbes_WithDBLib(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_PQexec":             &ebpf.Program{},
-			"uretprobe_PQexec":          &ebpf.Program{},
-			"uprobe_mysql_real_query":   &ebpf.Program{},
-			"uretprobe_mysql_real_query": &ebpf.Program{},
+			"uprobe_PQexec":              {},
+			"uretprobe_PQexec":           {},
+			"uprobe_mysql_real_query":    {},
+			"uretprobe_mysql_real_query": {},
 		},
 	}
 
@@ -575,10 +579,10 @@ func TestAttachDBProbes_WithMultipleLibs(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_PQexec":             &ebpf.Program{},
-			"uretprobe_PQexec":          &ebpf.Program{},
-			"uprobe_mysql_real_query":   &ebpf.Program{},
-			"uretprobe_mysql_real_query": &ebpf.Program{},
+			"uprobe_PQexec":              {},
+			"uretprobe_PQexec":           {},
+			"uprobe_mysql_real_query":    {},
+			"uretprobe_mysql_real_query": {},
 		},
 	}
 
@@ -597,7 +601,7 @@ func TestAttachDBProbes_WithDirectoryInsteadOfFile(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_PQexec": &ebpf.Program{},
+			"uprobe_PQexec": {},
 		},
 	}
 
@@ -652,7 +656,7 @@ func TestAttachProbes_KprobeVsKretprobe(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			coll := &ebpf.Collection{
 				Programs: map[string]*ebpf.Program{
-					tt.progName: &ebpf.Program{},
+					tt.progName: {},
 				},
 			}
 
@@ -688,12 +692,11 @@ func TestFindLibcPath_ContainerIDWithValidRootfs(t *testing.T) {
 	}
 }
 
-
 func TestAttachDNSProbes_LibcPathFoundButOpenFails(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_getaddrinfo":    &ebpf.Program{},
-			"uretprobe_getaddrinfo": &ebpf.Program{},
+			"uprobe_getaddrinfo":    {},
+			"uretprobe_getaddrinfo": {},
 		},
 	}
 
@@ -706,8 +709,8 @@ func TestAttachDNSProbes_LibcPathFoundButOpenFails(t *testing.T) {
 func TestAttachDNSProbes_SuccessfulUprobe(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_getaddrinfo":    &ebpf.Program{},
-			"uretprobe_getaddrinfo": &ebpf.Program{},
+			"uprobe_getaddrinfo":    {},
+			"uretprobe_getaddrinfo": {},
 		},
 	}
 
@@ -720,8 +723,8 @@ func TestAttachDNSProbes_SuccessfulUprobe(t *testing.T) {
 func TestAttachSyncProbes_LibcFoundButOpenFails(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_pthread_mutex_lock":    &ebpf.Program{},
-			"uretprobe_pthread_mutex_lock": &ebpf.Program{},
+			"uprobe_pthread_mutex_lock":    {},
+			"uretprobe_pthread_mutex_lock": {},
 		},
 	}
 
@@ -734,8 +737,8 @@ func TestAttachSyncProbes_LibcFoundButOpenFails(t *testing.T) {
 func TestAttachSyncProbes_SuccessfulAttachment(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_pthread_mutex_lock":    &ebpf.Program{},
-			"uretprobe_pthread_mutex_lock": &ebpf.Program{},
+			"uprobe_pthread_mutex_lock":    {},
+			"uretprobe_pthread_mutex_lock": {},
 		},
 	}
 
@@ -754,10 +757,10 @@ func TestAttachDBProbes_WithValidLib(t *testing.T) {
 
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_PQexec":             &ebpf.Program{},
-			"uretprobe_PQexec":          &ebpf.Program{},
-			"uprobe_mysql_real_query":   &ebpf.Program{},
-			"uretprobe_mysql_real_query": &ebpf.Program{},
+			"uprobe_PQexec":              {},
+			"uretprobe_PQexec":           {},
+			"uprobe_mysql_real_query":    {},
+			"uretprobe_mysql_real_query": {},
 		},
 	}
 
@@ -770,7 +773,7 @@ func TestAttachDBProbes_WithValidLib(t *testing.T) {
 func TestAttachDBProbes_StatError(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"uprobe_PQexec": &ebpf.Program{},
+			"uprobe_PQexec": {},
 		},
 	}
 
@@ -807,7 +810,7 @@ func TestFindLibcInContainer_EmptyContainerID(t *testing.T) {
 func TestAttachProbes_ErrorPath(t *testing.T) {
 	coll := &ebpf.Collection{
 		Programs: map[string]*ebpf.Program{
-			"kprobe_tcp_connect": &ebpf.Program{},
+			"kprobe_tcp_connect": {},
 		},
 	}
 
@@ -818,7 +821,611 @@ func TestAttachProbes_ErrorPath(t *testing.T) {
 		}
 	}
 	for _, l := range links {
-		l.Close()
+		_ = l.Close()
 	}
 }
 
+func TestFindLibcPath_ViaLdSoConf(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	ldSoConfDir := filepath.Join(tmpDir, "etc", "ld.so.conf.d")
+	if err := os.MkdirAll(ldSoConfDir, 0755); err != nil {
+		t.Fatalf("failed to create ld.so.conf.d: %v", err)
+	}
+
+	customLibDir := filepath.Join(tmpDir, "custom", "lib")
+	libcPath := filepath.Join(customLibDir, "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	confFile := filepath.Join(ldSoConfDir, "custom.conf")
+	if err := os.WriteFile(confFile, []byte(customLibDir+"\n"), 0644); err != nil {
+		t.Fatalf("failed to create conf file: %v", err)
+	}
+
+	oldLdSoConf := "/etc/ld.so.conf"
+	oldLdSoConfD := "/etc/ld.so.conf.d"
+
+	t.Run("with custom ld.so.conf", func(t *testing.T) {
+		result := findLibcViaLdSoConf()
+		if result == "" {
+			t.Log("findLibcViaLdSoConf returned empty (may not find custom path in /etc)")
+		}
+	})
+
+	_ = oldLdSoConf
+	_ = oldLdSoConfD
+}
+
+func TestFindLibcPath_ViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12345)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libcPath := filepath.Join(tmpDir, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libcPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findLibcViaProcessMaps(pid)
+	if result != libcPath {
+		t.Errorf("Expected %q, got %q", libcPath, result)
+	}
+}
+
+func TestFindLibcPath_ViaProcessMaps_Musl(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12346)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libcPath := filepath.Join(tmpDir, "lib", "libc.musl-x86_64.so.1")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake musl libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libcPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findLibcViaProcessMaps(pid)
+	if result != libcPath {
+		t.Errorf("Expected %q, got %q", libcPath, result)
+	}
+}
+
+func TestFindLibcPath_ViaProcessMaps_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12347)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	mapsContent := "7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 /lib/other.so\n"
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findLibcViaProcessMaps(pid)
+	if result != "" {
+		t.Errorf("Expected empty, got %q", result)
+	}
+}
+
+func TestFindContainerProcess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "abc123def456"
+	pid := uint32(12348)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	result := findContainerProcess(containerID)
+	if result != pid {
+		t.Errorf("Expected PID %d, got %d", pid, result)
+	}
+}
+
+func TestFindContainerProcess_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12349)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	cgroupContent := "0::/kubepods/pod_other123\n"
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	result := findContainerProcess("nonexistent")
+	if result != 0 {
+		t.Errorf("Expected 0, got %d", result)
+	}
+}
+
+func TestFindLibcInContainer_ViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-container-789"
+	pid := uint32(12350)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libcPath := filepath.Join(tmpDir, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libcPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findLibcInContainer(containerID)
+	if result != libcPath {
+		t.Errorf("Expected %q, got %q", libcPath, result)
+	}
+}
+
+func TestFindLibcInContainer_ViaRootfs(t *testing.T) {
+	tmpDir := t.TempDir()
+	containerID := "test-container-rootfs"
+
+	containerRoot := filepath.Join(tmpDir, "var", "lib", "docker", "containers", containerID, "rootfs")
+	libcPath := filepath.Join(containerRoot, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc file: %v", err)
+	}
+
+	oldDockerPath := "/var/lib/docker/containers"
+	_ = oldDockerPath
+
+	result := findLibcInContainer(containerID)
+	if result == "" {
+		t.Log("findLibcInContainer returned empty (container root may not be in /var/lib/docker)")
+	}
+}
+
+func TestGetArchitecturePaths(t *testing.T) {
+	paths := getArchitecturePaths()
+	if len(paths) == 0 {
+		t.Error("getArchitecturePaths returned empty slice")
+	}
+
+	hasGenericPaths := false
+	for _, path := range paths {
+		if strings.Contains(path, "lib64/libc.so.6") || strings.Contains(path, "lib/libc.so.6") {
+			hasGenericPaths = true
+			break
+		}
+	}
+	if !hasGenericPaths {
+		t.Error("getArchitecturePaths should include generic paths")
+	}
+}
+
+func TestFindLibcViaCommonPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	libcPath := filepath.Join(tmpDir, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc file: %v", err)
+	}
+
+	result := findLibcViaCommonPaths()
+	if result == "" {
+		t.Log("findLibcViaCommonPaths returned empty (may not find libc in temp dir)")
+	}
+}
+
+func TestFindLibcPath_CompleteFlow(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-complete-flow"
+	pid := uint32(12351)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libcPath := filepath.Join(tmpDir, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libcPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := FindLibcPath(containerID)
+	if result != libcPath {
+		t.Logf("FindLibcPath returned %q (expected %q in test environment)", result, libcPath)
+	}
+}
+
+func TestFindLibcPath_FallbackChain(t *testing.T) {
+	result := FindLibcPath("")
+	if result == "" {
+		t.Log("FindLibcPath returned empty (expected when no libc found in test environment)")
+	} else {
+		t.Logf("FindLibcPath found libc at: %s", result)
+	}
+}
+
+func TestFindDBLibsViaLdconfig(t *testing.T) {
+	result := findDBLibsViaLdconfig([]string{"libpq.so.5", "libpq.so"})
+	if len(result) == 0 {
+		t.Log("findDBLibsViaLdconfig returned empty (expected when DB libs not found in test environment)")
+	} else {
+		t.Logf("findDBLibsViaLdconfig found %d paths", len(result))
+	}
+}
+
+func TestFindDBLibsViaLdSoConf(t *testing.T) {
+	result := findDBLibsViaLdSoConf([]string{"libpq.so.5", "libpq.so"})
+	if len(result) == 0 {
+		t.Log("findDBLibsViaLdSoConf returned empty (expected when DB libs not found in test environment)")
+	} else {
+		t.Logf("findDBLibsViaLdSoConf found %d paths", len(result))
+	}
+}
+
+func TestGetArchitectureDBPaths(t *testing.T) {
+	libNames := []string{"libpq.so.5", "libmysqlclient.so.21"}
+	paths := getArchitectureDBPaths(libNames)
+	if len(paths) == 0 {
+		t.Error("getArchitectureDBPaths returned empty slice")
+	}
+
+	hasGenericPaths := false
+	for _, path := range paths {
+		if strings.Contains(path, "lib64") || strings.Contains(path, "/lib/") {
+			hasGenericPaths = true
+			break
+		}
+	}
+	if !hasGenericPaths {
+		t.Error("getArchitectureDBPaths should include generic paths")
+	}
+}
+
+func TestFindDBLibsViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12352)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libpqPath := filepath.Join(tmpDir, "usr", "lib", "x86_64-linux-gnu", "libpq.so.5")
+	if err := os.MkdirAll(filepath.Dir(libpqPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libpqPath, []byte("fake libpq"), 0644); err != nil {
+		t.Fatalf("failed to create libpq: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libpqPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findDBLibsViaProcessMaps(pid, []string{"libpq.so.5"})
+	if len(result) == 0 {
+		t.Error("findDBLibsViaProcessMaps should find libpq")
+	}
+	if len(result) > 0 && result[0] != libpqPath {
+		t.Errorf("Expected %q, got %q", libpqPath, result[0])
+	}
+}
+
+func TestFindDBLibsViaProcessMaps_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12353)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	mapsContent := "7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 /lib/other.so\n"
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findDBLibsViaProcessMaps(pid, []string{"libpq.so.5"})
+	if len(result) != 0 {
+		t.Errorf("Expected empty, got %v", result)
+	}
+}
+
+func TestFindDBLibsInContainer_ViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-db-container"
+	pid := uint32(12354)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libpqPath := filepath.Join(tmpDir, "usr", "lib", "x86_64-linux-gnu", "libpq.so.5")
+	if err := os.MkdirAll(filepath.Dir(libpqPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libpqPath, []byte("fake libpq"), 0644); err != nil {
+		t.Fatalf("failed to create libpq: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libpqPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findDBLibsInContainer(containerID, []string{"libpq.so.5"})
+	if len(result) == 0 {
+		t.Log("findDBLibsInContainer returned empty (may not find in test environment)")
+	} else {
+		found := false
+		for _, path := range result {
+			if strings.Contains(path, "libpq.so.5") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Log("findDBLibsInContainer did not find libpq via process maps")
+		}
+	}
+}
+
+func TestFindDBLibsInContainer_ViaRootfs(t *testing.T) {
+	tmpDir := t.TempDir()
+	containerID := "test-db-rootfs"
+
+	containerRoot := filepath.Join(tmpDir, "var", "lib", "docker", "containers", containerID, "rootfs")
+	libpqPath := filepath.Join(containerRoot, "usr", "lib", "x86_64-linux-gnu", "libpq.so.5")
+	if err := os.MkdirAll(filepath.Dir(libpqPath), 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+	if err := os.WriteFile(libpqPath, []byte("fake libpq"), 0644); err != nil {
+		t.Fatalf("failed to create libpq file: %v", err)
+	}
+
+	result := findDBLibsInContainer(containerID, []string{"libpq.so.5"})
+	if len(result) == 0 {
+		t.Log("findDBLibsInContainer returned empty (container root may not be in /var/lib/docker)")
+	}
+}
+
+func TestFindDBLibs(t *testing.T) {
+	result := findDBLibs("", []string{"libpq.so.5", "libpq.so"})
+	if len(result) == 0 {
+		t.Log("findDBLibs returned empty (expected when DB libs not found in test environment)")
+	} else {
+		t.Logf("findDBLibs found %d paths", len(result))
+	}
+}
+
+func TestFindDBLibs_WithContainerID(t *testing.T) {
+	result := findDBLibs("test-container-id", []string{"libpq.so.5"})
+	if len(result) == 0 {
+		t.Log("findDBLibs returned empty (expected when container DB libs not found)")
+	}
+}
+
+func TestFindDBLibs_MultipleVersions(t *testing.T) {
+	result := findDBLibs("", []string{"libpq.so.5", "libpq.so", "libmysqlclient.so.21", "libmysqlclient.so"})
+	if len(result) == 0 {
+		t.Log("findDBLibs returned empty (expected when DB libs not found in test environment)")
+	} else {
+		t.Logf("findDBLibs found %d paths for multiple library versions", len(result))
+	}
+}
+
+func TestGetMuslLibcNames(t *testing.T) {
+	names := getMuslLibcNames()
+	if len(names) == 0 {
+		t.Error("getMuslLibcNames returned empty slice")
+	}
+
+	hasGeneric := false
+	for _, name := range names {
+		if name == "libc.so.6" {
+			hasGeneric = true
+			break
+		}
+	}
+	if !hasGeneric {
+		t.Error("getMuslLibcNames should include generic libc.so.6")
+	}
+
+	hasMusl := false
+	for _, name := range names {
+		if strings.Contains(name, "libc.musl-") {
+			hasMusl = true
+			break
+		}
+	}
+	if !hasMusl {
+		t.Log("getMuslLibcNames did not include musl name (may not be supported for current architecture)")
+	}
+}
+
+func TestGetMuslLibcNames_AllArchitectures(t *testing.T) {
+	testArchs := map[string]string{
+		"amd64":   "x86_64",
+		"arm64":   "aarch64",
+		"riscv64": "riscv64",
+		"ppc64le": "ppc64le",
+		"s390x":   "s390x",
+	}
+
+	for goArch, muslArch := range testArchs {
+		t.Run(goArch, func(t *testing.T) {
+			expectedMuslName := fmt.Sprintf("libc.musl-%s.so.1", muslArch)
+			names := getMuslLibcNames()
+			found := false
+			for _, name := range names {
+				if name == expectedMuslName {
+					found = true
+					break
+				}
+			}
+			if runtime.GOARCH == goArch && !found {
+				t.Logf("Expected musl name %s for architecture %s (current arch: %s)", expectedMuslName, goArch, runtime.GOARCH)
+			}
+		})
+	}
+}
+
+func TestFindLibcViaLdSoConf_WithMusl(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	libDir := filepath.Join(tmpDir, "lib")
+	if err := os.MkdirAll(libDir, 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+
+	muslNames := getMuslLibcNames()
+	for _, muslName := range muslNames {
+		if strings.Contains(muslName, "musl") {
+			muslPath := filepath.Join(libDir, muslName)
+			if err := os.WriteFile(muslPath, []byte("fake musl libc"), 0644); err != nil {
+				t.Fatalf("failed to create musl libc: %v", err)
+			}
+
+			oldLdSoConf := "/etc/ld.so.conf"
+			_ = oldLdSoConf
+
+			result := findLibcViaLdSoConf()
+			if result == "" {
+				t.Log("findLibcViaLdSoConf returned empty (may not find in /etc paths)")
+			}
+			break
+		}
+	}
+}

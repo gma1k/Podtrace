@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"sort"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -13,7 +15,7 @@ func AnalyzeDNS(events []*events.Event) (avgLatency, maxLatency float64, errors 
 	targetMap := make(map[string]int)
 
 	for _, e := range events {
-		latencyMs := float64(e.LatencyNS) / 1e6
+		latencyMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 		latencies = append(latencies, latencyMs)
 		totalLatency += latencyMs
 		if latencyMs > maxLatency {

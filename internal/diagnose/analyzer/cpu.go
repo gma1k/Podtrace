@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"sort"
+
+	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/events"
 )
 
@@ -11,7 +13,7 @@ func AnalyzeCPU(events []*events.Event) (avgBlock, maxBlock float64, p50, p95, p
 	maxBlock = 0
 
 	for _, e := range events {
-		blockMs := float64(e.LatencyNS) / 1e6
+		blockMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 		blocks = append(blocks, blockMs)
 		totalBlock += blockMs
 		if blockMs > maxBlock {

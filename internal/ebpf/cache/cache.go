@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
@@ -12,22 +12,31 @@ import (
 )
 
 var (
-	processNameCache      = make(map[uint32]string)
-	processNameCacheMutex = &sync.RWMutex{}
+	globalCache *LRUCache
 )
+
+func init() {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	globalCache = NewLRUCache(config.CacheMaxSize, ttl)
+}
+
+func ResetGlobalCache() {
+	if globalCache != nil {
+		globalCache.Close()
+	}
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	globalCache = NewLRUCache(config.CacheMaxSize, ttl)
+}
 
 func GetProcessNameQuick(pid uint32) string {
 	if !validation.ValidatePID(pid) {
 		return ""
 	}
 
-	processNameCacheMutex.RLock()
-	if name, ok := processNameCache[pid]; ok {
-		processNameCacheMutex.RUnlock()
-		metricsexporter.RecordProcessCacheHit()
+	if name, ok := globalCache.Get(pid); ok {
 		return name
 	}
-	processNameCacheMutex.RUnlock()
+
 	metricsexporter.RecordProcessCacheMiss()
 
 	name := ""
@@ -62,20 +71,8 @@ func GetProcessNameQuick(pid uint32) string {
 		}
 	}
 
-	processNameCacheMutex.Lock()
-	if len(processNameCache) >= config.MaxProcessCacheSize {
-		evictCount := len(processNameCache) - int(float64(config.MaxProcessCacheSize)*config.ProcessCacheEvictionRatio)
-		for k := range processNameCache {
-			delete(processNameCache, k)
-			evictCount--
-			if evictCount <= 0 {
-				break
-			}
-		}
-	}
-	processNameCache[pid] = name
-	processNameCacheMutex.Unlock()
-
-	return validation.SanitizeProcessName(name)
+	sanitized := validation.SanitizeProcessName(name)
+	globalCache.Set(pid, sanitized)
+	return sanitized
 }
 

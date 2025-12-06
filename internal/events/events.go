@@ -105,7 +105,7 @@ func (e *Event) TypeString() string {
 }
 
 func (e *Event) FormatMessage() string {
-	latencyMs := float64(e.LatencyNS) / 1e6
+	latencyMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 	maxTargetLen := config.MaxTargetStringLength
 
 	switch e.Type {
@@ -342,7 +342,7 @@ func TCPStateString(state uint32) string {
 }
 
 func (e *Event) FormatRealtimeMessage() string {
-	latencyMs := float64(e.LatencyNS) / 1e6
+	latencyMs := float64(e.LatencyNS) / float64(config.NSPerMS)
 	maxTargetLen := config.MaxTargetStringLength
 
 	switch e.Type {
