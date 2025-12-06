@@ -239,7 +239,7 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event) error {
 	}
 }
 
-func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, cgroupPath string) error {
+func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, _ string) error {
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return fmt.Errorf("invalid duration: %w", err)
@@ -351,7 +351,7 @@ func filterEvents(ctx context.Context, in <-chan *events.Event, out chan<- *even
 	}
 }
 
-func exportReport(report string, format string, d *diagnose.Diagnostician) error {
+func exportReport(_ string, format string, d *diagnose.Diagnostician) error {
 	format = strings.ToLower(strings.TrimSpace(format))
 	switch format {
 	case "json":
