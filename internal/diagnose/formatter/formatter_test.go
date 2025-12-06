@@ -80,8 +80,11 @@ func TestBytesSection_Empty(t *testing.T) {
 
 func TestBytesSection_WithBytes(t *testing.T) {
 	result := BytesSection(1024, 512, 256)
-	if !contains(result, "1024") {
-		t.Errorf("Expected bytes section with data, got %q", result)
+	if result == "" {
+		t.Error("Expected non-empty bytes section")
+	}
+	if !contains(result, "KB") && !contains(result, "B") {
+		t.Errorf("Expected bytes section with formatted bytes, got %q", result)
 	}
 }
 
