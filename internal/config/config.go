@@ -17,6 +17,11 @@ const (
 	DefaultMetricsHost        = "127.0.0.1"
 	DefaultRingBufferSizeKB   = 2048
 	DefaultLogLevel           = "info"
+	DefaultTracingEnabled     = false
+	DefaultTracingSampleRate  = 1.0
+	DefaultOTLPEndpoint       = "http://localhost:4318"
+	DefaultJaegerEndpoint     = "http://localhost:14268/api/traces"
+	DefaultSplunkEndpoint     = "http://localhost:8088/services/collector"
 )
 
 const (
@@ -36,6 +41,15 @@ var (
 	CacheTTLSeconds        = getIntEnvOrDefault("PODTRACE_CACHE_TTL_SECONDS", DefaultCacheTTLSeconds)
 	ErrorBackoffEnabled    = getEnvOrDefault("PODTRACE_ERROR_BACKOFF_ENABLED", "true") == "true"
 	CircuitBreakerEnabled  = getEnvOrDefault("PODTRACE_CIRCUIT_BREAKER_ENABLED", "true") == "true"
+	TracingEnabled         = getEnvOrDefault("PODTRACE_TRACING_ENABLED", "false") == "true"
+	TracingSampleRate      = getFloatEnvOrDefault("PODTRACE_TRACING_SAMPLE_RATE", DefaultTracingSampleRate)
+	OTLPEndpoint           = getEnvOrDefault("PODTRACE_OTLP_ENDPOINT", DefaultOTLPEndpoint)
+	JaegerEndpoint         = getEnvOrDefault("PODTRACE_JAEGER_ENDPOINT", DefaultJaegerEndpoint)
+	SplunkEndpoint         = getEnvOrDefault("PODTRACE_SPLUNK_ENDPOINT", DefaultSplunkEndpoint)
+	SplunkToken            = getEnvOrDefault("PODTRACE_SPLUNK_TOKEN", "")
+	MaxTraceIDLength       = 32
+	MaxSpanIDLength        = 16
+	MaxTraceStateLength    = 512
 )
 
 const (

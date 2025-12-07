@@ -18,20 +18,27 @@ import (
 	"github.com/podtrace/podtrace/internal/kubernetes"
 	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
+	"github.com/podtrace/podtrace/internal/tracing"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
 var (
-	namespace          string
-	diagnoseDuration   string
-	enableMetrics      bool
-	exportFormat       string
-	eventFilter        string
-	containerName      string
-	errorRateThreshold float64
-	rttSpikeThreshold  float64
-	fsSlowThreshold    float64
-	logLevel           string
+	namespace             string
+	diagnoseDuration      string
+	enableMetrics         bool
+	enableTracing         bool
+	exportFormat          string
+	eventFilter           string
+	containerName         string
+	errorRateThreshold    float64
+	rttSpikeThreshold     float64
+	fsSlowThreshold       float64
+	logLevel              string
+	tracingOTLPEndpoint   string
+	tracingJaegerEndpoint string
+	tracingSplunkEndpoint string
+	tracingSplunkToken    string
+	tracingSampleRate     float64
 
 	resolverFactory func() (kubernetes.PodResolverInterface, error)
 	tracerFactory   func() (ebpf.TracerInterface, error)
@@ -68,6 +75,12 @@ func main() {
 	rootCmd.Flags().Float64Var(&rttSpikeThreshold, "rtt-threshold", config.DefaultRTTThreshold, "RTT spike threshold in milliseconds")
 	rootCmd.Flags().Float64Var(&fsSlowThreshold, "fs-threshold", config.DefaultFSSlowThreshold, "File system slow operation threshold in milliseconds")
 	rootCmd.Flags().StringVar(&logLevel, "log-level", "", "Set log level (debug, info, warn, error, fatal). Overrides PODTRACE_LOG_LEVEL environment variable")
+	rootCmd.Flags().BoolVar(&enableTracing, "tracing", config.DefaultTracingEnabled, "Enable distributed tracing")
+	rootCmd.Flags().StringVar(&tracingOTLPEndpoint, "tracing-otlp-endpoint", config.DefaultOTLPEndpoint, "OpenTelemetry OTLP endpoint")
+	rootCmd.Flags().StringVar(&tracingJaegerEndpoint, "tracing-jaeger-endpoint", config.DefaultJaegerEndpoint, "Jaeger endpoint")
+	rootCmd.Flags().StringVar(&tracingSplunkEndpoint, "tracing-splunk-endpoint", config.DefaultSplunkEndpoint, "Splunk HEC endpoint")
+	rootCmd.Flags().StringVar(&tracingSplunkToken, "tracing-splunk-token", "", "Splunk HEC token")
+	rootCmd.Flags().Float64Var(&tracingSampleRate, "tracing-sample-rate", config.DefaultTracingSampleRate, "Tracing sample rate (0.0-1.0)")
 
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if logLevel != "" {
@@ -83,10 +96,46 @@ func main() {
 }
 
 func runPodtrace(cmd *cobra.Command, args []string) error {
+	if enableTracing {
+		config.TracingEnabled = true
+		if tracingOTLPEndpoint != "" {
+			config.OTLPEndpoint = tracingOTLPEndpoint
+		}
+		if tracingJaegerEndpoint != "" {
+			config.JaegerEndpoint = tracingJaegerEndpoint
+		}
+		if tracingSplunkEndpoint != "" {
+			config.SplunkEndpoint = tracingSplunkEndpoint
+		}
+		if tracingSplunkToken != "" {
+			config.SplunkToken = tracingSplunkToken
+		}
+		if tracingSampleRate >= 0.0 && tracingSampleRate <= 1.0 {
+			config.TracingSampleRate = tracingSampleRate
+		}
+	}
+
 	var metricsServer *metricsexporter.Server
 	if enableMetrics {
 		metricsServer = metricsexporter.StartServer()
 		defer metricsServer.Shutdown()
+	}
+
+	tracingManager, err := tracing.NewManager()
+	if err != nil {
+		logger.Warn("Failed to create tracing manager", zap.Error(err))
+	} else if tracingManager != nil && enableTracing {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := tracingManager.Start(ctx); err != nil {
+			logger.Warn("Failed to start tracing manager", zap.Error(err))
+		} else {
+			defer func() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer shutdownCancel()
+				_ = tracingManager.Shutdown(shutdownCtx)
+			}()
+		}
 	}
 
 	podName := args[0]
@@ -209,6 +258,39 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
+	if tracingManager != nil && enableTracing {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Panic in tracing event handler", zap.Any("panic", r))
+				}
+			}()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case event, ok := <-eventChan:
+					if !ok {
+						return
+					}
+					var k8sCtx interface{}
+					if enricher != nil {
+						enriched := enricher.EnrichEvent(ctx, event)
+						if enriched != nil && enriched.KubernetesContext != nil {
+							k8sCtx = map[string]interface{}{
+								"target_pod":       enriched.KubernetesContext.TargetPodName,
+								"target_service":   enriched.KubernetesContext.ServiceName,
+								"target_namespace": enriched.KubernetesContext.TargetNamespace,
+								"target_labels":    enriched.KubernetesContext.TargetLabels,
+							}
+						}
+					}
+					tracingManager.ProcessEvent(event, k8sCtx)
+				}
+			}
+		}()
+	}
+
 	enrichedChan := eventChan
 
 	filteredChan := enrichedChan
@@ -222,13 +304,13 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	}
 
 	if diagnoseDuration != "" {
-		return runDiagnoseMode(ctx, filteredChan, diagnoseDuration, podInfo, enricher, eventsCorrelator)
+		return runDiagnoseMode(ctx, filteredChan, diagnoseDuration, podInfo, enricher, eventsCorrelator, tracingManager, enableTracing)
 	}
 
-	return runNormalMode(ctx, filteredChan, podInfo, enricher, eventsCorrelator)
+	return runNormalMode(ctx, filteredChan, podInfo, enricher, eventsCorrelator, tracingManager, enableTracing)
 }
 
-func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator) error {
+func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator, tracingManager *tracing.Manager, enableTracing bool) error {
 	logger.Info("Tracing started",
 		zap.Duration("update_interval", config.DefaultRealtimeUpdateInterval))
 
@@ -248,10 +330,11 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo 
 		case <-ctx.Done():
 			return ctx.Err()
 		case event := <-eventChan:
+			var k8sCtx map[string]interface{}
 			if enricher != nil {
 				enriched := enricher.EnrichEvent(ctx, event)
 				if enriched != nil && enriched.KubernetesContext != nil {
-					k8sCtx := map[string]interface{}{
+					k8sCtx = map[string]interface{}{
 						"target_pod":       enriched.KubernetesContext.TargetPodName,
 						"target_service":   enriched.KubernetesContext.ServiceName,
 						"target_namespace": enriched.KubernetesContext.TargetNamespace,
@@ -263,6 +346,13 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo 
 				}
 			} else {
 				diagnostician.AddEvent(event)
+			}
+			if tracingManager != nil && enableTracing {
+				var k8sCtxInterface interface{}
+				if k8sCtx != nil {
+					k8sCtxInterface = k8sCtx
+				}
+				tracingManager.ProcessEvent(event, k8sCtxInterface)
 			}
 
 		case <-ticker.C:
@@ -293,7 +383,7 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo 
 	}
 }
 
-func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator) error {
+func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durationStr string, podInfo *kubernetes.PodInfo, enricher *kubernetes.ContextEnricher, _ *kubernetes.EventsCorrelator, tracingManager *tracing.Manager, enableTracing bool) error {
 	duration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return fmt.Errorf("invalid duration: %w", err)
@@ -324,10 +414,11 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 			fmt.Println(report)
 			return ctx.Err()
 		case event := <-eventChan:
+			var k8sCtx map[string]interface{}
 			if enricher != nil {
 				enriched := enricher.EnrichEvent(ctx, event)
 				if enriched != nil && enriched.KubernetesContext != nil {
-					k8sCtx := map[string]interface{}{
+					k8sCtx = map[string]interface{}{
 						"target_pod":       enriched.KubernetesContext.TargetPodName,
 						"target_service":   enriched.KubernetesContext.ServiceName,
 						"target_namespace": enriched.KubernetesContext.TargetNamespace,
@@ -339,6 +430,13 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 				}
 			} else {
 				diagnostician.AddEvent(event)
+			}
+			if tracingManager != nil && enableTracing {
+				var k8sCtxInterface interface{}
+				if k8sCtx != nil {
+					k8sCtxInterface = k8sCtx
+				}
+				tracingManager.ProcessEvent(event, k8sCtxInterface)
 			}
 		case <-timeout:
 			diagnostician.Finish()

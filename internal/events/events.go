@@ -53,18 +53,23 @@ const (
 )
 
 type Event struct {
-	Timestamp   uint64
-	PID         uint32
-	ProcessName string
-	Type        EventType
-	LatencyNS   uint64
-	Error       int32
-	Bytes       uint64
-	TCPState    uint32
-	StackKey    uint64
-	Stack       []uint64
-	Target      string
-	Details     string
+	Timestamp    uint64
+	PID          uint32
+	ProcessName  string
+	Type         EventType
+	LatencyNS    uint64
+	Error        int32
+	Bytes        uint64
+	TCPState     uint32
+	StackKey     uint64
+	Stack        []uint64
+	Target       string
+	Details      string
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	TraceFlags   uint8
+	TraceState   string
 }
 
 func (e *Event) Latency() time.Duration {

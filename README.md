@@ -27,7 +27,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 
 ### File System Monitoring
 - **File Operations**: Tracks read, write, and fsync operations with latency analysis
-- **File Path Tracking**: Captures full file paths for filesystem operations (optional, requires kernel 5.6+ with `bpf_d_path` support)
+- **File Path Tracking**: Captures full file paths for filesystem operations
 - **I/O Bandwidth**: Monitors bytes transferred for file read/write operations
 - **Throughput Analysis**: Calculates average throughput and peak transfer rates
 
@@ -36,7 +36,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **OOM Kill Detection**: Tracks out-of-memory kills with memory usage details
 
 ### Application Layer
-- **HTTP Tracing**: Framework for HTTP request/response tracking via uprobes (requires per-application configuration)
+- **HTTP Tracing**: HTTP request/response tracking via uprobes
 - **DNS Tracking**: Monitors DNS lookups with latency and error tracking
 - **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution with pattern extraction and latency analysis
 - **TLS/SSL Handshake Tracking**: Track TLS handshake latency, errors and failures
@@ -51,6 +51,13 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **Network Reliability**: Monitors TCP retransmissions and network device errors for network quality diagnostics
 - **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution patterns and latency
 - **Error Correlation with Root Cause Analysis**: Correlates errors with operations and Kubernetes context
+
+### Distributed Tracing
+- **Trace Context Extraction**: Automatically extracts trace context from HTTP/HTTP2 headers and gRPC metadata
+- **Event Correlation**: Groups events by trace ID to build complete request flows across services
+- **Request Flow Graphs**: Builds directed graphs showing service interactions with latency and error metrics
+- **Multiple Exporters**: Supports OpenTelemetry (OTLP), Jaeger, and Splunk HEC
+- **Sampling Support**: Configurable sampling rates to control export volume
 
 ### Diagnostics
 - **Diagnose Mode**: Collects events for a specified duration and generates a comprehensive summary report
@@ -121,10 +128,43 @@ After building, set capabilities to run without sudo:
 sudo ./scripts/setup-capabilities.sh
 ```
 
+---
+
+## Distributed Tracing
+
+`podtrace` supports distributed tracing to correlate events across services in your Kubernetes cluster. Traces are automatically extracted from HTTP headers and exported to popular observability backends.
+
+### Quick Start
+
+```bash
+# Enable tracing with OpenTelemetry
+./bin/podtrace -n production my-pod \
+  --tracing \
+  --tracing-otlp-endpoint http://otel-collector:4318
+
+# Enable tracing with Jaeger
+./bin/podtrace -n production my-pod \
+  --tracing \
+  --tracing-jaeger-endpoint http://jaeger:14268/api/traces
+
+# Enable tracing with Splunk
+./bin/podtrace -n production my-pod \
+  --tracing \
+  --tracing-splunk-endpoint https://splunk:8088/services/collector \
+  --tracing-splunk-token YOUR_TOKEN
+```
+
+### Features
+
+- **Automatic Trace Extraction**: Extracts W3C Trace Context, B3, and Splunk headers
+- **Service Correlation**: Groups events by trace ID across multiple services
+- **Request Flow Graphs**: Visualizes service interactions
+- **Multiple Exporters**: OTLP, Jaeger, and Splunk HEC support
+- **Sampling**: Configurable sampling rates (0.0-1.0)
 
 ---
 
-## Podtrace Prometheus & Grafana Integration
+## Prometheus & Grafana Integration
 
 `podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking (TCP/UDP), DNS, CPU scheduling, file system operations, memory events, and HTTP tracing, all labeled per process and event type.
 
