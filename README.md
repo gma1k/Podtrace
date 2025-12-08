@@ -27,7 +27,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 
 ### File System Monitoring
 - **File Operations**: Tracks read, write, and fsync operations with latency analysis
-- **File Path Tracking**: Captures full file paths for filesystem operations
+- **File Path Tracking**: Captures full file paths using multi-strategy resolution (inode-based correlation with `open()` events)
 - **I/O Bandwidth**: Monitors bytes transferred for file read/write operations
 - **Throughput Analysis**: Calculates average throughput and peak transfer rates
 

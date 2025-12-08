@@ -36,7 +36,7 @@ const (
 )
 
 var (
-	EventChannelBufferSize = getIntEnvOrDefault("PODTRACE_EVENT_BUFFER_SIZE", 100)
+	EventChannelBufferSize = getIntEnvOrDefault("PODTRACE_EVENT_BUFFER_SIZE", 10000)
 	CacheMaxSize           = getIntEnvOrDefault("PODTRACE_CACHE_MAX_SIZE", MaxProcessCacheSize)
 	CacheTTLSeconds        = getIntEnvOrDefault("PODTRACE_CACHE_TTL_SECONDS", DefaultCacheTTLSeconds)
 	ErrorBackoffEnabled    = getEnvOrDefault("PODTRACE_ERROR_BACKOFF_ENABLED", "true") == "true"

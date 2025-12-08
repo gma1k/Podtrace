@@ -37,12 +37,13 @@ eBPF maps are used for communication between kernel and user space:
    - Key: `(pid << 32) | tid`
    - Value: Connection string (IP:port or URL)
 
-5. **File Paths (`file_paths`)**
+5. **File Inodes (`file_inodes`)**
    - Type: `BPF_MAP_TYPE_HASH`
    - Size: 1024 entries
-   - Purpose: Store file paths for filesystem operations
+   - Purpose: Store inode+device ID for filesystem operations
    - Key: `(pid << 32) | tid`
-   - Value: File path string (max 128 chars)
+   - Value: `(device_id << 32) | inode_number` (packed as u64)
+   - Note: Path resolution happens in userspace by correlating with `open()` events
 
 6. **TCP Sockets (`tcp_sockets`)**
    - Type: `BPF_MAP_TYPE_HASH`
@@ -157,8 +158,12 @@ Kprobes attach to kernel functions:
 
 **File System Tracing:**
 - `vfs_read` / `vfs_write` / `vfs_fsync`: Entry and return probes
-  - Entry: Record start time, extract file path
-  - Return: Calculate latency
+  - Entry: Record start time, extract inode+device ID from `struct file*`
+  - Return: Calculate latency, encode inode as `ino:DEV/INO` string
+- `do_sys_openat2`: Entry and return probes
+  - Entry: Record start time, capture file path from function parameter
+  - Return: Calculate latency, emit `EventOpen` with full path
+- Path Resolution: Userspace correlates `open()` paths with `read()`/`write()` by inode
 
 ### Uprobes
 

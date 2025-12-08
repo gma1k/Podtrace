@@ -12,8 +12,7 @@ BINARY = bin/podtrace
 # For Go < 1.21, user needs to upgrade Go manually
 export GOTOOLCHAIN=auto
 
-ENABLE_FILE_PATH_TRACKING ?= 0
-BPF_CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v3 -DENABLE_FILE_PATH_TRACKING=$(ENABLE_FILE_PATH_TRACKING)
+BPF_CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v3
 
 all: check-go build
 
