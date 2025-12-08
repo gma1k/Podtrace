@@ -402,6 +402,9 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 		diagnostician = diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
 	}
 	timeout := time.After(duration)
+	batchTicker := time.NewTicker(10 * time.Millisecond)
+	defer batchTicker.Stop()
+	eventBatch := make([]*events.Event, 0, 100)
 
 	for {
 		select {
@@ -414,29 +417,65 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 			fmt.Println(report)
 			return ctx.Err()
 		case event := <-eventChan:
-			var k8sCtx map[string]interface{}
-			if enricher != nil {
-				enriched := enricher.EnrichEvent(ctx, event)
-				if enriched != nil && enriched.KubernetesContext != nil {
-					k8sCtx = map[string]interface{}{
-						"target_pod":       enriched.KubernetesContext.TargetPodName,
-						"target_service":   enriched.KubernetesContext.ServiceName,
-						"target_namespace": enriched.KubernetesContext.TargetNamespace,
-						"target_labels":    enriched.KubernetesContext.TargetLabels,
+			eventBatch = append(eventBatch, event)
+			if len(eventBatch) >= 100 {
+				for _, e := range eventBatch {
+					var k8sCtx map[string]interface{}
+					if enricher != nil {
+						enriched := enricher.EnrichEvent(ctx, e)
+						if enriched != nil && enriched.KubernetesContext != nil {
+							k8sCtx = map[string]interface{}{
+								"target_pod":       enriched.KubernetesContext.TargetPodName,
+								"target_service":   enriched.KubernetesContext.ServiceName,
+								"target_namespace": enriched.KubernetesContext.TargetNamespace,
+								"target_labels":    enriched.KubernetesContext.TargetLabels,
+							}
+							diagnostician.AddEventWithContext(e, k8sCtx)
+						} else {
+							diagnostician.AddEvent(e)
+						}
+					} else {
+						diagnostician.AddEvent(e)
 					}
-					diagnostician.AddEventWithContext(event, k8sCtx)
-				} else {
-					diagnostician.AddEvent(event)
+					if tracingManager != nil && enableTracing {
+						var k8sCtxInterface interface{}
+						if k8sCtx != nil {
+							k8sCtxInterface = k8sCtx
+						}
+						tracingManager.ProcessEvent(e, k8sCtxInterface)
+					}
 				}
-			} else {
-				diagnostician.AddEvent(event)
+				eventBatch = eventBatch[:0]
 			}
-			if tracingManager != nil && enableTracing {
-				var k8sCtxInterface interface{}
-				if k8sCtx != nil {
-					k8sCtxInterface = k8sCtx
+		case <-batchTicker.C:
+			if len(eventBatch) > 0 {
+				for _, e := range eventBatch {
+					var k8sCtx map[string]interface{}
+					if enricher != nil {
+						enriched := enricher.EnrichEvent(ctx, e)
+						if enriched != nil && enriched.KubernetesContext != nil {
+							k8sCtx = map[string]interface{}{
+								"target_pod":       enriched.KubernetesContext.TargetPodName,
+								"target_service":   enriched.KubernetesContext.ServiceName,
+								"target_namespace": enriched.KubernetesContext.TargetNamespace,
+								"target_labels":    enriched.KubernetesContext.TargetLabels,
+							}
+							diagnostician.AddEventWithContext(e, k8sCtx)
+						} else {
+							diagnostician.AddEvent(e)
+						}
+					} else {
+						diagnostician.AddEvent(e)
+					}
+					if tracingManager != nil && enableTracing {
+						var k8sCtxInterface interface{}
+						if k8sCtx != nil {
+							k8sCtxInterface = k8sCtx
+						}
+						tracingManager.ProcessEvent(e, k8sCtxInterface)
+					}
 				}
-				tracingManager.ProcessEvent(event, k8sCtxInterface)
+				eventBatch = eventBatch[:0]
 			}
 		case <-timeout:
 			diagnostician.Finish()

@@ -62,7 +62,7 @@ The eBPF programs run in the kernel and trace system calls and kernel events. Th
 - **events.h**: Event types and structures
 - **helpers.h**: Helper functions
 - **network.c**: Network probes (TCP, UDP, DNS, HTTP, TCP retransmissions, network errors)
-- **filesystem.c**: Filesystem probes (with optional file path tracking)
+- **filesystem.c**: Filesystem probes with inode-based path resolution
 - **cpu.c**: CPU/scheduling probes and lock contention tracking
 - **memory.c**: Memory probes
 - **syscalls.c**: System call probes (execve, fork, open, close)
