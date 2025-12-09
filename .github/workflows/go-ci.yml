@@ -56,12 +56,19 @@ jobs:
       - name: Run unit tests with race detection
         timeout-minutes: 15
         run: |
-          set -e
           echo "Running tests with race detection..."
-          GOTOOLCHAIN=auto go test -v -race -timeout=10m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... || {
-            echo "::error::Unit tests failed"
-            exit 1
-          }
+          rm -f coverage.out coverage.tmp
+          set +e
+          GOTOOLCHAIN=auto go test -v -race -timeout=10m -coverprofile=coverage.tmp -covermode=atomic -p=1 ./cmd/... ./internal/...
+          TEST_EXIT_CODE=$?
+          set -e
+          if [ -f coverage.tmp ]; then
+            mv coverage.tmp coverage.out
+          fi
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "::error::Unit tests failed with exit code $TEST_EXIT_CODE"
+            exit $TEST_EXIT_CODE
+          fi
           echo "Running test/... tests (optional)..."
           GOTOOLCHAIN=auto go test -v -race -timeout=5m ./test/... || true
 

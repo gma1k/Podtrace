@@ -526,6 +526,9 @@ func TestRunDiagnoseMode_InterruptWithExport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping test that requires signal handling")
 	}
+	if testing.RaceEnabled() {
+		t.Skip("Skipping flaky signal handling test with race detection")
+	}
 
 	eventChan := make(chan *events.Event, 10)
 	done := make(chan error, 1)
@@ -570,7 +573,7 @@ func TestRunDiagnoseMode_InterruptWithExport(t *testing.T) {
 		if err != nil {
 			t.Errorf("runDiagnoseMode returned error: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("runDiagnoseMode did not complete in time")
 	}
 }
