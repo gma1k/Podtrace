@@ -370,7 +370,7 @@ func GenerateMemorySection(d Diagnostician, duration time.Duration) string {
 		report += formatPageFaults(pageFaultEvents, duration, d)
 	}
 	if len(oomKillEvents) > 0 {
-		report += formatOOMKills(oomKillEvents, d)
+		report += formatOOMKills(oomKillEvents)
 	}
 	report += "\n"
 	return report
@@ -398,7 +398,7 @@ func buildErrorCounts(pageFaultEvents []*events.Event) map[int32]int {
 	return errorCounts
 }
 
-func formatOOMKills(oomKillEvents []*events.Event, d Diagnostician) string {
+func formatOOMKills(oomKillEvents []*events.Event) string {
 	var result string
 	result += fmt.Sprintf("  OOM kills: %d\n", len(oomKillEvents))
 	var totalMem uint64
@@ -431,7 +431,7 @@ func GenerateIssuesSection(d Diagnostician) string {
 	}
 
 	var report string
-	report += "Potential Issues Detected:\n"
+	report += formatter.SectionHeader("Potential Issues Detected")
 	for _, issue := range issues {
 		report += fmt.Sprintf("  %s\n", issue)
 	}
@@ -439,11 +439,109 @@ func GenerateIssuesSection(d Diagnostician) string {
 	return report
 }
 
+func GenerateResourceSection(d Diagnostician) string {
+	resourceEvents := d.FilterEvents(events.EventResourceLimit)
+	if len(resourceEvents) == 0 {
+		return ""
+	}
+
+	var report string
+	report += formatter.SectionHeader("Resource Limits")
+
+	resourceStats := make(map[uint32]struct {
+		count       int
+		maxUtil     uint32
+		avgUtil     float64
+		totalUsage  uint64
+		totalLimit  uint64
+		alertCounts map[string]int
+	})
+
+	for _, e := range resourceEvents {
+		resourceType := e.TCPState
+		utilization := uint32(e.Error)
+		usage := e.Bytes
+
+		stats, ok := resourceStats[resourceType]
+		if !ok {
+			stats = struct {
+				count       int
+				maxUtil     uint32
+				avgUtil     float64
+				totalUsage  uint64
+				totalLimit  uint64
+				alertCounts map[string]int
+			}{
+				alertCounts: make(map[string]int),
+			}
+		}
+
+		stats.count++
+		if utilization > stats.maxUtil {
+			stats.maxUtil = utilization
+		}
+		stats.avgUtil = (stats.avgUtil*float64(stats.count-1) + float64(utilization)) / float64(stats.count)
+		stats.totalUsage += usage
+
+		if utilization >= 95 {
+			stats.alertCounts["EMERGENCY"]++
+		} else if utilization >= 90 {
+			stats.alertCounts["CRITICAL"]++
+		} else if utilization >= 80 {
+			stats.alertCounts["WARNING"]++
+		}
+
+		resourceStats[resourceType] = stats
+	}
+
+	resourceNames := map[uint32]string{
+		0: "CPU",
+		1: "Memory",
+		2: "I/O",
+	}
+
+	for resourceType, stats := range resourceStats {
+		resourceName := resourceNames[resourceType]
+		if resourceName == "" {
+			resourceName = fmt.Sprintf("Resource-%d", resourceType)
+		}
+
+		report += fmt.Sprintf("  %s:\n", resourceName)
+		report += fmt.Sprintf("    Events: %d\n", stats.count)
+		report += fmt.Sprintf("    Max utilization: %d%%\n", stats.maxUtil)
+		report += fmt.Sprintf("    Average utilization: %.1f%%\n", stats.avgUtil)
+
+		if stats.totalUsage > 0 {
+			report += fmt.Sprintf("    Current usage: %s\n", analyzer.FormatBytes(stats.totalUsage))
+		}
+
+		if len(stats.alertCounts) > 0 {
+			report += "    Alerts:\n"
+			for severity, count := range stats.alertCounts {
+				report += fmt.Sprintf("      - %s: %d\n", severity, count)
+			}
+		}
+
+		if stats.maxUtil >= 95 {
+			report += "    Status: EMERGENCY - Resource limit nearly exceeded!\n"
+		} else if stats.maxUtil >= 90 {
+			report += "    Status: CRITICAL - Resource limit approaching!\n"
+		} else if stats.maxUtil >= 80 {
+			report += "    Status: WARNING - Resource usage high\n"
+		} else {
+			report += "    Status: OK\n"
+		}
+		report += "\n"
+	}
+
+	return report
+}
+
 func GenerateApplicationTracing(d Diagnostician, duration time.Duration) string {
 	var report string
 
 	allEvents := d.GetEvents()
-	report += formatProcessActivity(allEvents, d)
+	report += formatProcessActivity(allEvents)
 	report += formatTimeline(allEvents, d.StartTime(), duration)
 	report += formatBursts(allEvents, d.StartTime(), duration)
 	report += formatConnectionPatterns(d, duration)
@@ -452,7 +550,7 @@ func GenerateApplicationTracing(d Diagnostician, duration time.Duration) string 
 	return report
 }
 
-func formatProcessActivity(allEvents []*events.Event, d Diagnostician) string {
+func formatProcessActivity(allEvents []*events.Event) string {
 	pidActivity := tracker.AnalyzeProcessActivity(allEvents)
 	if len(pidActivity) == 0 {
 		return ""
@@ -634,4 +732,3 @@ func buildFileCounts(openEvents []*events.Event) map[string]int {
 	}
 	return fileCounts
 }
-

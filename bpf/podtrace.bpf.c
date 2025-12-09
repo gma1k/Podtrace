@@ -10,5 +10,6 @@
 #include "cpu.c"
 #include "memory.c"
 #include "syscalls.c"
+#include "resources.c"
 
 char LICENSE[] SEC("license") = "GPL";

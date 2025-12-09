@@ -43,26 +43,45 @@ jobs:
         run: GOTOOLCHAIN=auto go mod download
 
       - name: Run golangci-lint
+        timeout-minutes: 10
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=10m
           
       - name: Build
+        timeout-minutes: 5
         run: GOTOOLCHAIN=auto go build ./...
 
       - name: Run unit tests with race detection
+        timeout-minutes: 15
         run: |
-          GOTOOLCHAIN=auto go test -v -race -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
-          GOTOOLCHAIN=auto go test -v -race ./test/... || true
+          set -e
+          echo "Running tests with race detection..."
+          GOTOOLCHAIN=auto go test -v -race -timeout=10m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... || {
+            echo "::error::Unit tests failed"
+            exit 1
+          }
+          echo "Running test/... tests (optional)..."
+          GOTOOLCHAIN=auto go test -v -race -timeout=5m ./test/... || true
 
       - name: Generate coverage report
+        if: always()
         run: |
-          GOTOOLCHAIN=auto go tool cover -html=coverage.out -o coverage.html || true
-          GOTOOLCHAIN=auto go tool cover -func=coverage.out | tail -1
+          if [ -f coverage.out ]; then
+            GOTOOLCHAIN=auto go tool cover -html=coverage.out -o coverage.html || true
+            GOTOOLCHAIN=auto go tool cover -func=coverage.out | tail -1
+          else
+            echo "::warning::Coverage file not found, skipping coverage report"
+          fi
 
       - name: Check coverage threshold
+        if: always()
         run: |
+          if [ ! -f coverage.out ]; then
+            echo "::warning::Coverage file not found, skipping coverage check"
+            exit 0
+          fi
           COVERAGE=$(GOTOOLCHAIN=auto go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//' || echo "0")
           echo "Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < 70" | bc -l 2>/dev/null || echo "1") )); then

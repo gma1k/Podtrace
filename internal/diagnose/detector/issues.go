@@ -50,5 +50,46 @@ func DetectIssues(allEvents []*events.Event, errorRateThreshold, rttSpikeThresho
 		}
 	}
 
+	var resourceAlerts = make(map[string]int)
+	for _, e := range allEvents {
+		if e.Type == events.EventResourceLimit {
+			utilization := uint32(e.Error)
+			resourceType := e.TCPState
+			
+			var resourceName string
+			switch resourceType {
+			case 0:
+				resourceName = "CPU"
+			case 1:
+				resourceName = "Memory"
+			case 2:
+				resourceName = "I/O"
+			default:
+				resourceName = "Resource"
+			}
+			
+			key := resourceName
+			if current, ok := resourceAlerts[key]; !ok || utilization > uint32(current) {
+				resourceAlerts[key] = int(utilization)
+			}
+		}
+	}
+	
+	for resourceName, maxUtil := range resourceAlerts {
+		var severity string
+		if maxUtil >= 95 {
+			severity = "EMERGENCY"
+		} else if maxUtil >= 90 {
+			severity = "CRITICAL"
+		} else if maxUtil >= 80 {
+			severity = "WARNING"
+		}
+		
+		if severity != "" {
+			issues = append(issues, fmt.Sprintf("Resource limit %s: %s - %d%% utilization (threshold: 80%% warning, 90%% critical, 95%% emergency)", 
+				severity, resourceName, maxUtil))
+		}
+	}
+
 	return issues
 }

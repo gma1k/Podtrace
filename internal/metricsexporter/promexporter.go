@@ -192,6 +192,38 @@ var (
 		},
 		[]string{"type", "process_name", "namespace"},
 	)
+
+	resourceLimitBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_resource_limit_bytes",
+			Help: "Resource limit in bytes (or CPU quota in microseconds).",
+		},
+		[]string{"resource_type", "namespace"},
+	)
+
+	resourceUsageBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_resource_usage_bytes",
+			Help: "Current resource usage in bytes (or CPU time in microseconds).",
+		},
+		[]string{"resource_type", "namespace"},
+	)
+
+	resourceUtilizationPercentGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_resource_utilization_percent",
+			Help: "Resource utilization percentage (usage/limit * 100).",
+		},
+		[]string{"resource_type", "namespace"},
+	)
+
+	resourceAlertLevelGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_resource_alert_level",
+			Help: "Resource alert level: 0=none, 1=warning (80%), 2=critical (90%), 3=emergency (95%).",
+		},
+		[]string{"resource_type", "namespace"},
+	)
 )
 
 func init() {
@@ -218,6 +250,10 @@ func init() {
 	prometheus.MustRegister(tlsGauge)
 	prometheus.MustRegister(tlsHistogram)
 	prometheus.MustRegister(tlsHandshakesCounter)
+	prometheus.MustRegister(resourceLimitBytesGauge)
+	prometheus.MustRegister(resourceUsageBytesGauge)
+	prometheus.MustRegister(resourceUtilizationPercentGauge)
+	prometheus.MustRegister(resourceAlertLevelGauge)
 }
 
 func HandleEvents(ch <-chan *events.Event) {
@@ -283,6 +319,9 @@ func HandleEventWithContext(e *events.Event, k8sContext map[string]interface{}) 
 
 	case events.EventTLSHandshake:
 		ExportTLSMetricWithContext(e, namespace)
+
+	case events.EventResourceLimit:
+		ExportResourceLimitMetricWithContext(e, namespace)
 	}
 }
 
@@ -485,4 +524,68 @@ func ExportTLSMetricWithContext(e *events.Event, namespace string) {
 	tlsGauge.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Set(latencySec)
 	tlsHistogram.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Observe(latencySec)
 	tlsHandshakesCounter.WithLabelValues(e.TypeString(), e.ProcessName, namespace).Inc()
+}
+
+func ExportResourceLimitMetric(e *events.Event) {
+	ExportResourceLimitMetricWithContext(e, "")
+}
+
+func ExportResourceLimitMetricWithContext(e *events.Event, namespace string) {
+	if e == nil {
+		return
+	}
+
+	// Resource type is stored in TCPState field
+	resourceType := e.TCPState
+	var resourceTypeLabel string
+	switch resourceType {
+	case 0:
+		resourceTypeLabel = "cpu"
+	case 1:
+		resourceTypeLabel = "memory"
+	case 2:
+		resourceTypeLabel = "io"
+	default:
+		resourceTypeLabel = "unknown"
+	}
+
+	// Utilization percentage is stored in Error field
+	utilization := float64(e.Error)
+
+	// Current usage is stored in Bytes field
+	usageBytes := float64(e.Bytes)
+
+	// Calculate limit from usage and utilization
+	// limit = (usage * 100) / utilization
+	var limitBytes float64
+	if utilization > 0 {
+		limitBytes = (usageBytes * 100.0) / utilization
+	}
+
+	// Set metrics
+	resourceLimitBytesGauge.WithLabelValues(resourceTypeLabel, namespace).Set(limitBytes)
+	resourceUsageBytesGauge.WithLabelValues(resourceTypeLabel, namespace).Set(usageBytes)
+	resourceUtilizationPercentGauge.WithLabelValues(resourceTypeLabel, namespace).Set(utilization)
+
+	// Determine alert level
+	var alertLevel float64
+	if utilization >= 95 {
+		alertLevel = 3 // Emergency
+	} else if utilization >= 90 {
+		alertLevel = 2 // Critical
+	} else if utilization >= 80 {
+		alertLevel = 1 // Warning
+	} else {
+		alertLevel = 0 // None
+	}
+	resourceAlertLevelGauge.WithLabelValues(resourceTypeLabel, namespace).Set(alertLevel)
+}
+
+// ExportResourceMetrics exports metrics directly from ResourceMonitor
+// This allows periodic updates even when no events are emitted
+func ExportResourceMetrics(resourceType string, namespace string, limitBytes, usageBytes uint64, utilizationPercent float64, alertLevel uint32) {
+	resourceLimitBytesGauge.WithLabelValues(resourceType, namespace).Set(float64(limitBytes))
+	resourceUsageBytesGauge.WithLabelValues(resourceType, namespace).Set(float64(usageBytes))
+	resourceUtilizationPercentGauge.WithLabelValues(resourceType, namespace).Set(utilizationPercent)
+	resourceAlertLevelGauge.WithLabelValues(resourceType, namespace).Set(float64(alertLevel))
 }

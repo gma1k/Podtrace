@@ -1,6 +1,7 @@
 package report
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -416,6 +417,85 @@ func TestCalculateThroughput(t *testing.T) {
 	throughput = calculateThroughput(1024, 0)
 	if throughput != 0 {
 		t.Errorf("Expected throughput 0 for zero duration, got %d", throughput)
+	}
+}
+
+func TestGenerateResourceSection_Empty(t *testing.T) {
+	d := &mockDiagnostician{
+		events:    []*events.Event{},
+		startTime: time.Now(),
+		endTime:   time.Now().Add(1 * time.Second),
+	}
+	result := GenerateResourceSection(d)
+	if result != "" {
+		t.Error("Expected empty resource section for no events")
+	}
+}
+
+func TestGenerateResourceSection_WithEvents(t *testing.T) {
+	d := &mockDiagnostician{
+		events: []*events.Event{
+			{Type: events.EventResourceLimit, TCPState: 0, Error: 85, Bytes: 850000000},
+			{Type: events.EventResourceLimit, TCPState: 1, Error: 92, Bytes: 460000000},
+			{Type: events.EventResourceLimit, TCPState: 2, Error: 78, Bytes: 780000000},
+		},
+		startTime: time.Now(),
+		endTime:   time.Now().Add(1 * time.Second),
+	}
+	result := GenerateResourceSection(d)
+	if result == "" {
+		t.Error("Expected resource section")
+	}
+	if !strings.Contains(result, "CPU") {
+		t.Error("Expected CPU in resource section")
+	}
+	if !strings.Contains(result, "Memory") {
+		t.Error("Expected Memory in resource section")
+	}
+	if !strings.Contains(result, "I/O") {
+		t.Error("Expected I/O in resource section")
+	}
+}
+
+func TestGenerateResourceSection_WarningLevel(t *testing.T) {
+	d := &mockDiagnostician{
+		events: []*events.Event{
+			{Type: events.EventResourceLimit, TCPState: 0, Error: 85, Bytes: 850000000},
+		},
+		startTime: time.Now(),
+		endTime:   time.Now().Add(1 * time.Second),
+	}
+	result := GenerateResourceSection(d)
+	if !strings.Contains(result, "WARNING") {
+		t.Error("Expected WARNING status in resource section")
+	}
+}
+
+func TestGenerateResourceSection_CriticalLevel(t *testing.T) {
+	d := &mockDiagnostician{
+		events: []*events.Event{
+			{Type: events.EventResourceLimit, TCPState: 1, Error: 92, Bytes: 460000000},
+		},
+		startTime: time.Now(),
+		endTime:   time.Now().Add(1 * time.Second),
+	}
+	result := GenerateResourceSection(d)
+	if !strings.Contains(result, "CRITICAL") {
+		t.Error("Expected CRITICAL status in resource section")
+	}
+}
+
+func TestGenerateResourceSection_EmergencyLevel(t *testing.T) {
+	d := &mockDiagnostician{
+		events: []*events.Event{
+			{Type: events.EventResourceLimit, TCPState: 2, Error: 97, Bytes: 970000000},
+		},
+		startTime: time.Now(),
+		endTime:   time.Now().Add(1 * time.Second),
+	}
+	result := GenerateResourceSection(d)
+	if !strings.Contains(result, "EMERGENCY") {
+		t.Error("Expected EMERGENCY status in resource section")
 	}
 }
 

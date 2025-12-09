@@ -31,6 +31,7 @@ enum event_type {
 	EVENT_CLOSE,
 	EVENT_TLS_HANDSHAKE,
 	EVENT_TLS_ERROR,
+	EVENT_RESOURCE_LIMIT,
 };
 
 struct event {

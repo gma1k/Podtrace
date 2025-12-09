@@ -50,6 +50,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **Syscall Tracing**: Tracks process lifecycle via execve, fork/clone, open/openat, and close syscalls with file descriptor leak detection
 - **Network Reliability**: Monitors TCP retransmissions and network device errors for network quality diagnostics
 - **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution patterns and latency
+- **Resource Limit Monitoring**: Monitor resource usage vs limits
 - **Error Correlation with Root Cause Analysis**: Correlates errors with operations and Kubernetes context
 
 ### Distributed Tracing
@@ -119,6 +120,8 @@ The diagnose mode generates a comprehensive report including:
 - **Network Reliability**: TCP retransmission tracking and network device error monitoring
 - **Database Query Performance**: Query pattern analysis and execution latency (PostgreSQL, MySQL)
 - **Potential Issues**: Automatic detection of high error rates and performance problems
+- **Resource Limit Monitoring**: Monitor resource usage vs limits
+- **Error Correlation with Root Cause Analysis**: Correlates errors with operations and Kubernetes context
 
 ## Running without sudo
 
@@ -209,6 +212,10 @@ All metrics are exported per process and per event type:
 | `podtrace_filesystem_bytes_total`       | Total bytes transferred via filesystem ops      |
 | `podtrace_cpu_block_seconds_gauge`       | Latest CPU block time                           |
 | `podtrace_cpu_block_seconds_histogram`   | Distribution of CPU block times                 |
+| `podtrace_resource_limit_bytes`          | Resource limit in bytes (CPU/Memory/I/O)        |
+| `podtrace_resource_usage_bytes`          | Current resource usage in bytes                 |
+| `podtrace_resource_utilization_percent`  | Resource utilization percentage                  |
+| `podtrace_resource_alert_level`          | Resource alert level (0-3: none/warning/critical/emergency) |
 
 ## Grafana Dashboard
 

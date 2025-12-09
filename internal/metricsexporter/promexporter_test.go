@@ -271,3 +271,90 @@ func TestServer_Shutdown(t *testing.T) {
 
 	server.Shutdown()
 }
+
+func TestExportResourceLimitMetric(t *testing.T) {
+	tests := []struct {
+		name         string
+		event        *events.Event
+		resourceType uint32
+		utilization  int32
+	}{
+		{"CPU warning", &events.Event{Type: events.EventResourceLimit, TCPState: 0, Error: 85, Bytes: 850000000}, 0, 85},
+		{"Memory critical", &events.Event{Type: events.EventResourceLimit, TCPState: 1, Error: 92, Bytes: 460000000}, 1, 92},
+		{"IO emergency", &events.Event{Type: events.EventResourceLimit, TCPState: 2, Error: 97, Bytes: 970000000}, 2, 97},
+		{"CPU below threshold", &events.Event{Type: events.EventResourceLimit, TCPState: 0, Error: 50, Bytes: 500000000}, 0, 50},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ExportResourceLimitMetric(tt.event)
+		})
+	}
+}
+
+func TestExportResourceLimitMetricWithContext(t *testing.T) {
+	event := &events.Event{
+		Type:      events.EventResourceLimit,
+		TCPState:  1,
+		Error:     90,
+		Bytes:     450000000,
+	}
+
+	ExportResourceLimitMetricWithContext(event, "test-namespace")
+}
+
+func TestExportResourceMetrics(t *testing.T) {
+	tests := []struct {
+		name              string
+		resourceType      string
+		namespace         string
+		limitBytes        uint64
+		usageBytes        uint64
+		utilizationPercent float64
+		alertLevel        uint32
+	}{
+		{"CPU warning", "cpu", "default", 1000000000, 850000000, 85.0, 1},
+		{"Memory critical", "memory", "production", 500000000, 460000000, 92.0, 2},
+		{"IO emergency", "io", "test", 1000000000, 970000000, 97.0, 3},
+		{"CPU no alert", "cpu", "default", 1000000000, 500000000, 50.0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ExportResourceMetrics(
+				tt.resourceType,
+				tt.namespace,
+				tt.limitBytes,
+				tt.usageBytes,
+				tt.utilizationPercent,
+				tt.alertLevel,
+			)
+		})
+	}
+}
+
+func TestHandleEvent_ResourceLimit(t *testing.T) {
+	event := &events.Event{
+		Type:      events.EventResourceLimit,
+		TCPState:  0,
+		Error:     85,
+		Bytes:     850000000,
+	}
+
+	HandleEvent(event)
+}
+
+func TestHandleEventWithContext_ResourceLimit(t *testing.T) {
+	event := &events.Event{
+		Type:      events.EventResourceLimit,
+		TCPState:  1,
+		Error:     92,
+		Bytes:     460000000,
+	}
+
+	k8sContext := map[string]interface{}{
+		"namespace": "test-ns",
+	}
+
+	HandleEventWithContext(event, k8sContext)
+}

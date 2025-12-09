@@ -50,6 +50,7 @@ const (
 	EventClose
 	EventTLSHandshake
 	EventTLSError
+	EventResourceLimit
 )
 
 type Event struct {
@@ -108,6 +109,8 @@ func (e *Event) TypeString() string {
 		return "PROC"
 	case EventTLSHandshake, EventTLSError:
 		return "TLS"
+	case EventResourceLimit:
+		return "RESOURCE"
 	default:
 		return "UNKNOWN"
 	}
@@ -333,6 +336,35 @@ func (e *Event) FormatMessage() string {
 	case EventTLSError:
 		return fmt.Sprintf("[TLS] error: %d", e.Error)
 
+	case EventResourceLimit:
+		utilization := uint32(e.Error)
+		resourceType := e.TCPState
+		
+		var resourceName string
+		switch resourceType {
+		case 0:
+			resourceName = "CPU"
+		case 1:
+			resourceName = "Memory"
+		case 2:
+			resourceName = "I/O"
+		default:
+			resourceName = "Resource"
+		}
+		
+		var severity string
+		if utilization >= 95 {
+			severity = "EMERGENCY"
+		} else if utilization >= 90 {
+			severity = "CRITICAL"
+		} else if utilization >= 80 {
+			severity = "WARNING"
+		} else {
+			return ""
+		}
+		
+		return fmt.Sprintf("[RESOURCE] %s %s utilization: %d%%", severity, resourceName, utilization)
+
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
 	}
@@ -531,6 +563,35 @@ func (e *Event) FormatRealtimeMessage() string {
 
 	case EventTLSError:
 		return fmt.Sprintf("[TLS] error: %d", e.Error)
+
+	case EventResourceLimit:
+		utilization := uint32(e.Error)
+		resourceType := e.TCPState
+		
+		var resourceName string
+		switch resourceType {
+		case 0:
+			resourceName = "CPU"
+		case 1:
+			resourceName = "Memory"
+		case 2:
+			resourceName = "I/O"
+		default:
+			resourceName = "Resource"
+		}
+		
+		var severity string
+		if utilization >= 95 {
+			severity = "EMERGENCY"
+		} else if utilization >= 90 {
+			severity = "CRITICAL"
+		} else if utilization >= 80 {
+			severity = "WARNING"
+		} else {
+			return ""
+		}
+		
+		return fmt.Sprintf("[RESOURCE] %s %s utilization: %d%%", severity, resourceName, utilization)
 
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)

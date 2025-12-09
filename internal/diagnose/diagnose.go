@@ -218,6 +218,7 @@ func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
 	result += report.GenerateCPUSection(d, duration)
 	result += report.GenerateTCPStateSection(d, duration)
 	result += report.GenerateMemorySection(d, duration)
+	result += report.GenerateResourceSection(d)
 	result += profiling.GenerateCPUUsageReport(allEvents, duration)
 	result += stacktrace.GenerateStackTraceSectionWithContext(d, ctx)
 	result += report.GenerateSyscallSection(d, duration)

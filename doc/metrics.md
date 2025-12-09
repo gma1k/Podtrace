@@ -270,3 +270,72 @@ The metrics endpoint includes:
 **Rate limiting:**
 - If you see "Rate limit exceeded", reduce scrape frequency
 - Default: 10 req/s with burst of 20
+
+## Resource Limit Metrics
+
+**`podtrace_resource_limit_bytes`** (Gauge)
+- Description: Resource limit in bytes (or CPU quota in microseconds)
+- Labels: `resource_type` (cpu, memory, io), `namespace`
+- Updated: When resource limits are read from cgroup files
+
+**`podtrace_resource_usage_bytes`** (Gauge)
+- Description: Current resource usage in bytes (or CPU time in microseconds)
+- Labels: `resource_type` (cpu, memory, io), `namespace`
+- Updated: Periodically (every 5 seconds by default)
+
+**`podtrace_resource_utilization_percent`** (Gauge)
+- Description: Resource utilization percentage (usage/limit * 100)
+- Labels: `resource_type` (cpu, memory, io), `namespace`
+- Range: 0-100 (values >100 indicate limit exceeded)
+- Updated: Periodically (every 5 seconds by default)
+
+**`podtrace_resource_alert_level`** (Gauge)
+- Description: Resource alert level: 0=none, 1=warning (80%), 2=critical (90%), 3=emergency (95%)
+- Labels: `resource_type` (cpu, memory, io), `namespace`
+- Updated: When utilization crosses thresholds
+
+### Resource Limit Query Examples
+
+#### Current CPU Utilization
+```promql
+podtrace_resource_utilization_percent{resource_type="cpu"}
+```
+
+#### Memory Usage vs Limit
+```promql
+# Current memory usage
+podtrace_resource_usage_bytes{resource_type="memory"}
+
+# Memory limit
+podtrace_resource_limit_bytes{resource_type="memory"}
+
+# Memory utilization percentage
+podtrace_resource_utilization_percent{resource_type="memory"}
+```
+
+#### Alert on High Resource Usage
+```promql
+# Warning level (80%+)
+podtrace_resource_alert_level >= 1
+
+# Critical level (90%+)
+podtrace_resource_alert_level >= 2
+
+# Emergency level (95%+)
+podtrace_resource_alert_level >= 3
+```
+
+#### Resource Usage by Namespace
+```promql
+# CPU utilization by namespace
+sum(podtrace_resource_utilization_percent{resource_type="cpu"}) by (namespace)
+
+# Memory usage by namespace
+sum(podtrace_resource_usage_bytes{resource_type="memory"}) by (namespace)
+```
+
+#### Resource Limit Exceeded
+```promql
+# Resources exceeding their limits
+podtrace_resource_utilization_percent > 100
+```

@@ -169,6 +169,111 @@ func TestDetectIssues_CustomThresholds(t *testing.T) {
 	}
 }
 
+func TestDetectIssues_ResourceLimitWarning(t *testing.T) {
+	events := []*events.Event{
+		{Type: events.EventResourceLimit, TCPState: 0, Error: 85, Bytes: 850000000},
+		{Type: events.EventResourceLimit, TCPState: 1, Error: 75, Bytes: 750000000},
+	}
+
+	issues := DetectIssues(events, 10.0, 100.0)
+
+	found := false
+	for _, issue := range issues {
+		if contains(issue, "CPU") && contains(issue, "WARNING") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Expected resource limit warning issue, got %v", issues)
+	}
+}
+
+func TestDetectIssues_ResourceLimitCritical(t *testing.T) {
+	events := []*events.Event{
+		{Type: events.EventResourceLimit, TCPState: 1, Error: 92, Bytes: 460000000},
+	}
+
+	issues := DetectIssues(events, 10.0, 100.0)
+
+	found := false
+	for _, issue := range issues {
+		if contains(issue, "Memory") && contains(issue, "CRITICAL") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Expected resource limit critical issue, got %v", issues)
+	}
+}
+
+func TestDetectIssues_ResourceLimitEmergency(t *testing.T) {
+	events := []*events.Event{
+		{Type: events.EventResourceLimit, TCPState: 2, Error: 97, Bytes: 970000000},
+	}
+
+	issues := DetectIssues(events, 10.0, 100.0)
+
+	found := false
+	for _, issue := range issues {
+		if contains(issue, "I/O") && contains(issue, "EMERGENCY") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Expected resource limit emergency issue, got %v", issues)
+	}
+}
+
+func TestDetectIssues_ResourceLimitBelowThreshold(t *testing.T) {
+	events := []*events.Event{
+		{Type: events.EventResourceLimit, TCPState: 0, Error: 50, Bytes: 500000000},
+		{Type: events.EventResourceLimit, TCPState: 1, Error: 60, Bytes: 600000000},
+	}
+
+	issues := DetectIssues(events, 10.0, 100.0)
+
+	for _, issue := range issues {
+		if contains(issue, "Resource limit") {
+			t.Errorf("Should not detect resource limit issue below 80%%, got: %v", issues)
+		}
+	}
+}
+
+func TestDetectIssues_MixedResourceLimits(t *testing.T) {
+	events := []*events.Event{
+		{Type: events.EventConnect, Error: 0},
+		{Type: events.EventResourceLimit, TCPState: 0, Error: 85, Bytes: 850000000},
+		{Type: events.EventResourceLimit, TCPState: 1, Error: 95, Bytes: 475000000},
+		{Type: events.EventTCPSend, LatencyNS: 50000000},
+	}
+
+	issues := DetectIssues(events, 10.0, 100.0)
+
+	cpuIssues := 0
+	memIssues := 0
+	for _, issue := range issues {
+		if contains(issue, "CPU") {
+			cpuIssues++
+		}
+		if contains(issue, "Memory") {
+			memIssues++
+		}
+	}
+
+	if cpuIssues == 0 {
+		t.Error("Expected CPU resource limit issue")
+	}
+	if memIssues == 0 {
+		t.Error("Expected Memory resource limit issue")
+	}
+}
+
 func BenchmarkDetectIssues(b *testing.B) {
 	eventSlice := make([]*events.Event, 1000)
 	for i := range eventSlice {

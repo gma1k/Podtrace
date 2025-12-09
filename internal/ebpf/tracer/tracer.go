@@ -30,6 +30,7 @@ import (
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
+	"github.com/podtrace/podtrace/internal/resource"
 	"github.com/podtrace/podtrace/internal/validation"
 )
 
@@ -47,6 +48,8 @@ type Tracer struct {
 	containerID      string
 	processNameCache *cache.LRUCache
 	pathResolver     *pathresolver.Resolver
+	resourceMonitor  *resource.ResourceMonitor
+	cgroupPath       string
 }
 
 var _ TracerInterface = (*Tracer)(nil)
@@ -120,6 +123,7 @@ func NewTracer() (*Tracer, error) {
 
 func (t *Tracer) AttachToCgroup(cgroupPath string) error {
 	t.filter.SetCgroupPath(cgroupPath)
+	t.cgroupPath = cgroupPath
 	return nil
 }
 
@@ -149,6 +153,26 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 	slidingWindow := newSlidingWindow(config.DefaultSlidingWindowSize, config.DefaultSlidingWindowBuckets)
 	circuitBreaker := newCircuitBreaker(config.DefaultCircuitBreakerThreshold, config.DefaultCircuitBreakerTimeout)
 	stackMap := t.collection.Maps["stack_traces"]
+
+	if t.cgroupPath != "" {
+		limitsMap := t.collection.Maps["cgroup_limits"]
+		alertsMap := t.collection.Maps["cgroup_alerts"]
+		if limitsMap != nil && alertsMap != nil {
+			rm, err := resource.NewResourceMonitor(t.cgroupPath, limitsMap, alertsMap, eventChan, "")
+			if err != nil {
+				logger.Warn("Failed to create resource monitor", zap.Error(err), zap.String("cgroup_path", t.cgroupPath))
+			} else {
+				t.resourceMonitor = rm
+				logger.Debug("Resource monitor initialized", zap.String("cgroup_path", t.cgroupPath))
+				rm.Start(ctx)
+				logger.Debug("Resource monitor started")
+			}
+		} else {
+			logger.Warn("Resource monitor maps not found in BPF collection")
+		}
+	} else {
+		logger.Debug("Cgroup path not set, skipping resource monitor initialization")
+	}
 
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -313,6 +337,10 @@ func (t *Tracer) Stop() error {
 
 	if t.pathResolver != nil {
 		t.pathResolver.Clear()
+	}
+
+	if t.resourceMonitor != nil {
+		t.resourceMonitor.Stop()
 	}
 
 	return nil

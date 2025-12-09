@@ -86,6 +86,27 @@ struct {
 	__type(value, u64);
 } tls_handshakes SEC(".maps");
 
+struct resource_limit {
+	u64 limit_bytes;
+	u64 usage_bytes;
+	u64 last_update_ns;
+	u32 resource_type;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, struct resource_limit);
+} cgroup_limits SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, u32);
+} cgroup_alerts SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);

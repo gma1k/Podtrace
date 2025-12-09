@@ -25,6 +25,38 @@ func TestEvent_TimestampTime(t *testing.T) {
 	}
 }
 
+func TestEvent_FormatMessage_ResourceLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		event        *Event
+		expectOutput bool
+	}{
+		{"CPU warning", &Event{Type: EventResourceLimit, TCPState: 0, Error: 85}, true},
+		{"Memory critical", &Event{Type: EventResourceLimit, TCPState: 1, Error: 92}, true},
+		{"IO emergency", &Event{Type: EventResourceLimit, TCPState: 2, Error: 97}, true},
+		{"Below threshold", &Event{Type: EventResourceLimit, TCPState: 0, Error: 50}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.event.FormatMessage()
+			if tt.expectOutput && result == "" {
+				t.Error("Expected formatted message but got empty")
+			}
+			if !tt.expectOutput && result != "" {
+				t.Errorf("Expected empty message but got: %s", result)
+			}
+		})
+	}
+}
+
+func TestEvent_TypeString_ResourceLimit(t *testing.T) {
+	event := &Event{Type: EventResourceLimit}
+	if event.TypeString() != "RESOURCE" {
+		t.Errorf("Expected TypeString() = 'RESOURCE', got %s", event.TypeString())
+	}
+}
+
 func TestEvent_TypeString(t *testing.T) {
 	tests := []struct {
 		eventType EventType
@@ -50,6 +82,9 @@ func TestEvent_TypeString(t *testing.T) {
 		{EventFork, "PROC"},
 		{EventOpen, "PROC"},
 		{EventClose, "PROC"},
+		{EventTLSHandshake, "TLS"},
+		{EventTLSError, "TLS"},
+		{EventResourceLimit, "RESOURCE"},
 		{EventType(999), "UNKNOWN"},
 	}
 
