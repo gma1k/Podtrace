@@ -84,7 +84,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("tcp", "tcp_set_state", tcpStateProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				logger.Info("TCP state tracking unavailable", zap.Error(err))
+				logger.Debug("TCP state tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -128,7 +128,7 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 		tp, err := link.Tracepoint("oom", "oom_kill_process", oomKillProg, nil)
 		if err != nil {
 			if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "not found") {
-				logger.Info("OOM kill tracking unavailable", zap.Error(err))
+				logger.Debug("OOM kill tracking unavailable", zap.Error(err))
 			}
 		} else {
 			links = append(links, tp)
@@ -259,6 +259,159 @@ func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
 				links = append(links, l)
 			}
 		}
+	}
+
+	return links
+}
+
+type dbProbeConfig struct {
+	name           string
+	libPatterns    []string
+	acquireSymbols []string
+	releaseSymbol  string
+	exhaustSymbol  string
+	acquireProg    string
+	releaseProg    string
+	exhaustProg    string
+	exhaustRetProg string
+}
+
+func AttachPoolProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	var links []link.Link
+
+	var binaryPaths []string
+	if pid := findContainerProcess(containerID); pid > 0 {
+		logger.Debug("Found container process", zap.Uint32("pid", pid), zap.String("containerID", containerID))
+
+		binaryPath := findGoBinaryViaProcessMaps(pid)
+		if binaryPath == "" {
+			binaryPath = findGoBinaryInProcess(pid)
+		}
+		if binaryPath == "" {
+			binaryPath = findGoBinaryInContainer(containerID, pid)
+		}
+
+		if binaryPath != "" {
+			binaryPaths = append(binaryPaths, binaryPath)
+			logger.Debug("Found Go binary for pool monitoring", zap.String("path", binaryPath), zap.Uint32("pid", pid))
+		} else {
+			logger.Debug("Go binary not found for process", zap.Uint32("pid", pid))
+		}
+	} else {
+		logger.Debug("Container process not found", zap.String("containerID", containerID))
+	}
+
+	dbConfigs := []dbProbeConfig{
+		{
+			name:           "sqlite",
+			libPatterns:    []string{"libsqlite3.so.0", "libsqlite3.so", "sqlite3.so"},
+			acquireSymbols: []string{"sqlite3_prepare_v2", "sqlite3_prepare", "sqlite3_prepare16", "sqlite3_prepare16_v2"},
+			releaseSymbol:  "sqlite3_finalize",
+			exhaustSymbol:  "sqlite3_step",
+			acquireProg:    "uprobe_sqlite3_prepare_v2",
+			releaseProg:    "uretprobe_sqlite3_finalize",
+			exhaustProg:    "uprobe_sqlite3_step",
+			exhaustRetProg: "uretprobe_sqlite3_step",
+		},
+		{
+			name:           "postgresql",
+			libPatterns:    []string{"libpq.so.5", "libpq.so"},
+			acquireSymbols: []string{"PQconnectStart"},
+			releaseSymbol:  "PQfinish",
+			exhaustSymbol:  "PQexec",
+			acquireProg:    "uprobe_PQconnectStart",
+			releaseProg:    "uretprobe_PQfinish",
+			exhaustProg:    "uprobe_PQexec_pool",
+			exhaustRetProg: "",
+		},
+		{
+			name:           "mysql",
+			libPatterns:    []string{"libmysqlclient.so.21", "libmysqlclient.so"},
+			acquireSymbols: []string{"mysql_real_connect"},
+			releaseSymbol:  "mysql_close",
+			exhaustSymbol:  "mysql_real_query",
+			acquireProg:    "uprobe_mysql_real_connect",
+			releaseProg:    "uretprobe_mysql_close",
+			exhaustProg:    "uprobe_mysql_real_query_pool",
+			exhaustRetProg: "",
+		},
+	}
+
+	for _, dbConfig := range dbConfigs {
+		var dbPaths []string
+		dbPaths = append(dbPaths, binaryPaths...)
+		libPaths := findDBLibs(containerID, dbConfig.libPatterns)
+		dbPaths = append(dbPaths, libPaths...)
+
+		if len(dbPaths) == 0 {
+			logger.Debug("No libraries found for database", zap.String("database", dbConfig.name), zap.String("containerID", containerID))
+			continue
+		}
+
+		for _, path := range dbPaths {
+			logger.Debug("Attaching pool probes", zap.String("database", dbConfig.name), zap.String("path", path))
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			exe, err := link.OpenExecutable(path)
+			if err != nil {
+				logger.Debug("Failed to open executable for pool probes", zap.String("database", dbConfig.name), zap.String("path", path), zap.Error(err))
+				continue
+			}
+
+			for _, symbol := range dbConfig.acquireSymbols {
+				if prog := coll.Programs[dbConfig.acquireProg]; prog != nil {
+					l, err := exe.Uprobe(symbol, prog, nil)
+					if err == nil {
+						links = append(links, l)
+						logger.Debug("Attached pool acquire probe", zap.String("database", dbConfig.name), zap.String("symbol", symbol), zap.String("path", path))
+						break
+					}
+				}
+			}
+
+			if dbConfig.releaseProg != "" && dbConfig.releaseSymbol != "" {
+				if prog := coll.Programs[dbConfig.releaseProg]; prog != nil {
+					l, err := exe.Uretprobe(dbConfig.releaseSymbol, prog, nil)
+					if err == nil {
+						links = append(links, l)
+						logger.Debug("Attached pool release probe", zap.String("database", dbConfig.name), zap.String("path", path))
+					} else if !strings.Contains(err.Error(), fmt.Sprintf("symbol %s not found", dbConfig.releaseSymbol)) {
+						logger.Debug("Pool release probe unavailable", zap.String("database", dbConfig.name), zap.String("path", path), zap.Error(err))
+					}
+				}
+			}
+
+			if dbConfig.exhaustProg != "" && dbConfig.exhaustSymbol != "" {
+				if prog := coll.Programs[dbConfig.exhaustProg]; prog != nil {
+					l, err := exe.Uprobe(dbConfig.exhaustSymbol, prog, nil)
+					if err == nil {
+						links = append(links, l)
+						logger.Debug("Attached pool exhaustion probe", zap.String("database", dbConfig.name), zap.String("path", path))
+					} else if !strings.Contains(err.Error(), fmt.Sprintf("symbol %s not found", dbConfig.exhaustSymbol)) {
+						logger.Debug("Pool exhaustion probe unavailable", zap.String("database", dbConfig.name), zap.String("path", path), zap.Error(err))
+					}
+				}
+			}
+
+			if dbConfig.exhaustRetProg != "" && dbConfig.exhaustSymbol != "" {
+				if prog := coll.Programs[dbConfig.exhaustRetProg]; prog != nil {
+					l, err := exe.Uretprobe(dbConfig.exhaustSymbol, prog, nil)
+					if err == nil {
+						links = append(links, l)
+					} else if !strings.Contains(err.Error(), fmt.Sprintf("symbol %s not found", dbConfig.exhaustSymbol)) {
+						logger.Debug("Pool exhaustion retprobe unavailable", zap.String("database", dbConfig.name), zap.String("path", path), zap.Error(err))
+					}
+				}
+			}
+		}
+	}
+
+	if len(links) > 0 {
+		logger.Debug("Pool monitoring probes attached", zap.Int("total_links", len(links)), zap.String("containerID", containerID))
+	} else {
+		logger.Debug("No pool monitoring probes attached", zap.String("containerID", containerID))
 	}
 
 	return links
@@ -410,6 +563,172 @@ func findContainerProcess(containerID string) uint32 {
 		}
 	}
 	return 0
+}
+
+func findGoBinaryInProcess(pid uint32) string {
+	exePath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "exe")
+	target, err := os.Readlink(exePath)
+	if err != nil {
+		logger.Debug("Failed to read exe symlink", zap.Uint32("pid", pid), zap.String("path", exePath), zap.Error(err))
+		return ""
+	}
+
+	if !filepath.IsAbs(target) {
+		cwdPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "cwd")
+		cwd, err := os.Readlink(cwdPath)
+		if err != nil {
+			logger.Debug("Failed to read cwd symlink", zap.Uint32("pid", pid), zap.Error(err))
+			cwd = "/"
+		}
+		target = filepath.Join(cwd, target)
+	}
+
+	procRootPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+	hostPath := filepath.Join(procRootPath, strings.TrimPrefix(target, "/"))
+
+	if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+		logger.Debug("Found binary via container root", zap.Uint32("pid", pid), zap.String("container_path", target), zap.String("host_path", hostPath))
+		return hostPath
+	}
+
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		logger.Debug("Found binary via direct path", zap.Uint32("pid", pid), zap.String("path", target))
+		return target
+	}
+
+	logger.Debug("Binary not found or not accessible", zap.Uint32("pid", pid), zap.String("target", target), zap.String("host_path", hostPath), zap.Error(err))
+	return ""
+}
+
+func findGoBinaryViaProcessMaps(pid uint32) string {
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		logger.Debug("Failed to read process maps", zap.Uint32("pid", pid), zap.Error(err))
+		return ""
+	}
+
+	procRootPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "r-xp") {
+			parts := strings.Fields(line)
+			if len(parts) >= 6 {
+				binaryPath := parts[5]
+				if binaryPath != "" && !strings.HasPrefix(binaryPath, "[") {
+					if strings.Contains(binaryPath, ".so") || strings.Contains(binaryPath, "vdso") || strings.Contains(binaryPath, "vsyscall") {
+						continue
+					}
+
+					hostPath := filepath.Join(procRootPath, strings.TrimPrefix(binaryPath, "/"))
+					if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+						logger.Debug("Found binary via process maps", zap.Uint32("pid", pid), zap.String("container_path", binaryPath), zap.String("host_path", hostPath))
+						return hostPath
+					}
+
+					if info, err := os.Stat(binaryPath); err == nil && !info.IsDir() {
+						logger.Debug("Found binary via process maps (direct)", zap.Uint32("pid", pid), zap.String("path", binaryPath))
+						return binaryPath
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func findGoBinaryInContainer(containerID string, pid uint32) string {
+	procRootPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+
+	cmdlinePath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "cmdline")
+	if cmdlineData, err := os.ReadFile(cmdlinePath); err == nil {
+		cmdline := string(cmdlineData)
+		if len(cmdline) > 0 {
+			parts := strings.Split(cmdline, "\x00")
+			if len(parts) > 0 && parts[0] != "" {
+				binaryPath := parts[0]
+				if filepath.IsAbs(binaryPath) {
+					hostPath := filepath.Join(procRootPath, strings.TrimPrefix(binaryPath, "/"))
+					if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+						logger.Debug("Found binary via cmdline", zap.Uint32("pid", pid), zap.String("cmdline_path", binaryPath), zap.String("host_path", hostPath))
+						return hostPath
+					}
+				}
+			}
+		}
+	}
+
+	commPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "comm")
+	if commData, err := os.ReadFile(commPath); err == nil {
+		commName := strings.TrimSpace(string(commData))
+		if commName != "" {
+			commonPaths := []string{
+				filepath.Join("/app", commName),
+				filepath.Join("/app", commName+".app"),
+				filepath.Join("/usr/local/bin", commName),
+				filepath.Join("/bin", commName),
+				filepath.Join("/app", "main"),
+				filepath.Join("/app", "app"),
+			}
+			for _, relPath := range commonPaths {
+				hostPath := filepath.Join(procRootPath, strings.TrimPrefix(relPath, "/"))
+				if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+					logger.Debug("Found binary via comm name", zap.Uint32("pid", pid), zap.String("comm", commName), zap.String("path", hostPath))
+					return hostPath
+				}
+			}
+		}
+	}
+
+	commonPaths := []string{
+		"/app/pool-test-app",
+		"/app/main",
+		"/app/app",
+		"/usr/local/bin/app",
+		"/bin/app",
+	}
+
+	for _, relPath := range commonPaths {
+		hostPath := filepath.Join(procRootPath, strings.TrimPrefix(relPath, "/"))
+		if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+			logger.Debug("Found binary via container root common paths", zap.Uint32("pid", pid), zap.String("path", hostPath))
+			return hostPath
+		}
+	}
+
+	rootfsPaths := []string{
+		config.GetDockerContainerRootfs(containerID),
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
+		for _, match := range matches {
+			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
+				rootfsPaths = append(rootfsPaths, match)
+			}
+		}
+	}
+
+	for _, rootfs := range rootfsPaths {
+		if _, err := os.Stat(rootfs); err == nil {
+			for _, relPath := range commonPaths {
+				path := filepath.Join(rootfs, strings.TrimPrefix(relPath, "/"))
+				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					logger.Debug("Found binary via container rootfs", zap.String("rootfs", rootfs), zap.String("path", path))
+					return path
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func findLibcInContainer(containerID string) string {

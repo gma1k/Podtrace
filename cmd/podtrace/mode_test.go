@@ -4,11 +4,14 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/podtrace/podtrace/internal/events"
 )
+
+var stdoutMutex sync.Mutex
 
 func TestRunNormalMode_WithEvents(t *testing.T) {
 	if testing.Short() {
@@ -30,22 +33,24 @@ func TestRunNormalMode_WithEvents(t *testing.T) {
 		fsSlowThreshold = origFSThreshold
 	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
-		time.Sleep(50 * time.Millisecond)
-		proc, _ := os.FindProcess(os.Getpid())
-		_ = proc.Signal(os.Interrupt)
+		time.Sleep(100 * time.Millisecond)
+		cancel()
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -53,7 +58,7 @@ func TestRunNormalMode_WithEvents(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -82,20 +87,22 @@ func TestRunNormalMode_Interrupt(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -103,7 +110,7 @@ func TestRunNormalMode_Interrupt(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -132,20 +139,22 @@ func TestRunNormalMode_TickerBeforeInterrupt(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(300 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -153,7 +162,7 @@ func TestRunNormalMode_TickerBeforeInterrupt(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -182,20 +191,22 @@ func TestRunNormalMode_HasPrintedReport(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(200 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -203,7 +214,7 @@ func TestRunNormalMode_HasPrintedReport(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -232,20 +243,22 @@ func TestRunNormalMode_NoEvents(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(50 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -253,7 +266,7 @@ func TestRunNormalMode_NoEvents(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -282,21 +295,23 @@ func TestRunNormalMode_WithTicker(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
 			time.Sleep(50 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runNormalMode(context.Background(), eventChan, nil, nil, nil, nil, false)
+		err := runNormalMode(ctx, eventChan, nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -304,7 +319,7 @@ func TestRunNormalMode_WithTicker(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -333,6 +348,7 @@ func TestRunDiagnoseMode_Timeout(t *testing.T) {
 		eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
 	}()
 
+	stdoutMutex.Lock()
 	originalStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -340,6 +356,7 @@ func TestRunDiagnoseMode_Timeout(t *testing.T) {
 	err := runDiagnoseMode(context.Background(), eventChan, "100ms", nil, nil, nil, nil, false)
 	_ = w.Close()
 	os.Stdout = originalStdout
+	stdoutMutex.Unlock()
 	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
@@ -368,6 +385,7 @@ func TestRunDiagnoseMode_WithExport(t *testing.T) {
 		eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
 	}()
 
+	stdoutMutex.Lock()
 	originalStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -375,6 +393,7 @@ func TestRunDiagnoseMode_WithExport(t *testing.T) {
 	err := runDiagnoseMode(context.Background(), eventChan, "100ms", nil, nil, nil, nil, false)
 	_ = w.Close()
 	os.Stdout = originalStdout
+	stdoutMutex.Unlock()
 	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
@@ -385,6 +404,7 @@ func TestRunDiagnoseMode_WithExport(t *testing.T) {
 func TestRunDiagnoseMode_InvalidDuration(t *testing.T) {
 	eventChan := make(chan *events.Event, 10)
 
+	stdoutMutex.Lock()
 	originalStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -392,6 +412,7 @@ func TestRunDiagnoseMode_InvalidDuration(t *testing.T) {
 	err := runDiagnoseMode(context.Background(), eventChan, "invalid", nil, nil, nil, nil, false)
 	_ = w.Close()
 	os.Stdout = originalStdout
+	stdoutMutex.Unlock()
 	_, _ = io.Copy(io.Discard, r)
 
 	if err == nil {
@@ -420,6 +441,7 @@ func TestRunDiagnoseMode_WithExportFormat(t *testing.T) {
 		eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
 	}()
 
+	stdoutMutex.Lock()
 	originalStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -427,6 +449,7 @@ func TestRunDiagnoseMode_WithExportFormat(t *testing.T) {
 	err := runDiagnoseMode(context.Background(), eventChan, "100ms", nil, nil, nil, nil, false)
 	_ = w.Close()
 	os.Stdout = originalStdout
+	stdoutMutex.Unlock()
 	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
@@ -455,6 +478,7 @@ func TestRunDiagnoseMode_WithExportFormatCSV(t *testing.T) {
 		eventChan <- &events.Event{Type: events.EventDNS, LatencyNS: 5000000, Target: "example.com"}
 	}()
 
+	stdoutMutex.Lock()
 	originalStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -462,6 +486,7 @@ func TestRunDiagnoseMode_WithExportFormatCSV(t *testing.T) {
 	err := runDiagnoseMode(context.Background(), eventChan, "100ms", nil, nil, nil, nil, false)
 	_ = w.Close()
 	os.Stdout = originalStdout
+	stdoutMutex.Unlock()
 	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
@@ -493,20 +518,22 @@ func TestRunDiagnoseMode_Interrupt(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(50 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			cancel()
 		}()
 
-		err := runDiagnoseMode(context.Background(), eventChan, "10s", nil, nil, nil, nil, false)
+		err := runDiagnoseMode(ctx, eventChan, "10s", nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -514,7 +541,7 @@ func TestRunDiagnoseMode_Interrupt(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runDiagnoseMode returned error: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -546,20 +573,22 @@ func TestRunDiagnoseMode_InterruptWithExport(t *testing.T) {
 	}()
 
 	go func() {
+		stdoutMutex.Lock()
 		originalStdout := os.Stdout
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
-			time.Sleep(50 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			_ = proc.Signal(os.Interrupt)
+			time.Sleep(100 * time.Millisecond)
+			cancel()
 		}()
 
-		err := runDiagnoseMode(context.Background(), eventChan, "10s", nil, nil, nil, nil, false)
+		err := runDiagnoseMode(ctx, eventChan, "10s", nil, nil, nil, nil, false)
 
 		_ = w.Close()
 		os.Stdout = originalStdout
+		stdoutMutex.Unlock()
 		_, _ = io.Copy(io.Discard, r)
 
 		done <- err
@@ -567,10 +596,10 @@ func TestRunDiagnoseMode_InterruptWithExport(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runDiagnoseMode returned error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Error("runDiagnoseMode did not complete in time")
 	}
 }

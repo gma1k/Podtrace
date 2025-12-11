@@ -141,6 +141,10 @@ func (t *Tracer) SetContainerID(containerID string) error {
 	if len(dbLinks) > 0 {
 		t.links = append(t.links, dbLinks...)
 	}
+	poolLinks := probes.AttachPoolProbes(t.collection, containerID)
+	if len(poolLinks) > 0 {
+		t.links = append(t.links, poolLinks...)
+	}
 	tlsLinks := probes.AttachTLSProbes(t.collection, containerID)
 	if len(tlsLinks) > 0 {
 		t.links = append(t.links, tlsLinks...)

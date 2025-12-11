@@ -224,6 +224,55 @@ var (
 		},
 		[]string{"resource_type", "namespace"},
 	)
+
+	poolAcquiresCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "podtrace_pool_acquires_total",
+			Help: "Total number of connection pool acquires.",
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
+
+	poolReleasesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "podtrace_pool_releases_total",
+			Help: "Total number of connection pool releases.",
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
+
+	poolExhaustedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "podtrace_pool_exhausted_total",
+			Help: "Total number of pool exhaustion events.",
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
+
+	poolWaitTimeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "podtrace_pool_wait_seconds",
+			Help:    "Time waiting for connection during pool exhaustion.",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
+
+	poolConnectionsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_pool_connections_current",
+			Help: "Current number of connections in pool.",
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
+
+	poolUtilizationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_pool_utilization_percent",
+			Help: "Pool utilization percentage (current/max * 100).",
+		},
+		[]string{"pool_id", "process_name", "namespace"},
+	)
 )
 
 func init() {
@@ -254,6 +303,12 @@ func init() {
 	prometheus.MustRegister(resourceUsageBytesGauge)
 	prometheus.MustRegister(resourceUtilizationPercentGauge)
 	prometheus.MustRegister(resourceAlertLevelGauge)
+	prometheus.MustRegister(poolAcquiresCounter)
+	prometheus.MustRegister(poolReleasesCounter)
+	prometheus.MustRegister(poolExhaustedCounter)
+	prometheus.MustRegister(poolWaitTimeHistogram)
+	prometheus.MustRegister(poolConnectionsGauge)
+	prometheus.MustRegister(poolUtilizationGauge)
 }
 
 func HandleEvents(ch <-chan *events.Event) {
@@ -322,6 +377,15 @@ func HandleEventWithContext(e *events.Event, k8sContext map[string]interface{}) 
 
 	case events.EventResourceLimit:
 		ExportResourceLimitMetricWithContext(e, namespace)
+
+	case events.EventPoolAcquire:
+		ExportPoolAcquireMetricWithContext(e, namespace)
+
+	case events.EventPoolRelease:
+		ExportPoolReleaseMetricWithContext(e, namespace)
+
+	case events.EventPoolExhausted:
+		ExportPoolExhaustedMetricWithContext(e, namespace)
 	}
 }
 
@@ -588,4 +652,30 @@ func ExportResourceMetrics(resourceType string, namespace string, limitBytes, us
 	resourceUsageBytesGauge.WithLabelValues(resourceType, namespace).Set(float64(usageBytes))
 	resourceUtilizationPercentGauge.WithLabelValues(resourceType, namespace).Set(utilizationPercent)
 	resourceAlertLevelGauge.WithLabelValues(resourceType, namespace).Set(float64(alertLevel))
+}
+
+func ExportPoolAcquireMetricWithContext(e *events.Event, namespace string) {
+	poolID := e.Target
+	if poolID == "" {
+		poolID = "default"
+	}
+	poolAcquiresCounter.WithLabelValues(poolID, e.ProcessName, namespace).Inc()
+}
+
+func ExportPoolReleaseMetricWithContext(e *events.Event, namespace string) {
+	poolID := e.Target
+	if poolID == "" {
+		poolID = "default"
+	}
+	poolReleasesCounter.WithLabelValues(poolID, e.ProcessName, namespace).Inc()
+}
+
+func ExportPoolExhaustedMetricWithContext(e *events.Event, namespace string) {
+	poolID := e.Target
+	if poolID == "" {
+		poolID = "default"
+	}
+	waitTimeSec := float64(e.LatencyNS) / 1e9
+	poolExhaustedCounter.WithLabelValues(poolID, e.ProcessName, namespace).Inc()
+	poolWaitTimeHistogram.WithLabelValues(poolID, e.ProcessName, namespace).Observe(waitTimeSec)
 }
