@@ -51,6 +51,9 @@ const (
 	EventTLSHandshake
 	EventTLSError
 	EventResourceLimit
+	EventPoolAcquire
+	EventPoolRelease
+	EventPoolExhausted
 )
 
 type Event struct {
@@ -111,6 +114,8 @@ func (e *Event) TypeString() string {
 		return "TLS"
 	case EventResourceLimit:
 		return "RESOURCE"
+	case EventPoolAcquire, EventPoolRelease, EventPoolExhausted:
+		return "POOL"
 	default:
 		return "UNKNOWN"
 	}
@@ -339,7 +344,7 @@ func (e *Event) FormatMessage() string {
 	case EventResourceLimit:
 		utilization := uint32(e.Error)
 		resourceType := e.TCPState
-		
+
 		var resourceName string
 		switch resourceType {
 		case 0:
@@ -351,7 +356,7 @@ func (e *Event) FormatMessage() string {
 		default:
 			resourceName = "Resource"
 		}
-		
+
 		var severity string
 		if utilization >= 95 {
 			severity = "EMERGENCY"
@@ -362,8 +367,29 @@ func (e *Event) FormatMessage() string {
 		} else {
 			return ""
 		}
-		
+
 		return fmt.Sprintf("[RESOURCE] %s %s utilization: %d%%", severity, resourceName, utilization)
+
+	case EventPoolAcquire:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] acquire connection from %s (%.2fms)", sanitizeString(poolID), latencyMs)
+
+	case EventPoolRelease:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] release connection to %s", sanitizeString(poolID))
+
+	case EventPoolExhausted:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] pool %s exhausted, wait %.2fms", sanitizeString(poolID), latencyMs)
 
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)
@@ -567,7 +593,7 @@ func (e *Event) FormatRealtimeMessage() string {
 	case EventResourceLimit:
 		utilization := uint32(e.Error)
 		resourceType := e.TCPState
-		
+
 		var resourceName string
 		switch resourceType {
 		case 0:
@@ -579,7 +605,7 @@ func (e *Event) FormatRealtimeMessage() string {
 		default:
 			resourceName = "Resource"
 		}
-		
+
 		var severity string
 		if utilization >= 95 {
 			severity = "EMERGENCY"
@@ -590,8 +616,29 @@ func (e *Event) FormatRealtimeMessage() string {
 		} else {
 			return ""
 		}
-		
+
 		return fmt.Sprintf("[RESOURCE] %s %s utilization: %d%%", severity, resourceName, utilization)
+
+	case EventPoolAcquire:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] acquire from %s (%.2fms)", sanitizeString(poolID), latencyMs)
+
+	case EventPoolRelease:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] release to %s", sanitizeString(poolID))
+
+	case EventPoolExhausted:
+		poolID := truncateString(e.Target, maxTargetLen)
+		if poolID == "" {
+			poolID = "default"
+		}
+		return fmt.Sprintf("[POOL] %s exhausted (%.2fms wait)", sanitizeString(poolID), latencyMs)
 
 	default:
 		return fmt.Sprintf("[UNKNOWN] event type %d", e.Type)

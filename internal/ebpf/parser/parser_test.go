@@ -106,6 +106,10 @@ func TestParseEvent_AllEventTypes(t *testing.T) {
 		events.EventClose,
 		events.EventTLSHandshake,
 		events.EventTLSError,
+		events.EventResourceLimit,
+		events.EventPoolAcquire,
+		events.EventPoolRelease,
+		events.EventPoolExhausted,
 	}
 
 	for i, et := range eventTypes {

@@ -107,6 +107,26 @@ struct {
 	__type(value, u32);
 } cgroup_alerts SEC(".maps");
 
+struct pool_state {
+	u64 last_use_ns;
+	u32 connection_id;
+	u32 in_use;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, struct pool_state);
+} pool_states SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, u64);
+} pool_acquire_times SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);

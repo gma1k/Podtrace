@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -204,6 +206,13 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
 	var enricher *kubernetes.ContextEnricher
 	var eventsCorrelator *kubernetes.EventsCorrelator
 	enrichmentEnabled := os.Getenv("PODTRACE_K8S_ENRICHMENT_ENABLED") != "false"
@@ -369,12 +378,12 @@ func runNormalMode(ctx context.Context, eventChan <-chan *events.Event, podInfo 
 			fmt.Println(report)
 			hasPrintedReport = true
 
-		case <-interruptChan():
+		case <-ctx.Done():
 			diagnostician.Finish()
 			if hasPrintedReport {
 				fmt.Print("\033[2J\033[H")
 			}
-			fmt.Println("=== Final Diagnostic Report ===")
+			fmt.Println("\n=== Final Diagnostic Report ===")
 			fmt.Println()
 			report := diagnostician.GenerateReport()
 			fmt.Println(report)
@@ -485,30 +494,18 @@ func runDiagnoseMode(ctx context.Context, eventChan <-chan *events.Event, durati
 			}
 			fmt.Println(report)
 			return nil
-		case <-interruptChan():
+		case <-ctx.Done():
 			diagnostician.Finish()
 			report := diagnostician.GenerateReport()
 			if exportFormat != "" {
 				return exportReport(report, exportFormat, diagnostician)
 			}
+			fmt.Println("\n=== Final Diagnostic Report ===")
+			fmt.Println()
 			fmt.Println(report)
 			return nil
 		}
 	}
-}
-
-func interruptChan() <-chan os.Signal {
-	sigChan := make(chan os.Signal, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("Panic in interrupt handler", zap.Any("panic", r))
-			}
-		}()
-		ebpf.WaitForInterrupt()
-		sigChan <- os.Interrupt
-	}()
-	return sigChan
 }
 
 func filterEvents(ctx context.Context, in <-chan *events.Event, out chan<- *events.Event, filter string) {
@@ -575,4 +572,10 @@ func exportReport(_ string, format string, d *diagnose.Diagnostician) error {
 	default:
 		return fmt.Errorf("unsupported export format: %s", format)
 	}
+}
+
+func interruptChan() <-chan os.Signal {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	return sigChan
 }

@@ -40,6 +40,7 @@ A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Pr
 - **DNS Tracking**: Monitors DNS lookups with latency and error tracking
 - **Database Query Tracing**: Tracks PostgreSQL and MySQL query execution with pattern extraction and latency analysis
 - **TLS/SSL Handshake Tracking**: Track TLS handshake latency, errors and failures
+- **Connection Pool Monitoring**: Tracks connection pool usage, monitors pool exhaustion, and tracks connection reuse patterns
 
 ### System Monitoring
 - **CPU/Scheduling Tracking**: Monitors thread blocking and CPU scheduling events
@@ -119,6 +120,7 @@ The diagnose mode generates a comprehensive report including:
 - **Lock Contention Analysis**: Futex and pthread mutex wait times and hot lock identification
 - **Network Reliability**: TCP retransmission tracking and network device error monitoring
 - **Database Query Performance**: Query pattern analysis and execution latency (PostgreSQL, MySQL)
+- **Connection Pool Statistics**: Connection pool usage, acquire/release rates, reuse patterns, and exhaustion events
 - **Potential Issues**: Automatic detection of high error rates and performance problems
 - **Resource Limit Monitoring**: Monitor resource usage vs limits
 - **Error Correlation with Root Cause Analysis**: Correlates errors with operations and Kubernetes context
@@ -216,6 +218,12 @@ All metrics are exported per process and per event type:
 | `podtrace_resource_usage_bytes`          | Current resource usage in bytes                 |
 | `podtrace_resource_utilization_percent`  | Resource utilization percentage                  |
 | `podtrace_resource_alert_level`          | Resource alert level (0-3: none/warning/critical/emergency) |
+| `podtrace_pool_acquires_total`           | Total connection pool acquires                  |
+| `podtrace_pool_releases_total`           | Total connection pool releases                  |
+| `podtrace_pool_exhausted_total`          | Total pool exhaustion events                     |
+| `podtrace_pool_wait_time_seconds`        | Histogram of pool wait times                     |
+| `podtrace_pool_connections`             | Current number of connections in pool            |
+| `podtrace_pool_utilization`              | Pool utilization percentage                      |
 
 ## Grafana Dashboard
 

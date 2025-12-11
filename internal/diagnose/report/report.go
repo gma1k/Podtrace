@@ -439,6 +439,115 @@ func GenerateIssuesSection(d Diagnostician) string {
 	return report
 }
 
+func GeneratePoolSection(d Diagnostician, duration time.Duration) string {
+	acquireEvents := d.FilterEvents(events.EventPoolAcquire)
+	releaseEvents := d.FilterEvents(events.EventPoolRelease)
+	exhaustedEvents := d.FilterEvents(events.EventPoolExhausted)
+
+	if len(acquireEvents) == 0 && len(releaseEvents) == 0 {
+		return ""
+	}
+
+	var report string
+	report += formatter.SectionHeader("Connection Pool")
+
+	stats := analyzer.AnalyzePool(acquireEvents, releaseEvents, exhaustedEvents)
+	acquireRate := d.CalculateRate(stats.TotalAcquires, duration)
+	releaseRate := d.CalculateRate(stats.TotalReleases, duration)
+	report += fmt.Sprintf("  Total acquires: %d (%.1f/sec)\n", stats.TotalAcquires, acquireRate)
+	report += fmt.Sprintf("  Total releases: %d (%.1f/sec)\n", stats.TotalReleases, releaseRate)
+	report += fmt.Sprintf("  Reuse rate: %.2f%%\n", stats.ReuseRate*100)
+	report += fmt.Sprintf("  Peak connections: %d\n", stats.PeakConnections)
+	report += fmt.Sprintf("  Average connections: %.1f\n", stats.AvgConnections)
+
+	healthStatus := determinePoolHealth(stats)
+	report += fmt.Sprintf("  Status: %s\n", healthStatus)
+
+	if stats.ExhaustedCount > 0 {
+		exhaustedRate := d.CalculateRate(stats.ExhaustedCount, duration)
+		report += fmt.Sprintf("  Pool exhaustion events: %d (%.1f/sec)\n", stats.ExhaustedCount, exhaustedRate)
+		report += fmt.Sprintf("  Average wait time: %.2fms\n", float64(stats.AvgWaitTime.Nanoseconds())/float64(config.NSPerMS))
+		report += fmt.Sprintf("  Max wait time: %.2fms\n", float64(stats.MaxWaitTime.Nanoseconds())/float64(config.NSPerMS))
+		if stats.P50WaitTime > 0 || stats.P95WaitTime > 0 || stats.P99WaitTime > 0 {
+			report += formatter.Percentiles(stats.P50WaitTime, stats.P95WaitTime, stats.P99WaitTime)
+		}
+	}
+
+	poolSummaries := tracker.GetPoolSummaryFromEvents(acquireEvents, releaseEvents, exhaustedEvents)
+	if len(poolSummaries) > 0 {
+		report += "\n"
+		report += "Connection Pool Tracking:\n"
+		report += fmt.Sprintf("  Active pools: %d\n", len(poolSummaries))
+		report += "  Pool statistics:\n"
+		for i, summary := range poolSummaries {
+			if i >= config.MaxConnectionTargets {
+				break
+			}
+			report += fmt.Sprintf("    - %s:\n", summary.PoolID)
+			report += fmt.Sprintf("        Acquires: %d, Releases: %d\n", summary.AcquireCount, summary.ReleaseCount)
+			report += fmt.Sprintf("        Reuse rate: %.2f%%\n", summary.ReuseRate*100)
+			report += fmt.Sprintf("        Current connections: %d (peak: %d)\n", summary.CurrentConns, summary.MaxConns)
+
+			poolHealthStatus := determinePoolHealthFromSummary(summary)
+			report += fmt.Sprintf("        Status: %s\n", poolHealthStatus)
+
+			if summary.ExhaustedCount > 0 {
+				report += fmt.Sprintf("        Exhaustion events: %d\n", summary.ExhaustedCount)
+				report += fmt.Sprintf("        Avg wait time: %.2fms\n", float64(summary.AvgWaitTime.Nanoseconds())/float64(config.NSPerMS))
+				report += fmt.Sprintf("        Max wait time: %.2fms\n", float64(summary.MaxWaitTime.Nanoseconds())/float64(config.NSPerMS))
+			}
+			if !summary.LastAcquire.IsZero() {
+				report += fmt.Sprintf("        Last acquire: %s\n", summary.LastAcquire.Format("15:04:05.000"))
+			}
+		}
+	}
+
+	report += "\n"
+	return report
+}
+
+func determinePoolHealth(stats analyzer.PoolStats) string {
+	if stats.ExhaustedCount > 0 {
+		exhaustionRate := float64(stats.ExhaustedCount) / float64(stats.TotalAcquires)
+		if exhaustionRate > 0.1 {
+			return "CRITICAL - High pool exhaustion rate (>10%)"
+		} else if exhaustionRate > 0.05 {
+			return "WARNING - Moderate pool exhaustion rate (>5%)"
+		}
+	}
+
+	if stats.ReuseRate < 0.5 {
+		return "WARNING - Low connection reuse rate (<50%)"
+	}
+
+	if stats.MaxWaitTime > 1000*time.Millisecond {
+		return "WARNING - High wait times detected"
+	}
+
+	return "OK - Pool operating normally"
+}
+
+func determinePoolHealthFromSummary(summary tracker.PoolSummary) string {
+	if summary.ExhaustedCount > 0 && summary.AcquireCount > 0 {
+		exhaustionRate := float64(summary.ExhaustedCount) / float64(summary.AcquireCount)
+		if exhaustionRate > 0.1 {
+			return "CRITICAL - High pool exhaustion rate (>10%)"
+		} else if exhaustionRate > 0.05 {
+			return "WARNING - Moderate pool exhaustion rate (>5%)"
+		}
+	}
+
+	if summary.ReuseRate < 0.5 {
+		return "WARNING - Low connection reuse rate (<50%)"
+	}
+
+	if summary.MaxWaitTime > 1000*time.Millisecond {
+		return "WARNING - High wait times detected"
+	}
+
+	return "OK - Pool operating normally"
+}
+
 func GenerateResourceSection(d Diagnostician) string {
 	resourceEvents := d.FilterEvents(events.EventResourceLimit)
 	if len(resourceEvents) == 0 {

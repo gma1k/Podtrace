@@ -31,27 +31,27 @@ func (d *Diagnostician) ExportCSV(w io.Writer) error {
 type ExportData = export.ExportData
 
 type Diagnostician struct {
-	mu                    sync.RWMutex
-	events                []*events.Event
-	enrichedEvents        []map[string]interface{}
-	startTime             time.Time
-	endTime               time.Time
-	errorRateThreshold    float64
-	rttSpikeThreshold     float64
-	fsSlowThreshold       float64
-	maxEvents             int
-	eventCount            int
-	droppedEvents         int
-	podCommTracker        *tracker.PodCommunicationTracker
-	errorCorrelator       *correlator.ErrorCorrelator
-	sourcePod             string
-	sourceNamespace       string
+	mu                 sync.RWMutex
+	events             []*events.Event
+	enrichedEvents     []map[string]interface{}
+	startTime          time.Time
+	endTime            time.Time
+	errorRateThreshold float64
+	rttSpikeThreshold  float64
+	fsSlowThreshold    float64
+	maxEvents          int
+	eventCount         int
+	droppedEvents      int
+	podCommTracker     *tracker.PodCommunicationTracker
+	errorCorrelator    *correlator.ErrorCorrelator
+	sourcePod          string
+	sourceNamespace    string
 }
 
 func NewDiagnostician() *Diagnostician {
 	return &Diagnostician{
 		events:             make([]*events.Event, 0),
-		enrichedEvents:    make([]map[string]interface{}, 0),
+		enrichedEvents:     make([]map[string]interface{}, 0),
 		startTime:          time.Now(),
 		errorRateThreshold: config.DefaultErrorRateThreshold,
 		rttSpikeThreshold:  config.DefaultRTTThreshold,
@@ -64,7 +64,7 @@ func NewDiagnostician() *Diagnostician {
 func NewDiagnosticianWithThresholds(errorRate, rttSpike, fsSlow float64) *Diagnostician {
 	return &Diagnostician{
 		events:             make([]*events.Event, 0),
-		enrichedEvents:    make([]map[string]interface{}, 0),
+		enrichedEvents:     make([]map[string]interface{}, 0),
 		startTime:          time.Now(),
 		errorRateThreshold: errorRate,
 		rttSpikeThreshold:  rttSpike,
@@ -219,11 +219,18 @@ func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
 	result += report.GenerateTCPStateSection(d, duration)
 	result += report.GenerateMemorySection(d, duration)
 	result += report.GenerateResourceSection(d)
+	result += report.GeneratePoolSection(d, duration)
 	result += profiling.GenerateCPUUsageReport(allEvents, duration)
 	result += stacktrace.GenerateStackTraceSectionWithContext(d, ctx)
 	result += report.GenerateSyscallSection(d, duration)
 	result += report.GenerateApplicationTracing(d, duration)
 	result += tracker.GenerateConnectionCorrelation(allEvents)
+	poolEvents := d.FilterEvents(events.EventPoolAcquire)
+	poolEvents = append(poolEvents, d.FilterEvents(events.EventPoolRelease)...)
+	poolEvents = append(poolEvents, d.FilterEvents(events.EventPoolExhausted)...)
+	if len(poolEvents) > 0 {
+		result += tracker.GeneratePoolCorrelation(poolEvents)
+	}
 
 	if d.podCommTracker != nil {
 		summaries := d.podCommTracker.GetSummary()
