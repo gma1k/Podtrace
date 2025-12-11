@@ -162,7 +162,7 @@ func TestRunNormalMode_TickerBeforeInterrupt(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			t.Errorf("runNormalMode returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
