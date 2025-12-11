@@ -4,11 +4,23 @@
   </a>
 </p>
 
-A simple but powerful eBPF-based diagnostic tool for Kubernetes applications. Provides comprehensive observability including network tracing (TCP/UDP), file system monitoring, memory tracking, HTTP application-layer tracing, and detailed diagnostic reports.
+A lightweight yet powerful eBPF-driven diagnostic tool for Kubernetes applications. Podtrace delivers full-stack observability from kernel events to application-layer behavior, all activated on demand, with no prior configuration or instrumentation. With a single command, it uncovers insights across the entire lifecycle of a pod, including network flows, TCP/UDP performance, file system activity, memory behavior, latency patterns, system calls, and high-level application events such as HTTP, DNS, and database queries.
 
 ## Overview
 
-`podtrace` attaches eBPF programs to a single Kubernetes pod's container and prints high-level, human-readable events that help diagnose application issues.
+Podtrace attaches eBPF programs directly to the container, allowing it to observe real behavior as it happens at runtime. It automatically correlates low-level kernel activity with high-level application operations, surfacing clear, human-readable diagnostic events that reveal what the pod is experiencing internally.
+
+Instead of assembling data from multiple systems or modifying application code, podtrace provides deep operational visibility in one place, enabling you to understand:
+
+- Why a service is slow  
+- Where latency originates  
+- How network and I/O resources are being used  
+- Which operations block or fail  
+- How requests flow through the application  
+- What happens inside the pod during incidents  
+
+By combining system-level details, application-layer insights, and real-time event correlation, Podtrace acts as a single on-demand observability lens. This makes it uniquely effective for debugging, performance analysis, and production incident response in Kubernetes environments, especially when time, context, or access is limited.
+
 
 ## Documentation
 
