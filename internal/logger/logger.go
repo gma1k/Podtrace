@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/config"
 )
 
@@ -48,14 +49,32 @@ func Info(msg string, fields ...zap.Field) {
 
 func Warn(msg string, fields ...zap.Field) {
 	log.Warn(msg, fields...)
+	manager := alerting.GetGlobalManager()
+	if manager != nil {
+		if alert := alerting.CreateAlertFromLog(zapcore.WarnLevel, msg, fields, "", ""); alert != nil {
+			manager.SendAlert(alert)
+		}
+	}
 }
 
 func Error(msg string, fields ...zap.Field) {
 	log.Error(msg, fields...)
+	manager := alerting.GetGlobalManager()
+	if manager != nil {
+		if alert := alerting.CreateAlertFromLog(zapcore.ErrorLevel, msg, fields, "", ""); alert != nil {
+			manager.SendAlert(alert)
+		}
+	}
 }
 
 func Fatal(msg string, fields ...zap.Field) {
 	log.Fatal(msg, fields...)
+	manager := alerting.GetGlobalManager()
+	if manager != nil {
+		if alert := alerting.CreateAlertFromLog(zapcore.FatalLevel, msg, fields, "", ""); alert != nil {
+			manager.SendAlert(alert)
+		}
+	}
 }
 
 func Logger() *zap.Logger {

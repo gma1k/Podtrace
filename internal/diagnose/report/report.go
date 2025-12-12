@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose/analyzer"
 	"github.com/podtrace/podtrace/internal/diagnose/detector"
@@ -430,6 +431,36 @@ func GenerateIssuesSection(d Diagnostician) string {
 		return ""
 	}
 
+	manager := alerting.GetGlobalManager()
+	if manager != nil {
+		for _, issue := range issues {
+			var severity alerting.AlertSeverity
+			if contains(issue, "CRITICAL") || contains(issue, "EMERGENCY") {
+				severity = alerting.SeverityCritical
+			} else if contains(issue, "WARNING") {
+				severity = alerting.SeverityWarning
+			} else {
+				severity = alerting.SeverityWarning
+			}
+			alert := &alerting.Alert{
+				Severity:  severity,
+				Title:      "Diagnostic Issue Detected",
+				Message:    issue,
+				Timestamp:  time.Now(),
+				Source:     "error_detector",
+				PodName:    "",
+				Namespace:  "",
+				Context:    make(map[string]interface{}),
+				Recommendations: []string{
+					"Review diagnostic report for details",
+					"Check application logs",
+					"Verify resource limits",
+				},
+			}
+			manager.SendAlert(alert)
+		}
+	}
+
 	var report string
 	report += formatter.SectionHeader("Potential Issues Detected")
 	for _, issue := range issues {
@@ -437,6 +468,10 @@ func GenerateIssuesSection(d Diagnostician) string {
 	}
 	report += "\n"
 	return report
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }
 
 func GeneratePoolSection(d Diagnostician, duration time.Duration) string {

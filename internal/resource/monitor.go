@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf"
 	"go.uber.org/zap"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/metricsexporter"
@@ -395,28 +396,63 @@ func (rm *ResourceMonitor) checkAlerts() {
 			alertLevel,
 		)
 
-		if alertLevel > AlertNone && rm.eventChan != nil {
-			event := &events.Event{
-				Type:        events.EventResourceLimit,
-				PID:         0,
-				ProcessName: "cgroup",
-				LatencyNS:   limit.LimitBytes,
-				Error:       int32(utilizationUint32),
-				Bytes:       limit.UsageBytes,
-				TCPState:    resourceType,
-				Target:      rm.cgroupPath,
-				Timestamp:   uint64(time.Now().UnixNano()),
+		if alertLevel > AlertNone {
+			manager := alerting.GetGlobalManager()
+			if manager != nil {
+				severity := alerting.MapResourceAlertLevel(alertLevel)
+				title := fmt.Sprintf("Resource Limit %s", severity)
+				message := fmt.Sprintf("%s utilization: %d%% (limit: %d bytes, usage: %d bytes)",
+					resourceTypeLabel, utilizationUint32, limit.LimitBytes, limit.UsageBytes)
+				recommendations := []string{
+					"Check for resource leaks",
+					"Review resource limits",
+					"Consider scaling up pod resources",
+				}
+				if utilizationUint32 >= 95 {
+					recommendations = append(recommendations, "Immediate action required - resource exhaustion imminent")
+				}
+				alert := &alerting.Alert{
+					Severity:        severity,
+					Title:           title,
+					Message:         message,
+					Timestamp:       time.Now(),
+					Source:          "resource_monitor",
+					PodName:         "",
+					Namespace:       rm.namespace,
+					Context: map[string]interface{}{
+						"resource_type":      resourceTypeLabel,
+						"utilization_percent": float64(utilizationUint32),
+						"usage_bytes":         limit.UsageBytes,
+						"limit_bytes":         limit.LimitBytes,
+						"cgroup_path":         rm.cgroupPath,
+					},
+					Recommendations: recommendations,
+				}
+				manager.SendAlert(alert)
 			}
-			select {
-			case rm.eventChan <- event:
-				logger.Debug("Resource limit event sent",
-					zap.String("resource_type", resourceTypeLabel),
-					zap.Uint32("utilization", utilizationUint32),
-					zap.Uint32("alert_level", alertLevel))
-			default:
-				logger.Warn("Failed to send resource limit event, channel full",
-					zap.String("resource_type", resourceTypeLabel),
-					zap.Uint32("utilization", utilizationUint32))
+			if rm.eventChan != nil {
+				event := &events.Event{
+					Type:        events.EventResourceLimit,
+					PID:         0,
+					ProcessName: "cgroup",
+					LatencyNS:   limit.LimitBytes,
+					Error:       int32(utilizationUint32),
+					Bytes:       limit.UsageBytes,
+					TCPState:    resourceType,
+					Target:      rm.cgroupPath,
+					Timestamp:   uint64(time.Now().UnixNano()),
+				}
+				select {
+				case rm.eventChan <- event:
+					logger.Debug("Resource limit event sent",
+						zap.String("resource_type", resourceTypeLabel),
+						zap.Uint32("utilization", utilizationUint32),
+						zap.Uint32("alert_level", alertLevel))
+				default:
+					logger.Warn("Failed to send resource limit event, channel full",
+						zap.String("resource_type", resourceTypeLabel),
+						zap.Uint32("utilization", utilizationUint32))
+				}
 			}
 		}
 	}

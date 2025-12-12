@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose"
 	"github.com/podtrace/podtrace/internal/ebpf"
@@ -115,6 +116,18 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		if tracingSampleRate >= 0.0 && tracingSampleRate <= 1.0 {
 			config.TracingSampleRate = tracingSampleRate
 		}
+	}
+
+	alertManager, err := alerting.NewManager()
+	if err != nil {
+		logger.Warn("Failed to create alert manager", zap.Error(err))
+	} else if alertManager != nil {
+		alerting.SetGlobalManager(alertManager)
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			_ = alertManager.Shutdown(shutdownCtx)
+		}()
 	}
 
 	var metricsServer *metricsexporter.Server

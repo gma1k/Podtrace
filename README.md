@@ -10,7 +10,7 @@ A lightweight yet powerful eBPF-driven diagnostic tool for Kubernetes applicatio
 
 Podtrace attaches eBPF programs directly to the container, allowing it to observe real behavior as it happens at runtime. It automatically correlates low-level kernel activity with high-level application operations, surfacing clear, human-readable diagnostic events that reveal what the pod is experiencing internally.
 
-Instead of assembling data from multiple systems or modifying application code, podtrace provides deep operational visibility in one place, enabling you to understand:
+Instead of assembling data from multiple systems or modifying application code, Podtrace provides deep operational visibility in one place, enabling you to understand:
 
 - Why a service is slow  
 - Where latency originates  
@@ -24,7 +24,7 @@ By combining system-level details, application-layer insights, and real-time eve
 
 ## Documentation
 
-`podtrace` documentation is available in the [`doc/`](doc/) directory.
+Podtrace documentation is available in the [`doc/`](doc/) directory.
 
 ## Features
 
@@ -75,6 +75,12 @@ By combining system-level details, application-layer insights, and real-time eve
 
 ### Diagnostics
 - **Diagnose Mode**: Collects events for a specified duration and generates a comprehensive summary report
+
+### Alerting
+- **Real-time Alerts**: Sends immediate notifications when fatal, critical, or warning-level issues are detected
+- **Multiple Channels**: Supports webhooks, Slack, and Splunk HEC for alert delivery
+- **Smart Deduplication**: Prevents alert storms with configurable deduplication windows
+- **Rate Limiting**: Configurable rate limits to prevent overwhelming notification systems
 
 ## Prerequisites
 
@@ -149,7 +155,7 @@ sudo ./scripts/setup-capabilities.sh
 
 ## Distributed Tracing
 
-`podtrace` supports distributed tracing to correlate events across services in your Kubernetes cluster. Traces are automatically extracted from HTTP headers and exported to popular observability backends.
+Podtrace supports distributed tracing to correlate events across services in your Kubernetes cluster. Traces are automatically extracted from HTTP headers and exported to popular observability backends.
 
 ### Quick Start
 
@@ -181,9 +187,45 @@ sudo ./scripts/setup-capabilities.sh
 
 ---
 
+## Alerting
+
+Podtrace can send real-time alerts when critical issues are detected, including resource limit violations, high error rates, exporter failures, and fatal errors. Alerts are sent via webhooks, Slack, or Splunk HEC.
+
+### Quick Start
+
+```bash
+# Enable alerting with webhook
+export PODTRACE_ALERTING_ENABLED=true
+export PODTRACE_ALERT_WEBHOOK_URL=https://alerts.example.com/webhook
+./bin/podtrace -n production my-pod
+
+# Enable alerting with Slack
+export PODTRACE_ALERTING_ENABLED=true
+export PODTRACE_ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+export PODTRACE_ALERT_SLACK_CHANNEL="#alerts"
+./bin/podtrace -n production my-pod
+
+# Enable alerting with Splunk
+export PODTRACE_ALERTING_ENABLED=true
+export PODTRACE_ALERT_SPLUNK_ENABLED=true
+./bin/podtrace -n production my-pod
+```
+
+### Features
+
+- **Automatic Detection**: Monitors resource limits, error rates, and system failures
+- **Multiple Severity Levels**: Fatal, Critical, Warning, and Error
+- **Alert Deduplication**: Prevents duplicate alerts within a time window
+- **Rate Limiting**: Configurable limits to prevent alert storms
+- **Retry Logic**: Automatic retries with exponential backoff
+
+See the [Alerting Guide](doc/alerting.md) for detailed configuration and usage.
+
+---
+
 ## Prometheus & Grafana Integration
 
-`podtrace` exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking (TCP/UDP), DNS, CPU scheduling, file system operations, memory events, and HTTP tracing, all labeled per process and event type.
+Podtrace exposes runtime metrics for Kubernetes pods using a built-in Prometheus endpoint. These metrics cover networking (TCP/UDP), DNS, CPU scheduling, file system operations, memory events, and HTTP tracing, all labeled per process and event type.
 
 ---
 

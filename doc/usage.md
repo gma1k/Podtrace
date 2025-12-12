@@ -60,6 +60,17 @@ Flags:
       --fs-threshold float      File system slow operation threshold in milliseconds (default: 10.0)
 ```
 
+### Alerting Configuration
+
+Alerting is configured via environment variables (not command-line flags). See the [Alerting Guide](alerting.md) for complete configuration options.
+
+**Quick Example**:
+```bash
+export PODTRACE_ALERTING_ENABLED=true
+export PODTRACE_ALERT_WEBHOOK_URL=https://alerts.example.com/webhook
+./bin/podtrace -n production my-pod
+```
+
 ### Event Filtering
 
 Use `--filter` to focus on specific event types:

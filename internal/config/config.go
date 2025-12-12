@@ -22,6 +22,12 @@ const (
 	DefaultOTLPEndpoint       = "http://localhost:4318"
 	DefaultJaegerEndpoint     = "http://localhost:14268/api/traces"
 	DefaultSplunkEndpoint     = "http://localhost:8088/services/collector"
+	DefaultAlertHTTPTimeout   = 10 * time.Second
+	DefaultAlertDedupWindow   = 5 * time.Minute
+	DefaultAlertRateLimitPerMin = 10
+	DefaultAlertMaxRetries    = 3
+	DefaultAlertRetryBackoffBase = 1 * time.Second
+	DefaultAlertMaxPayloadSize = 1024 * 1024
 )
 
 const (
@@ -50,6 +56,16 @@ var (
 	MaxTraceIDLength       = 32
 	MaxSpanIDLength        = 16
 	MaxTraceStateLength    = 512
+	AlertingEnabled        = getEnvOrDefault("PODTRACE_ALERTING_ENABLED", "false") == "true"
+	AlertWebhookURL        = getEnvOrDefault("PODTRACE_ALERT_WEBHOOK_URL", "")
+	AlertSlackWebhookURL   = getEnvOrDefault("PODTRACE_ALERT_SLACK_WEBHOOK_URL", "")
+	AlertSlackChannel      = getEnvOrDefault("PODTRACE_ALERT_SLACK_CHANNEL", "#alerts")
+	AlertSplunkEnabled     = getEnvOrDefault("PODTRACE_ALERT_SPLUNK_ENABLED", "false") == "true"
+	AlertDeduplicationWindow = getDurationEnvOrDefault("PODTRACE_ALERT_DEDUP_WINDOW", DefaultAlertDedupWindow)
+	AlertRateLimitPerMinute  = getIntEnvOrDefault("PODTRACE_ALERT_RATE_LIMIT", DefaultAlertRateLimitPerMin)
+	AlertHTTPTimeout         = getDurationEnvOrDefault("PODTRACE_ALERT_HTTP_TIMEOUT", DefaultAlertHTTPTimeout)
+	AlertMaxRetries          = getIntEnvOrDefault("PODTRACE_ALERT_MAX_RETRIES", DefaultAlertMaxRetries)
+	AlertMaxPayloadSize      = getInt64EnvOrDefault("PODTRACE_ALERT_MAX_PAYLOAD_SIZE", DefaultAlertMaxPayloadSize)
 )
 
 const (
@@ -228,6 +244,24 @@ func getIntEnvOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
+func getInt64EnvOrDefault(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if i, err := strconv.ParseInt(value, 10, 64); err == nil && i > 0 {
+			return i
+		}
+	}
+	return defaultValue
+}
+
+func getDurationEnvOrDefault(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultValue
+}
+
 func GetMetricsAddress() string {
 	addr := os.Getenv("PODTRACE_METRICS_ADDR")
 	if addr == "" {
@@ -238,4 +272,8 @@ func GetMetricsAddress() string {
 
 func AllowNonLoopbackMetrics() bool {
 	return os.Getenv("PODTRACE_METRICS_INSECURE_ALLOW_ANY_ADDR") == "1"
+}
+
+func GetAlertMinSeverity() string {
+	return getEnvOrDefault("PODTRACE_ALERT_MIN_SEVERITY", "warning")
 }

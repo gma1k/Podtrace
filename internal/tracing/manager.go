@@ -2,11 +2,13 @@ package tracing
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose/tracker"
 	"github.com/podtrace/podtrace/internal/events"
@@ -157,18 +159,81 @@ func (m *Manager) exportTraces() {
 	if m.otlpExporter != nil {
 		if err := m.otlpExporter.ExportTraces(traces); err != nil {
 			logger.Warn("Failed to export traces to OTLP", zap.Error(err))
+			manager := alerting.GetGlobalManager()
+			if manager != nil {
+				alert := &alerting.Alert{
+					Severity:  alerting.SeverityWarning,
+					Title:     "OTLP Exporter Failure",
+					Message:   fmt.Sprintf("Failed to export traces to OTLP: %v", err),
+					Timestamp: time.Now(),
+					Source:    "exporter",
+					Context: map[string]interface{}{
+						"exporter": "otlp",
+						"endpoint": config.OTLPEndpoint,
+						"error":    err.Error(),
+					},
+					Recommendations: []string{
+						"Check OTLP endpoint connectivity",
+						"Verify endpoint configuration",
+						"Check network connectivity",
+					},
+				}
+				manager.SendAlert(alert)
+			}
 		}
 	}
 
 	if m.jaegerExporter != nil {
 		if err := m.jaegerExporter.ExportTraces(traces); err != nil {
 			logger.Warn("Failed to export traces to Jaeger", zap.Error(err))
+			manager := alerting.GetGlobalManager()
+			if manager != nil {
+				alert := &alerting.Alert{
+					Severity:  alerting.SeverityWarning,
+					Title:     "Jaeger Exporter Failure",
+					Message:   fmt.Sprintf("Failed to export traces to Jaeger: %v", err),
+					Timestamp: time.Now(),
+					Source:    "exporter",
+					Context: map[string]interface{}{
+						"exporter": "jaeger",
+						"endpoint": config.JaegerEndpoint,
+						"error":    err.Error(),
+					},
+					Recommendations: []string{
+						"Check Jaeger endpoint connectivity",
+						"Verify endpoint configuration",
+						"Check network connectivity",
+					},
+				}
+				manager.SendAlert(alert)
+			}
 		}
 	}
 
 	if m.splunkExporter != nil {
 		if err := m.splunkExporter.ExportTraces(traces); err != nil {
 			logger.Warn("Failed to export traces to Splunk", zap.Error(err))
+			manager := alerting.GetGlobalManager()
+			if manager != nil && !alerting.AlertSplunkEnabled {
+				alert := &alerting.Alert{
+					Severity:  alerting.SeverityWarning,
+					Title:     "Splunk Exporter Failure",
+					Message:   fmt.Sprintf("Failed to export traces to Splunk: %v", err),
+					Timestamp: time.Now(),
+					Source:    "exporter",
+					Context: map[string]interface{}{
+						"exporter": "splunk",
+						"endpoint": config.SplunkEndpoint,
+						"error":    err.Error(),
+					},
+					Recommendations: []string{
+						"Check Splunk endpoint connectivity",
+						"Verify Splunk token",
+						"Check network connectivity",
+					},
+				}
+				manager.SendAlert(alert)
+			}
 		}
 	}
 }
