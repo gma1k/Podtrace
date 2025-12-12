@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -1263,94 +1262,3 @@ func TestTracer_GetProcessNameQuick_CmdlineRootPath(t *testing.T) {
 	}
 }
 
-func TestTracer_ExtractInodeFromFD(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("Skipping test that requires root access to read /proc")
-	}
-
-	tracer := &Tracer{}
-	pid := uint32(os.Getpid())
-
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "testfile")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatalf("Failed to open test file: %v", err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	fd := uint32(f.Fd())
-	ino, dev := tracer.extractInodeFromFD(pid, fd)
-
-	if ino == 0 || dev == 0 {
-		t.Logf("extractInodeFromFD() returned ino=%d, dev=%d (may not work in test environment)", ino, dev)
-	}
-}
-
-func TestTracer_ExtractInodeFromFD_InvalidPID(t *testing.T) {
-	tracer := &Tracer{}
-	ino, dev := tracer.extractInodeFromFD(99999999, 0)
-	if ino != 0 || dev != 0 {
-		t.Errorf("extractInodeFromFD() for invalid PID should return 0,0, got %d,%d", ino, dev)
-	}
-}
-
-func TestTracer_FindFDForInode(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("Skipping test that requires root access to read /proc")
-	}
-
-	tracer := &Tracer{}
-	pid := uint32(os.Getpid())
-
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "testfile")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	var stat syscall.Stat_t
-	if err := syscall.Stat(testFile, &stat); err != nil {
-		t.Fatalf("Failed to stat test file: %v", err)
-	}
-
-	f, err := os.Open(testFile)
-	if err != nil {
-		t.Fatalf("Failed to open test file: %v", err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	fd := tracer.findFDForInode(pid, uint32(stat.Ino), uint32(stat.Dev))
-	if fd == 0 {
-		t.Log("findFDForInode() returned 0 (may not work in test environment)")
-	}
-}
-
-func TestTracer_FindFDForInode_InvalidPID(t *testing.T) {
-	tracer := &Tracer{}
-	fd := tracer.findFDForInode(99999999, 100, 200)
-	if fd != 0 {
-		t.Errorf("findFDForInode() for invalid PID should return 0, got %d", fd)
-	}
-}
-
-func TestTracer_FindFDForInode_InvalidFDDir(t *testing.T) {
-	tempDir := t.TempDir()
-	origProcBase := config.ProcBasePath
-	config.SetProcBasePath(tempDir)
-	defer func() { config.SetProcBasePath(origProcBase) }()
-
-	tracer := &Tracer{}
-	fd := tracer.findFDForInode(uint32(os.Getpid()), 100, 200)
-	if fd != 0 {
-		t.Errorf("findFDForInode() with invalid proc base should return 0, got %d", fd)
-	}
-}

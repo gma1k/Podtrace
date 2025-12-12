@@ -4,10 +4,7 @@
 #include "maps.h"
 #include "events.h"
 #include "helpers.h"
-
-static inline u64 extract_file_inode(struct file *file) {
-	return 0;
-}
+#include "filesystem.h"
 
 SEC("kprobe/vfs_write")
 int kprobe_vfs_write(struct pt_regs *ctx) {
@@ -19,9 +16,9 @@ int kprobe_vfs_write(struct pt_regs *ctx) {
 	
 	struct file *file = (struct file *)PT_REGS_PARM1(ctx);
 	if (file) {
-		u64 inode_info = extract_file_inode(file);
-		if (inode_info != 0) {
-			bpf_map_update_elem(&file_inodes, &key, &inode_info, BPF_ANY);
+		char path_buf[MAX_STRING_LEN] = {};
+		if (get_path_str_from_file(file, path_buf, MAX_STRING_LEN)) {
+			bpf_map_update_elem(&syscall_paths, &key, path_buf, BPF_ANY);
 		}
 	}
 	
@@ -38,9 +35,9 @@ int kprobe_vfs_read(struct pt_regs *ctx) {
 	
 	struct file *file = (struct file *)PT_REGS_PARM1(ctx);
 	if (file) {
-		u64 inode_info = extract_file_inode(file);
-		if (inode_info != 0) {
-			bpf_map_update_elem(&file_inodes, &key, &inode_info, BPF_ANY);
+		char path_buf[MAX_STRING_LEN] = {};
+		if (get_path_str_from_file(file, path_buf, MAX_STRING_LEN)) {
+			bpf_map_update_elem(&syscall_paths, &key, path_buf, BPF_ANY);
 		}
 	}
 	
@@ -83,42 +80,10 @@ int kretprobe_vfs_read(struct pt_regs *ctx) {
 	e->bytes = bytes;
 	e->tcp_state = 0;
 	
-	u64 *inode_ptr = bpf_map_lookup_elem(&file_inodes, &key);
-	if (inode_ptr) {
-		u64 inode_info = *inode_ptr;
-		u32 dev = (u32)(inode_info >> 32);
-		u32 ino = (u32)(inode_info & 0xFFFFFFFF);
-		u32 idx = 0;
-		u32 max = MAX_STRING_LEN - 1;
-		e->target[idx++] = 'i';
-		if (idx < max) e->target[idx++] = 'n';
-		if (idx < max) e->target[idx++] = 'o';
-		if (idx < max) e->target[idx++] = ':';
-		u32 num = ino;
-		u32 div = 1000000000;
-		u32 started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		if (idx < max) e->target[idx++] = '/';
-		num = dev;
-		div = 1000000000;
-		started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		e->target[idx < MAX_STRING_LEN ? idx : max] = '\0';
-		bpf_map_delete_elem(&file_inodes, &key);
+	char *path = bpf_map_lookup_elem(&syscall_paths, &key);
+	if (path) {
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path);
+		bpf_map_delete_elem(&syscall_paths, &key);
 	} else {
 		e->target[0] = '\0';
 	}
@@ -164,42 +129,10 @@ int kretprobe_vfs_write(struct pt_regs *ctx) {
 	e->bytes = bytes;
 	e->tcp_state = 0;
 	
-	u64 *inode_ptr = bpf_map_lookup_elem(&file_inodes, &key);
-	if (inode_ptr) {
-		u64 inode_info = *inode_ptr;
-		u32 dev = (u32)(inode_info >> 32);
-		u32 ino = (u32)(inode_info & 0xFFFFFFFF);
-		u32 idx = 0;
-		u32 max = MAX_STRING_LEN - 1;
-		e->target[idx++] = 'i';
-		if (idx < max) e->target[idx++] = 'n';
-		if (idx < max) e->target[idx++] = 'o';
-		if (idx < max) e->target[idx++] = ':';
-		u32 num = ino;
-		u32 div = 1000000000;
-		u32 started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		if (idx < max) e->target[idx++] = '/';
-		num = dev;
-		div = 1000000000;
-		started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		e->target[idx < MAX_STRING_LEN ? idx : max] = '\0';
-		bpf_map_delete_elem(&file_inodes, &key);
+	char *path = bpf_map_lookup_elem(&syscall_paths, &key);
+	if (path) {
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path);
+		bpf_map_delete_elem(&syscall_paths, &key);
 	} else {
 		e->target[0] = '\0';
 	}
@@ -219,9 +152,9 @@ int kprobe_vfs_fsync(struct pt_regs *ctx) {
 	
 	struct file *file = (struct file *)PT_REGS_PARM1(ctx);
 	if (file) {
-		u64 inode_info = extract_file_inode(file);
-		if (inode_info != 0) {
-			bpf_map_update_elem(&file_inodes, &key, &inode_info, BPF_ANY);
+		char path_buf[MAX_STRING_LEN] = {};
+		if (get_path_str_from_file(file, path_buf, MAX_STRING_LEN)) {
+			bpf_map_update_elem(&syscall_paths, &key, path_buf, BPF_ANY);
 		}
 	}
 	
@@ -258,42 +191,10 @@ int kretprobe_vfs_fsync(struct pt_regs *ctx) {
 	e->bytes = 0;
 	e->tcp_state = 0;
 	
-	u64 *inode_ptr = bpf_map_lookup_elem(&file_inodes, &key);
-	if (inode_ptr) {
-		u64 inode_info = *inode_ptr;
-		u32 dev = (u32)(inode_info >> 32);
-		u32 ino = (u32)(inode_info & 0xFFFFFFFF);
-		u32 idx = 0;
-		u32 max = MAX_STRING_LEN - 1;
-		e->target[idx++] = 'i';
-		if (idx < max) e->target[idx++] = 'n';
-		if (idx < max) e->target[idx++] = 'o';
-		if (idx < max) e->target[idx++] = ':';
-		u32 num = ino;
-		u32 div = 1000000000;
-		u32 started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		if (idx < max) e->target[idx++] = '/';
-		num = dev;
-		div = 1000000000;
-		started = 0;
-		for (int j = 0; j < 10 && idx < max; j++) {
-			u32 digit = (num / div) % 10;
-			if (digit > 0 || started || j == 9) {
-				e->target[idx++] = '0' + digit;
-				started = 1;
-			}
-			div /= 10;
-		}
-		e->target[idx < MAX_STRING_LEN ? idx : max] = '\0';
-		bpf_map_delete_elem(&file_inodes, &key);
+	char *path = bpf_map_lookup_elem(&syscall_paths, &key);
+	if (path) {
+		bpf_probe_read_kernel_str(e->target, sizeof(e->target), path);
+		bpf_map_delete_elem(&syscall_paths, &key);
 	} else {
 		e->target[0] = '\0';
 	}

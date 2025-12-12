@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,7 +23,6 @@ import (
 	"github.com/podtrace/podtrace/internal/ebpf/filter"
 	"github.com/podtrace/podtrace/internal/ebpf/loader"
 	"github.com/podtrace/podtrace/internal/ebpf/parser"
-	"github.com/podtrace/podtrace/internal/ebpf/pathresolver"
 	"github.com/podtrace/podtrace/internal/ebpf/probes"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/logger"
@@ -47,7 +44,7 @@ type Tracer struct {
 	filter           *filter.CgroupFilter
 	containerID      string
 	processNameCache *cache.LRUCache
-	pathResolver     *pathresolver.Resolver
+	pathCache        *cache.PathCache
 	resourceMonitor  *resource.ResourceMonitor
 	cgroupPath       string
 }
@@ -117,7 +114,7 @@ func NewTracer() (*Tracer, error) {
 		reader:           rd,
 		filter:           filter.NewCgroupFilter(),
 		processNameCache: processCache,
-		pathResolver:     pathresolver.New(),
+		pathCache:        cache.NewPathCache(),
 	}, nil
 }
 
@@ -186,8 +183,8 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if t.pathResolver != nil {
-					t.pathResolver.CleanupExpired()
+				if t.pathCache != nil {
+					t.pathCache.CleanupExpired()
 				}
 			}
 		}
@@ -273,28 +270,13 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 				event.ProcessName = t.getProcessNameQuick(event.PID)
 				event.ProcessName = validation.SanitizeProcessName(event.ProcessName)
 
-				if event.Type == events.EventOpen {
-					fd := uint32(event.Bytes)
-					if event.Target != "" && fd != 0xFFFFFFFF {
-						t.pathResolver.RecordOpenByFD(event.PID, fd, event.Target)
-						if ino, dev := t.extractInodeFromFD(event.PID, fd); ino != 0 {
-							t.pathResolver.RecordOpen(event.PID, fd, event.Target, ino, dev)
-						}
+				if event.Target != "" && event.Target != "<disconnected>" {
+					cacheKey := fmt.Sprintf("%d:%s", event.PID, event.Target)
+					if cached, ok := t.pathCache.Get(cacheKey); ok {
+						event.Target = cached
+					} else {
+						t.pathCache.Set(cacheKey, event.Target)
 					}
-				}
-
-				if (event.Type == events.EventRead || event.Type == events.EventWrite || event.Type == events.EventFsync) && strings.HasPrefix(event.Target, "ino:") {
-					parts := strings.SplitN(event.Target[4:], "/", 2)
-					if len(parts) == 2 {
-						if ino, err1 := strconv.ParseUint(parts[0], 10, 32); err1 == nil {
-							if dev, err2 := strconv.ParseUint(parts[1], 10, 32); err2 == nil {
-								if fd := t.findFDForInode(event.PID, uint32(ino), uint32(dev)); fd != 0 {
-									t.pathResolver.CorrelateFDWithInode(event.PID, fd, uint32(ino), uint32(dev))
-								}
-							}
-						}
-					}
-					event.Target = t.pathResolver.ResolvePath(event.PID, event.Target)
 				}
 
 				if event.Error != 0 {
@@ -339,8 +321,8 @@ func (t *Tracer) Stop() error {
 		t.processNameCache.Close()
 	}
 
-	if t.pathResolver != nil {
-		t.pathResolver.Clear()
+	if t.pathCache != nil {
+		t.pathCache.Clear()
 	}
 
 	if t.resourceMonitor != nil {
@@ -350,50 +332,6 @@ func (t *Tracer) Stop() error {
 	return nil
 }
 
-func (t *Tracer) extractInodeFromFD(pid uint32, fd uint32) (uint32, uint32) {
-	fdPath := fmt.Sprintf("%s/%d/fd/%d", config.ProcBasePath, pid, fd)
-	var stat syscall.Stat_t
-	if err := syscall.Stat(fdPath, &stat); err != nil {
-		return 0, 0
-	}
-	return uint32(stat.Ino), uint32(stat.Dev)
-}
-
-func (t *Tracer) findFDForInode(pid uint32, ino, dev uint32) uint32 {
-	fdDir := fmt.Sprintf("%s/%d/fd", config.ProcBasePath, pid)
-	entries, err := os.ReadDir(fdDir)
-	if err != nil {
-		return 0
-	}
-
-	maxChecks := 20
-	checked := 0
-
-	for _, entry := range entries {
-		if checked >= maxChecks {
-			break
-		}
-
-		fdNum, err := strconv.ParseUint(entry.Name(), 10, 32)
-		if err != nil {
-			continue
-		}
-
-		checked++
-
-		fdPath := filepath.Join(fdDir, entry.Name())
-		var stat syscall.Stat_t
-		if err := syscall.Stat(fdPath, &stat); err != nil {
-			continue
-		}
-
-		if stat.Ino == uint64(ino) && stat.Dev == uint64(dev) {
-			return uint32(fdNum)
-		}
-	}
-
-	return 0
-}
 
 func (t *Tracer) getProcessNameQuick(pid uint32) string {
 	if !validation.ValidatePID(pid) {

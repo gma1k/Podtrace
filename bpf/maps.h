@@ -42,13 +42,6 @@ struct {
 	__uint(max_entries, 1024);
 	__type(key, u64);
 	__type(value, u64);
-} file_inodes SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
-	__type(key, u64);
-	__type(value, u64);
 } tcp_sockets SEC(".maps");
 
 struct {
