@@ -39,7 +39,7 @@ By combining system-level details, application-layer insights, and real-time eve
 
 ### File System Monitoring
 - **File Operations**: Tracks read, write, and fsync operations with latency analysis
-- **File Path Tracking**: Captures full file paths using multi-strategy resolution (inode-based correlation with `open()` events)
+- **File Path Tracking**: Captures full file paths
 - **I/O Bandwidth**: Monitors bytes transferred for file read/write operations
 - **Throughput Analysis**: Calculates average throughput and peak transfer rates
 
