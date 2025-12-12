@@ -37,7 +37,7 @@ generate_vmlinux_if_missing() {
 	if command -v bpftool >/dev/null 2>&1; then
 		if [[ -f "/sys/kernel/btf/vmlinux" ]]; then
 			echo "Generating vmlinux.h from BTF..."
-			bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+			bpftool btf dump file /sys/kernel/btf/vmlinux format c >bpf/vmlinux.h
 			echo "vmlinux.h generated successfully"
 		else
 			echo "Warning: /sys/kernel/btf/vmlinux not found."
