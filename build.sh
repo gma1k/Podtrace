@@ -22,8 +22,9 @@ check_requirements() {
 generate_vmlinux_if_missing() {
 	if [[ -f "bpf/vmlinux.h" ]]; then
 		# If file is small (< 50KB), it's likely a placeholder - try to generate full version
-		local file_size=$(stat -f%z "bpf/vmlinux.h" 2>/dev/null || stat -c%s "bpf/vmlinux.h" 2>/dev/null || echo 0)
-		if [[ $file_size -lt 51200 ]]; then
+		local file_size
+		file_size=$(stat -f%z "bpf/vmlinux.h" 2>/dev/null || stat -c%s "bpf/vmlinux.h" 2>/dev/null || echo 0)
+		if [[ ${file_size} -lt 51200 ]]; then
 			echo "Found placeholder vmlinux.h. Attempting to generate full version from BTF..."
 		else
 			echo "Found vmlinux.h (full version, $((file_size / 1024))KB)"
