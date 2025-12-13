@@ -105,9 +105,9 @@ jobs:
               exit $TEST_EXIT_CODE
             fi
           else
-            echo "Running fast tests (no race detection) on PR or non-main branch"
+            echo "Running tests with race detection on PR"
             set +e
-            GOTOOLCHAIN=auto go test -short -parallel=4 -timeout=5m -coverprofile=coverage.out -covermode=atomic $PACKAGES
+            GOTOOLCHAIN=auto go test -short -race -parallel=4 -timeout=5m -coverprofile=coverage.out -covermode=atomic $PACKAGES
             TEST_EXIT_CODE=$?
             set -e
             if [ $TEST_EXIT_CODE -ne 0 ]; then
@@ -116,7 +116,7 @@ jobs:
             fi
           fi
           
-          echo "Running test/... tests (optional)..."
+          echo "Running test/... tests"
           GOTOOLCHAIN=auto go test -short -tags=integration -timeout=5m ./test/... || true
 
       - name: Generate coverage report
