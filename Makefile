@@ -53,11 +53,19 @@ deps:
 	$(GO) mod download
 	$(GO) mod tidy
 
-test: test-unit
+test: test-fast
+
+test-fast:
+	@echo "Running fast unit tests (no race detection)..."
+	$(GO) test -short -count=1 -parallel=4 -coverprofile=coverage.out -covermode=atomic $(shell $(GO) list ./... | grep -v '/test$$')
 
 test-unit:
-	@echo "Running unit tests..."
-	$(GO) test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	@echo "Running unit tests with race detection..."
+	$(GO) test -short -count=1 -race -coverprofile=coverage.out -covermode=atomic $(shell $(GO) list ./... | grep -v '/test$$')
+
+test-unit-verbose:
+	@echo "Running unit tests with verbose output..."
+	$(GO) test -v -short -count=1 -race -coverprofile=coverage.out -covermode=atomic $(shell $(GO) list ./... | grep -v '/test$$')
 
 test-integration:
 	@echo "Running integration tests..."
@@ -70,6 +78,21 @@ test-bench:
 test-all: test-unit test-bench
 	@if [ -n "$$CI" ]; then \
 		$(GO) test -tags=integration ./test; \
+	fi
+
+test-changed:
+	@echo "Running tests for changed packages only..."
+	@if command -v git >/dev/null 2>&1; then \
+		CHANGED=$$(git diff --name-only HEAD | grep '\.go$$' | xargs -r dirname | sort -u | sed 's|^|./|' | grep -E '^(./cmd|./internal)' || echo ""); \
+		if [ -n "$$CHANGED" ]; then \
+			echo "Testing changed packages: $$CHANGED"; \
+			$(GO) test -short -count=1 -parallel=4 $$CHANGED; \
+		else \
+			echo "No changed Go files found"; \
+		fi \
+	else \
+		echo "git not found, running all tests"; \
+		$(GO) test -short -count=1 -parallel=4 $(shell $(GO) list ./... | grep -v '/test$$'); \
 	fi
 
 coverage: test-unit
@@ -85,14 +108,17 @@ build-setup: build
 
 help:
 	@echo "Available targets:"
-	@echo "  all         - Build everything (default)"
-	@echo "  build       - Build the Go binary"
-	@echo "  build-setup - Build and set capabilities (requires sudo)"
-	@echo "  clean       - Remove build artifacts"
-	@echo "  deps        - Download and tidy Go dependencies"
-	@echo "  test        - Run unit tests"
-	@echo "  test-unit   - Run unit tests only"
+	@echo "  all              - Build everything (default)"
+	@echo "  build            - Build the Go binary"
+	@echo "  build-setup      - Build and set capabilities (requires sudo)"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  deps             - Download and tidy Go dependencies"
+	@echo "  test             - Run fast unit tests (no race detection, parallel)"
+	@echo "  test-fast        - Run fast unit tests (no race detection, parallel)"
+	@echo "  test-unit        - Run unit tests with race detection"
+	@echo "  test-unit-verbose - Run unit tests with verbose output"
+	@echo "  test-changed     - Run tests only for changed packages (requires git)"
 	@echo "  test-integration - Run integration tests (requires K8s cluster)"
-	@echo "  test-bench  - Run benchmark tests"
-	@echo "  test-all    - Run all tests"
-	@echo "  coverage    - Generate test coverage report"
+	@echo "  test-bench       - Run benchmark tests"
+	@echo "  test-all         - Run all tests"
+	@echo "  coverage         - Generate test coverage report"

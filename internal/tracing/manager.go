@@ -214,7 +214,7 @@ func (m *Manager) exportTraces() {
 		if err := m.splunkExporter.ExportTraces(traces); err != nil {
 			logger.Warn("Failed to export traces to Splunk", zap.Error(err))
 			manager := alerting.GetGlobalManager()
-			if manager != nil && !alerting.AlertSplunkEnabled {
+			if manager != nil && !config.AlertSplunkEnabled {
 				alert := &alerting.Alert{
 					Severity:  alerting.SeverityWarning,
 					Title:     "Splunk Exporter Failure",

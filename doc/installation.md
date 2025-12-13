@@ -137,7 +137,7 @@ You should see usage information.
 
 ### As a Pod
 
-You can run podtrace as a DaemonSet or Job in your cluster:
+You can run Podtrace as a DaemonSet or Job in your cluster:
 
 ```yaml
 apiVersion: v1

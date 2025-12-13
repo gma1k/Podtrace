@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 func TestNewManager_Disabled(t *testing.T) {
@@ -12,7 +14,7 @@ func TestNewManager_Disabled(t *testing.T) {
 	defer func() {
 		_ = os.Unsetenv("PODTRACE_ALERTING_ENABLED")
 	}()
-	AlertingEnabled = false
+	config.AlertingEnabled = false
 	manager, err := NewManager()
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)

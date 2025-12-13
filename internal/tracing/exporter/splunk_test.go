@@ -117,3 +117,136 @@ func TestSplunkExporter_Shutdown(t *testing.T) {
 		t.Errorf("Shutdown() error = %v", err)
 	}
 }
+
+func TestSplunkExporter_ExportTraces_WithSampledTrace(t *testing.T) {
+	exporter, err := NewSplunkExporter("http://localhost:8088/services/collector", "", 1.0)
+	if err != nil {
+		t.Fatalf("NewSplunkExporter() error = %v", err)
+	}
+	
+	trace := &tracker.Trace{
+		TraceID: "test123",
+		Spans: []*tracker.Span{
+			{
+				TraceID:   "test123",
+				SpanID:    "span123",
+				Operation: "test-op",
+				Service:   "test-service",
+				StartTime: time.Now(),
+				Duration:  100 * time.Millisecond,
+			},
+		},
+	}
+	
+	err = exporter.ExportTraces([]*tracker.Trace{trace})
+	if err != nil {
+		t.Logf("ExportTraces() error (expected for test without server): %v", err)
+	}
+}
+
+func TestSplunkExporter_ExportTraces_WithNotSampledTrace(t *testing.T) {
+	exporter, err := NewSplunkExporter("http://localhost:8088/services/collector", "", 0.0)
+	if err != nil {
+		t.Fatalf("NewSplunkExporter() error = %v", err)
+	}
+	
+	trace := &tracker.Trace{
+		TraceID: "test123",
+		Spans: []*tracker.Span{
+			{
+				TraceID:   "test123",
+				SpanID:    "span123",
+				Operation: "test-op",
+				Service:   "test-service",
+				StartTime: time.Now(),
+				Duration:  100 * time.Millisecond,
+			},
+		},
+	}
+	
+	err = exporter.ExportTraces([]*tracker.Trace{trace})
+	if err != nil {
+		t.Errorf("ExportTraces() error = %v", err)
+	}
+}
+
+func TestSplunkExporter_exportTrace_WithErrorSpan(t *testing.T) {
+	exporter, err := NewSplunkExporter("http://localhost:8088/services/collector", "", 1.0)
+	if err != nil {
+		t.Fatalf("NewSplunkExporter() error = %v", err)
+	}
+	
+	trace := &tracker.Trace{
+		TraceID: "test123",
+		Spans: []*tracker.Span{
+			{
+				TraceID:   "test123",
+				SpanID:    "span123",
+				Operation: "test-op",
+				Service:   "test-service",
+				StartTime: time.Now(),
+				Duration:  100 * time.Millisecond,
+				Error:     true,
+				Attributes: map[string]string{"key": "value"},
+			},
+		},
+	}
+	
+	err = exporter.exportTrace(trace)
+	if err != nil {
+		t.Logf("exportTrace() error (expected for test without server): %v", err)
+	}
+}
+
+func TestSplunkExporter_exportTrace_WithToken(t *testing.T) {
+	exporter, err := NewSplunkExporter("http://localhost:8088/services/collector", "test-token", 1.0)
+	if err != nil {
+		t.Fatalf("NewSplunkExporter() error = %v", err)
+	}
+	
+	trace := &tracker.Trace{
+		TraceID: "test123",
+		Spans: []*tracker.Span{
+			{
+				TraceID:   "test123",
+				SpanID:    "span123",
+				Operation: "test-op",
+				Service:   "test-service",
+				StartTime: time.Now(),
+				Duration:  100 * time.Millisecond,
+			},
+		},
+	}
+	
+	err = exporter.exportTrace(trace)
+	if err != nil {
+		t.Logf("exportTrace() error (expected for test without server): %v", err)
+	}
+}
+
+func TestSplunkExporter_exportTrace_WithParentSpanID(t *testing.T) {
+	exporter, err := NewSplunkExporter("http://localhost:8088/services/collector", "", 1.0)
+	if err != nil {
+		t.Fatalf("NewSplunkExporter() error = %v", err)
+	}
+	
+	trace := &tracker.Trace{
+		TraceID: "test123",
+		Spans: []*tracker.Span{
+			{
+				TraceID:      "test123",
+				SpanID:       "span123",
+				ParentSpanID: "parent123",
+				Operation:    "test-op",
+				Service:      "test-service",
+				StartTime:    time.Now(),
+				Duration:     100 * time.Millisecond,
+			},
+		},
+	}
+	
+	err = exporter.exportTrace(trace)
+	if err != nil {
+		t.Logf("exportTrace() error (expected for test without server): %v", err)
+	}
+}

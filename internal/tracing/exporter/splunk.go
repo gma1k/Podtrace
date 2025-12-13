@@ -100,7 +100,7 @@ func (e *SplunkExporter) exportTrace(t *tracker.Trace) error {
 
 		event := SplunkEvent{
 			Time:       span.StartTime.Unix(),
-			Sourcetype: "podtrace:trace",
+			Sourcetype: "Podtrace:trace",
 			Event:      eventData,
 		}
 

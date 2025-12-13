@@ -62,7 +62,7 @@ func main() {
 	var rootCmd = &cobra.Command{
 		Use:          "./bin/podtrace -n <namespace> <pod-name> --diagnose 10s",
 		Short:        "eBPF-based troubleshooting tool for Kubernetes pods",
-		Long:         `podtrace attaches eBPF program to a Kubernetes pod's container and prints high-level, human-readable events that help diagnose application issues.`,
+		Long:         `Podtrace attaches eBPF program to a Kubernetes pod's container and prints high-level, human-readable events that help diagnose application issues.`,
 		Args:         cobra.ExactArgs(1),
 		RunE:         runPodtrace,
 		SilenceUsage: true,

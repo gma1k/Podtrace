@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/gma1k/podtrace">
-    <img src="https://github.com/gma1k/podtrace/blob/main/assets/podtrace-logo.png" width="420" alt="podtrace logo"/>
+    <img src="https://github.com/gma1k/podtrace/blob/main/assets/podtrace-logo.png" width="420" alt="Podtrace logo"/>
   </a>
 </p>
 
@@ -243,11 +243,11 @@ http://localhost:3000/metrics
 
 ## Prometheus Scrape Configuration
 
-In your Prometheus scrape job, set <PODTRACE_HOST> to the address of the pod or host running podtrace.
+In your Prometheus scrape job, set <PODTRACE_HOST> to the address of the pod or host running Podtrace.
 
 ```bash
 scrape_configs:
-  - job_name: 'podtrace'
+  - job_name: 'Podtrace'
     static_configs:
       - targets: ['<PODTRACE_HOST>:3000']
 ```

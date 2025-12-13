@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/podtrace/podtrace/internal/alerting"
 	"github.com/podtrace/podtrace/internal/config"
 	"github.com/podtrace/podtrace/internal/diagnose/tracker"
 	"github.com/podtrace/podtrace/internal/events"
@@ -155,4 +156,762 @@ func TestManager_Shutdown_Enabled(t *testing.T) {
 	if err != nil {
 		t.Errorf("Shutdown() error = %v", err)
 	}
+}
+
+func TestManager_Start_Enabled(t *testing.T) {
+	original := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = original }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestManager_Start_StopCh(t *testing.T) {
+	original := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = original }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	close(manager.stopCh)
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestManager_ExportLoop_Ticker(t *testing.T) {
+	original := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = original }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.exportInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestManager_CleanupLoop_Ticker(t *testing.T) {
+	original := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = original }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.cleanupInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestManager_ExportTraces_Empty(t *testing.T) {
+	manager := &Manager{
+		enabled:      true,
+		traceTracker: tracker.NewTraceTracker(),
+	}
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_WithOTLPExporter(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_WithJaegerExporter(t *testing.T) {
+	originalJaeger := config.JaegerEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	defer func() {
+		config.JaegerEndpoint = originalJaeger
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_WithSplunkExporter(t *testing.T) {
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_AllExporters(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_OTLPError(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalTracing := config.TracingEnabled
+	originalAlerting := alerting.GetGlobalManager()
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://invalid-endpoint:4317"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.TracingEnabled = originalTracing
+		alerting.SetGlobalManager(originalAlerting)
+	}()
+
+	alertManager, _ := alerting.NewManager()
+	alerting.SetGlobalManager(alertManager)
+	defer alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_JaegerError(t *testing.T) {
+	originalJaeger := config.JaegerEndpoint
+	originalTracing := config.TracingEnabled
+	originalAlerting := alerting.GetGlobalManager()
+	config.TracingEnabled = true
+	config.JaegerEndpoint = "http://invalid-endpoint:14268/api/traces"
+	defer func() {
+		config.JaegerEndpoint = originalJaeger
+		config.TracingEnabled = originalTracing
+		alerting.SetGlobalManager(originalAlerting)
+	}()
+
+	alertManager, _ := alerting.NewManager()
+	alerting.SetGlobalManager(alertManager)
+	defer alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_SplunkError_AlertingDisabled(t *testing.T) {
+	originalSplunk := config.SplunkEndpoint
+	originalSplunkEnabled := config.AlertSplunkEnabled
+	originalTracing := config.TracingEnabled
+	originalAlerting := alerting.GetGlobalManager()
+	config.TracingEnabled = true
+	config.SplunkEndpoint = "http://invalid-endpoint:8088/services/collector"
+	config.AlertSplunkEnabled = false
+	defer func() {
+		config.SplunkEndpoint = originalSplunk
+		config.AlertSplunkEnabled = originalSplunkEnabled
+		config.TracingEnabled = originalTracing
+		alerting.SetGlobalManager(originalAlerting)
+	}()
+
+	alertManager, _ := alerting.NewManager()
+	alerting.SetGlobalManager(alertManager)
+	defer alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_SplunkError_NoAlertManager(t *testing.T) {
+	originalSplunk := config.SplunkEndpoint
+	originalSplunkEnabled := config.AlertSplunkEnabled
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.SplunkEndpoint = "http://invalid-endpoint:8088/services/collector"
+	config.AlertSplunkEnabled = false
+	defer func() {
+		config.SplunkEndpoint = originalSplunk
+		config.AlertSplunkEnabled = originalSplunkEnabled
+		config.TracingEnabled = originalTracing
+	}()
+
+	alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_OTLPError_NoAlertManager(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://invalid-endpoint:4317"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.TracingEnabled = originalTracing
+	}()
+
+	alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_JaegerError_NoAlertManager(t *testing.T) {
+	originalJaeger := config.JaegerEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.JaegerEndpoint = "http://invalid-endpoint:14268/api/traces"
+	defer func() {
+		config.JaegerEndpoint = originalJaeger
+		config.TracingEnabled = originalTracing
+	}()
+
+	alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_Shutdown_WithExporters(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	err = manager.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_Shutdown_ExportTracesOnShutdown(t *testing.T) {
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = originalTracing }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = manager.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_Shutdown_ExporterShutdownErrors(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = manager.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_ProcessEvent_NilEvent(t *testing.T) {
+	manager := &Manager{
+		enabled: true,
+	}
+	manager.ProcessEvent(nil, nil)
+}
+
+func TestManager_ProcessEvent_InvalidTraceContext(t *testing.T) {
+	manager := &Manager{
+		enabled:      true,
+		extractor:    extractor.NewHTTPExtractor(),
+		traceTracker: tracker.NewTraceTracker(),
+	}
+	event := &events.Event{
+		Type:      events.EventHTTPReq,
+		Details:   "invalid-trace-context",
+		Timestamp: uint64(time.Now().UnixNano()),
+	}
+	manager.ProcessEvent(event, nil)
+}
+
+func TestManager_ProcessEvent_WithK8sContext(t *testing.T) {
+	manager := &Manager{
+		enabled:      true,
+		extractor:    extractor.NewHTTPExtractor(),
+		traceTracker: tracker.NewTraceTracker(),
+	}
+	event := &events.Event{
+		Type:      events.EventHTTPReq,
+		TraceID:   "test-trace",
+		SpanID:    "test-span",
+		Timestamp: uint64(time.Now().UnixNano()),
+	}
+	k8sContext := map[string]interface{}{
+		"namespace": "test-ns",
+		"pod":       "test-pod",
+	}
+	manager.ProcessEvent(event, k8sContext)
+}
+
+func TestNewManager_WithAllExporters(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	if manager == nil {
+		t.Fatal("NewManager() returned nil")
+	}
+	if !manager.enabled {
+		t.Error("Manager should be enabled when TracingEnabled is true")
+	}
+}
+
+func TestNewManager_ExporterCreationErrors(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "invalid://endpoint"
+	config.JaegerEndpoint = "invalid://endpoint"
+	config.SplunkEndpoint = "invalid://endpoint"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() should not return error even if exporters fail: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("NewManager() returned nil")
+	}
+}
+
+func TestManager_ExportTraces_SplunkError_AlertingEnabled(t *testing.T) {
+	originalSplunk := config.SplunkEndpoint
+	originalSplunkEnabled := config.AlertSplunkEnabled
+	originalTracing := config.TracingEnabled
+	originalAlerting := alerting.GetGlobalManager()
+	config.TracingEnabled = true
+	config.SplunkEndpoint = "http://invalid-endpoint:8088/services/collector"
+	config.AlertSplunkEnabled = true
+	defer func() {
+		config.SplunkEndpoint = originalSplunk
+		config.AlertSplunkEnabled = originalSplunkEnabled
+		config.TracingEnabled = originalTracing
+		alerting.SetGlobalManager(originalAlerting)
+	}()
+
+	alertManager, _ := alerting.NewManager()
+	alerting.SetGlobalManager(alertManager)
+	defer alerting.SetGlobalManager(nil)
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_SuccessfulExport(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = ""
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_Shutdown_WithStartedManager(t *testing.T) {
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	defer func() { config.TracingEnabled = originalTracing }()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = manager.Start(ctx)
+	if err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	err = manager.Shutdown(shutdownCtx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_Shutdown_WithNilExporters(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = ""
+	config.JaegerEndpoint = ""
+	config.SplunkEndpoint = ""
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = manager.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_Shutdown_ExporterShutdownWithError(t *testing.T) {
+	originalOTLP := config.OTLPEndpoint
+	originalJaeger := config.JaegerEndpoint
+	originalSplunk := config.SplunkEndpoint
+	originalTracing := config.TracingEnabled
+	config.TracingEnabled = true
+	config.OTLPEndpoint = "http://localhost:4317"
+	config.JaegerEndpoint = "http://localhost:14268/api/traces"
+	config.SplunkEndpoint = "http://localhost:8088/services/collector"
+	defer func() {
+		config.OTLPEndpoint = originalOTLP
+		config.JaegerEndpoint = originalJaeger
+		config.SplunkEndpoint = originalSplunk
+		config.TracingEnabled = originalTracing
+	}()
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = manager.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManager_ExportTraces_OTLPExporterNil(t *testing.T) {
+	manager := &Manager{
+		enabled:      true,
+		traceTracker: tracker.NewTraceTracker(),
+		otlpExporter: nil,
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_JaegerExporterNil(t *testing.T) {
+	manager := &Manager{
+		enabled:        true,
+		traceTracker:   tracker.NewTraceTracker(),
+		jaegerExporter: nil,
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
+}
+
+func TestManager_ExportTraces_SplunkExporterNil(t *testing.T) {
+	manager := &Manager{
+		enabled:        true,
+		traceTracker:   tracker.NewTraceTracker(),
+		splunkExporter: nil,
+	}
+
+	manager.traceTracker.ProcessEvent(&events.Event{
+		Type:    events.EventHTTPReq,
+		TraceID: "test-trace",
+		SpanID:  "test-span",
+	}, nil)
+
+	manager.exportTraces()
 }

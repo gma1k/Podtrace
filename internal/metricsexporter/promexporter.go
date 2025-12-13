@@ -23,7 +23,7 @@ var (
 	rttHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "podtrace_rtt_seconds",
-			Help:    "RTT observed by podtrace.",
+			Help:    "RTT observed by Podtrace.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
 		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
@@ -32,7 +32,7 @@ var (
 	latencyHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "podtrace_latency_seconds",
-			Help:    "Latency observed by podtrace.",
+			Help:    "Latency observed by Podtrace.",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20),
 		},
 		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
@@ -88,7 +88,7 @@ var (
 	rttGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "podtrace_rtt_latest_seconds",
-			Help: "Most recent RTT observed by podtrace.",
+			Help: "Most recent RTT observed by Podtrace.",
 		},
 		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)
@@ -96,7 +96,7 @@ var (
 	latencyGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "podtrace_latency_latest_seconds",
-			Help: "Most recent latency observed by podtrace.",
+			Help: "Most recent latency observed by Podtrace.",
 		},
 		[]string{"type", "process_name", "namespace", "target_pod", "target_service"},
 	)

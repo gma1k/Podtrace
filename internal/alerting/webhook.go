@@ -8,9 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 type WebhookSender struct {
@@ -67,16 +68,15 @@ func (w *WebhookSender) Send(ctx context.Context, alert *Alert) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal alert: %w", err)
 	}
-	if int64(len(jsonData)) > AlertMaxPayloadSize {
-		return fmt.Errorf("payload size %d exceeds maximum %d", len(jsonData), AlertMaxPayloadSize)
+	if int64(len(jsonData)) > config.AlertMaxPayloadSize {
+		return fmt.Errorf("payload size %d exceeds maximum %d", len(jsonData), config.AlertMaxPayloadSize)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", w.url, bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	userAgent := getVersion()
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", config.GetUserAgent())
 	resp, err := w.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
@@ -94,12 +94,4 @@ func (w *WebhookSender) Send(ctx context.Context, alert *Alert) error {
 
 func (w *WebhookSender) Name() string {
 	return "webhook"
-}
-
-func getVersion() string {
-	version := os.Getenv("PODTRACE_VERSION")
-	if version == "" {
-		version = "unknown"
-	}
-	return "podtrace/" + version
 }

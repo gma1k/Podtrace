@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/podtrace/podtrace/internal/ebpf"
 	"github.com/podtrace/podtrace/internal/events"
 	"github.com/podtrace/podtrace/internal/kubernetes"
+	k8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"github.com/spf13/cobra"
 )
 
@@ -519,3 +522,212 @@ func TestRunPodtrace_WithEventFilter(t *testing.T) {
 	}
 }
 
+func TestRunPodtrace_WithTracing(t *testing.T) {
+	origResolverFactory := resolverFactory
+	origTracerFactory := tracerFactory
+	defer func() {
+		resolverFactory = origResolverFactory
+		tracerFactory = origTracerFactory
+	}()
+
+	resolverFactory = func() (kubernetes.PodResolverInterface, error) {
+		return &mockPodResolverWithClientset{}, nil
+	}
+	tracerFactory = func() (ebpf.TracerInterface, error) {
+		return &mockTracer{}, nil
+	}
+
+	origNamespace := namespace
+	origEnableTracing := enableTracing
+	origTracingOTLPEndpoint := tracingOTLPEndpoint
+	origTracingJaegerEndpoint := tracingJaegerEndpoint
+	origTracingSplunkEndpoint := tracingSplunkEndpoint
+	origTracingSplunkToken := tracingSplunkToken
+	origTracingSampleRate := tracingSampleRate
+	origDiagnoseDuration := diagnoseDuration
+	namespace = "default"
+	enableTracing = true
+	tracingOTLPEndpoint = "http://localhost:4318"
+	tracingJaegerEndpoint = "http://localhost:14268/api/traces"
+	tracingSplunkEndpoint = "http://localhost:8088/services/collector"
+	tracingSplunkToken = "test-token"
+	tracingSampleRate = 0.5
+	diagnoseDuration = "50ms"
+	defer func() {
+		namespace = origNamespace
+		enableTracing = origEnableTracing
+		tracingOTLPEndpoint = origTracingOTLPEndpoint
+		tracingJaegerEndpoint = origTracingJaegerEndpoint
+		tracingSplunkEndpoint = origTracingSplunkEndpoint
+		tracingSplunkToken = origTracingSplunkToken
+		tracingSampleRate = origTracingSampleRate
+		diagnoseDuration = origDiagnoseDuration
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		cmd := &cobra.Command{}
+		err := runPodtrace(cmd, []string{"test-pod"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Logf("runPodtrace completed with expected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("runPodtrace did not complete in time")
+	}
+}
+
+func TestRunPodtrace_WithEnrichment(t *testing.T) {
+	origResolverFactory := resolverFactory
+	origTracerFactory := tracerFactory
+	origEnv := os.Getenv("PODTRACE_K8S_ENRICHMENT_ENABLED")
+	defer func() {
+		resolverFactory = origResolverFactory
+		tracerFactory = origTracerFactory
+		if origEnv != "" {
+			_ = os.Setenv("PODTRACE_K8S_ENRICHMENT_ENABLED", origEnv)
+		} else {
+			_ = os.Unsetenv("PODTRACE_K8S_ENRICHMENT_ENABLED")
+		}
+	}()
+
+	resolverFactory = func() (kubernetes.PodResolverInterface, error) {
+		return &mockPodResolverWithClientset{}, nil
+	}
+	tracerFactory = func() (ebpf.TracerInterface, error) {
+		return &mockTracer{}, nil
+	}
+
+	_ = os.Setenv("PODTRACE_K8S_ENRICHMENT_ENABLED", "true")
+
+	origNamespace := namespace
+	origDiagnoseDuration := diagnoseDuration
+	namespace = "default"
+	diagnoseDuration = "50ms"
+	defer func() {
+		namespace = origNamespace
+		diagnoseDuration = origDiagnoseDuration
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		cmd := &cobra.Command{}
+		err := runPodtrace(cmd, []string{"test-pod"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Logf("runPodtrace completed with expected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("runPodtrace did not complete in time")
+	}
+}
+
+type mockPodResolverWithClientset struct {
+	mockPodResolver
+}
+
+func (m *mockPodResolverWithClientset) GetClientset() k8s.Interface {
+	return fake.NewSimpleClientset()
+}
+
+var _ kubernetes.ClientsetProvider = (*mockPodResolverWithClientset)(nil)
+
+func TestRunPodtrace_WithTracingSampleRateOutOfRange(t *testing.T) {
+	origResolverFactory := resolverFactory
+	origTracerFactory := tracerFactory
+	defer func() {
+		resolverFactory = origResolverFactory
+		tracerFactory = origTracerFactory
+	}()
+
+	resolverFactory = func() (kubernetes.PodResolverInterface, error) {
+		return &mockPodResolver{}, nil
+	}
+	tracerFactory = func() (ebpf.TracerInterface, error) {
+		return &mockTracer{}, nil
+	}
+
+	origNamespace := namespace
+	origEnableTracing := enableTracing
+	origTracingSampleRate := tracingSampleRate
+	origDiagnoseDuration := diagnoseDuration
+	namespace = "default"
+	enableTracing = true
+	tracingSampleRate = 1.5
+	diagnoseDuration = "50ms"
+	defer func() {
+		namespace = origNamespace
+		enableTracing = origEnableTracing
+		tracingSampleRate = origTracingSampleRate
+		diagnoseDuration = origDiagnoseDuration
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		cmd := &cobra.Command{}
+		err := runPodtrace(cmd, []string{"test-pod"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Logf("runPodtrace completed with expected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("runPodtrace did not complete in time")
+	}
+}
+
+func TestRunPodtrace_StopError(t *testing.T) {
+	origResolverFactory := resolverFactory
+	origTracerFactory := tracerFactory
+	defer func() {
+		resolverFactory = origResolverFactory
+		tracerFactory = origTracerFactory
+	}()
+
+	resolverFactory = func() (kubernetes.PodResolverInterface, error) {
+		return &mockPodResolver{}, nil
+	}
+	tracerFactory = func() (ebpf.TracerInterface, error) {
+		return &mockTracer{
+			stopFunc: func() error {
+				return errors.New("stop error")
+			},
+		}, nil
+	}
+
+	origNamespace := namespace
+	origDiagnoseDuration := diagnoseDuration
+	namespace = "default"
+	diagnoseDuration = "50ms"
+	defer func() {
+		namespace = origNamespace
+		diagnoseDuration = origDiagnoseDuration
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		cmd := &cobra.Command{}
+		err := runPodtrace(cmd, []string{"test-pod"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Logf("runPodtrace completed with expected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("runPodtrace did not complete in time")
+	}
+}

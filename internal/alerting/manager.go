@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 type Manager struct {
@@ -18,40 +20,40 @@ type Manager struct {
 }
 
 func NewManager() (*Manager, error) {
-	if !AlertingEnabled {
+	if !config.AlertingEnabled {
 		return &Manager{enabled: false}, nil
 	}
 	manager := &Manager{
 		senders:      make([]Sender, 0),
-		deduplicator: NewAlertDeduplicator(AlertDeduplicationWindow),
-		rateLimiter:  NewRateLimiter(AlertRateLimitPerMinute),
+		deduplicator: NewAlertDeduplicator(config.AlertDeduplicationWindow),
+		rateLimiter:  NewRateLimiter(config.AlertRateLimitPerMinute),
 		enabled:      true,
 		stopCh:       make(chan struct{}),
 	}
-	if AlertWebhookURL != "" {
-		webhookSender, err := NewWebhookSender(AlertWebhookURL, AlertHTTPTimeout)
+	if config.AlertWebhookURL != "" {
+		webhookSender, err := NewWebhookSender(config.AlertWebhookURL, config.AlertHTTPTimeout)
 		if err != nil {
 		} else {
-			retrySender := NewRetrySender(webhookSender, AlertMaxRetries, DefaultAlertRetryBackoffBase)
+			retrySender := NewRetrySender(webhookSender, config.AlertMaxRetries, config.DefaultAlertRetryBackoffBase)
 			manager.senders = append(manager.senders, retrySender)
 		}
 	}
-	if AlertSlackWebhookURL != "" {
-		slackSender, err := NewSlackSender(AlertSlackWebhookURL, AlertSlackChannel, AlertHTTPTimeout)
+	if config.AlertSlackWebhookURL != "" {
+		slackSender, err := NewSlackSender(config.AlertSlackWebhookURL, config.AlertSlackChannel, config.AlertHTTPTimeout)
 		if err != nil {
 		} else {
-			retrySender := NewRetrySender(slackSender, AlertMaxRetries, DefaultAlertRetryBackoffBase)
+			retrySender := NewRetrySender(slackSender, config.AlertMaxRetries, config.DefaultAlertRetryBackoffBase)
 			manager.senders = append(manager.senders, retrySender)
 		}
 	}
-	if AlertSplunkEnabled {
-		splunkEndpoint := GetSplunkEndpoint()
-		splunkToken := GetSplunkToken()
+	if config.AlertSplunkEnabled {
+		splunkEndpoint := config.GetSplunkEndpoint()
+		splunkToken := config.GetSplunkToken()
 		if splunkEndpoint != "" && splunkToken != "" {
-			splunkSender, err := NewSplunkAlertSender(splunkEndpoint, splunkToken, AlertHTTPTimeout)
+			splunkSender, err := NewSplunkAlertSender(splunkEndpoint, splunkToken, config.AlertHTTPTimeout)
 			if err != nil {
 			} else {
-				retrySender := NewRetrySender(splunkSender, AlertMaxRetries, DefaultAlertRetryBackoffBase)
+				retrySender := NewRetrySender(splunkSender, config.AlertMaxRetries, config.DefaultAlertRetryBackoffBase)
 				manager.senders = append(manager.senders, retrySender)
 			}
 		}
@@ -84,7 +86,7 @@ func (m *Manager) SendAlert(alert *Alert) {
 	m.mu.RUnlock()
 		for _, sender := range senders {
 			go func(s Sender) {
-				ctx, cancel := context.WithTimeout(context.Background(), AlertHTTPTimeout*2)
+				ctx, cancel := context.WithTimeout(context.Background(), config.AlertHTTPTimeout*2)
 				defer cancel()
 				_ = s.Send(ctx, alert)
 			}(sender)
@@ -98,7 +100,7 @@ func (m *Manager) cleanupLoop() {
 		case <-m.stopCh:
 			return
 		case <-m.cleanupTicker.C:
-			m.deduplicator.Cleanup(AlertDeduplicationWindow * 2)
+			m.deduplicator.Cleanup(config.AlertDeduplicationWindow * 2)
 		}
 	}
 }

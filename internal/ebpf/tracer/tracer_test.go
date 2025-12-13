@@ -1262,3 +1262,417 @@ func TestTracer_GetProcessNameQuick_CmdlineRootPath(t *testing.T) {
 	}
 }
 
+func TestTracer_Start_WithCgroupPath_NoMaps(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		cgroupPath: "/sys/fs/cgroup/test",
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx := context.Background()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected for nil collection: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err != nil {
+		t.Logf("Start returned error as expected: %v", err)
+	}
+}
+
+func TestTracer_Start_WithCgroupPath_NoLimitsMap(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		cgroupPath: "/sys/fs/cgroup/test",
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx := context.Background()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err != nil {
+		t.Logf("Start returned error as expected: %v", err)
+	}
+}
+
+func TestTracer_Start_PathCacheCleanup(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		collection: nil,
+		reader:     nil,
+		pathCache:  cache.NewPathCache(),
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+		cancel()
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTracer_Start_WithResourceMonitorError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cgroupPath := filepath.Join(tmpDir, "test-cgroup")
+	_ = os.MkdirAll(cgroupPath, 0755)
+
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		cgroupPath: cgroupPath,
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx := context.Background()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err != nil {
+		t.Logf("Start returned error as expected: %v", err)
+	}
+}
+
+func TestTracer_Stop_WithResourceMonitor(t *testing.T) {
+	tracer := &Tracer{
+		filter:          filter.NewCgroupFilter(),
+		links:           []link.Link{},
+		resourceMonitor: nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_WithPathCache(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		links:      []link.Link{},
+		pathCache:  cache.NewPathCache(),
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_CompleteCleanup(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		links:            []link.Link{},
+		reader:           nil,
+		collection:       nil,
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+		pathCache:        cache.NewPathCache(),
+		resourceMonitor:  nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Start_ContextDoneInEventLoop(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+		cancel()
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		cancel()
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestTracer_Start_EventProcessing_NoStackMap(t *testing.T) {
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		collection:       nil,
+		reader:           nil,
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, time.Second),
+		pathCache:        cache.NewPathCache(),
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTracer_Start_EventProcessing_WithTargetCache(t *testing.T) {
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		collection:       nil,
+		reader:           nil,
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, time.Second),
+		pathCache:        cache.NewPathCache(),
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTracer_Stop_WithAllComponents(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		links:            []link.Link{},
+		reader:           nil,
+		collection:       nil,
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+		pathCache:        cache.NewPathCache(),
+		resourceMonitor:  nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_WithNilProcessCache(t *testing.T) {
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		links:            []link.Link{},
+		processNameCache: nil,
+		pathCache:        cache.NewPathCache(),
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_WithNilPathCache(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		links:            []link.Link{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+		pathCache:        nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_Stop_WithNilResourceMonitor(t *testing.T) {
+	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
+	tracer := &Tracer{
+		filter:           filter.NewCgroupFilter(),
+		links:            []link.Link{},
+		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
+		pathCache:        cache.NewPathCache(),
+		resourceMonitor:  nil,
+	}
+
+	err := tracer.Stop()
+	if err != nil {
+		t.Errorf("Stop should not return error, got %v", err)
+	}
+}
+
+func TestTracer_SetContainerID_AllProbeTypes(t *testing.T) {
+	tracer := &Tracer{
+		filter:      filter.NewCgroupFilter(),
+		containerID: "",
+		links:       []link.Link{},
+		collection:  nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Log("SetContainerID panicked as expected for nil collection")
+		}
+	}()
+
+	err := tracer.SetContainerID("test-container")
+	if err == nil {
+		if tracer.containerID != "test-container" {
+			t.Errorf("Expected containerID 'test-container', got %q", tracer.containerID)
+		}
+	}
+}
+
+func TestTracer_SetContainerID_MultipleProbes(t *testing.T) {
+	tracer := &Tracer{
+		filter:      filter.NewCgroupFilter(),
+		containerID: "",
+		links:       []link.Link{},
+		collection:  nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Log("SetContainerID panicked as expected for nil collection")
+		}
+	}()
+
+	err := tracer.SetContainerID("container-1")
+	if err == nil {
+		err = tracer.SetContainerID("container-2")
+		if err == nil {
+			if tracer.containerID != "container-2" {
+				t.Errorf("Expected containerID 'container-2', got %q", tracer.containerID)
+			}
+		}
+	}
+}
+
+func TestTracer_Start_WithCgroupPath_ResourceMonitorMapsMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	cgroupPath := filepath.Join(tmpDir, "test-cgroup")
+	_ = os.MkdirAll(cgroupPath, 0755)
+
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		cgroupPath: cgroupPath,
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTracer_Start_WithoutCgroupPath(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		cgroupPath: "",
+		collection: nil,
+		reader:     nil,
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTracer_Start_PathCacheCleanupGoroutine(t *testing.T) {
+	tracer := &Tracer{
+		filter:     filter.NewCgroupFilter(),
+		collection: nil,
+		reader:     nil,
+		pathCache:  cache.NewPathCache(),
+	}
+
+	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		if r := recover(); r != nil {
+			t.Logf("Start panicked as expected: %v", r)
+		}
+	}()
+
+	err := tracer.Start(ctx, eventChan)
+	if err == nil {
+		time.Sleep(35 * time.Second)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+

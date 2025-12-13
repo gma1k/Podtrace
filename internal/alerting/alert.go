@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 type AlertSeverity string
@@ -137,5 +139,13 @@ func SeverityLevel(severity AlertSeverity) int {
 	default:
 		return 0
 	}
+}
+
+func ShouldSendAlert(severity AlertSeverity) bool {
+	if !config.AlertingEnabled {
+		return false
+	}
+	minSeverity := ParseSeverity(config.GetAlertMinSeverity())
+	return SeverityLevel(severity) >= SeverityLevel(minSeverity)
 }
 

@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -146,6 +147,123 @@ func TestContextEnricher_ResolvePodByIP(t *testing.T) {
 		}
 	} else {
 		t.Log("pod resolution returned nil, which may be expected with fake client limitations")
+	}
+}
+
+func TestIsPrivateIP_ValidPrivateIPs(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+		want bool
+	}{
+		{"loopback", "127.0.0.1", true},
+		{"private class A", "10.0.0.1", true},
+		{"private class B", "172.16.0.1", true},
+		{"private class C", "192.168.1.1", true},
+		{"link local unicast", "169.254.1.1", true},
+		{"public IP", "8.8.8.8", false},
+		{"public IP 2", "1.1.1.1", false},
+		{"invalid IP", "not-an-ip", false},
+		{"empty", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isPrivateIP(tt.ip)
+			if got != tt.want {
+				t.Errorf("isPrivateIP(%q) = %v, want %v", tt.ip, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetIntEnvOrDefault_EmptyValue(t *testing.T) {
+	origValue := os.Getenv("TEST_ENV_VAR")
+	defer func() {
+		if origValue != "" {
+			_ = os.Setenv("TEST_ENV_VAR", origValue)
+		} else {
+			_ = os.Unsetenv("TEST_ENV_VAR")
+		}
+	}()
+	
+	_ = os.Unsetenv("TEST_ENV_VAR")
+	
+	result := getIntEnvOrDefault("TEST_ENV_VAR", 100)
+	if result != 100 {
+		t.Errorf("Expected default value 100, got %d", result)
+	}
+}
+
+func TestGetIntEnvOrDefault_ValidValue(t *testing.T) {
+	origValue := os.Getenv("TEST_ENV_VAR")
+	defer func() {
+		if origValue != "" {
+			_ = os.Setenv("TEST_ENV_VAR", origValue)
+		} else {
+			_ = os.Unsetenv("TEST_ENV_VAR")
+		}
+	}()
+	
+	_ = os.Setenv("TEST_ENV_VAR", "200")
+	
+	result := getIntEnvOrDefault("TEST_ENV_VAR", 100)
+	if result != 200 {
+		t.Errorf("Expected value 200, got %d", result)
+	}
+}
+
+func TestGetIntEnvOrDefault_InvalidValue(t *testing.T) {
+	origValue := os.Getenv("TEST_ENV_VAR")
+	defer func() {
+		if origValue != "" {
+			_ = os.Setenv("TEST_ENV_VAR", origValue)
+		} else {
+			_ = os.Unsetenv("TEST_ENV_VAR")
+		}
+	}()
+	
+	_ = os.Setenv("TEST_ENV_VAR", "invalid")
+	
+	result := getIntEnvOrDefault("TEST_ENV_VAR", 100)
+	if result != 100 {
+		t.Errorf("Expected default value 100 for invalid input, got %d", result)
+	}
+}
+
+func TestGetIntEnvOrDefault_ZeroValue(t *testing.T) {
+	origValue := os.Getenv("TEST_ENV_VAR")
+	defer func() {
+		if origValue != "" {
+			_ = os.Setenv("TEST_ENV_VAR", origValue)
+		} else {
+			_ = os.Unsetenv("TEST_ENV_VAR")
+		}
+	}()
+	
+	_ = os.Setenv("TEST_ENV_VAR", "0")
+	
+	result := getIntEnvOrDefault("TEST_ENV_VAR", 100)
+	if result != 100 {
+		t.Errorf("Expected default value 100 for zero input, got %d", result)
+	}
+}
+
+func TestGetIntEnvOrDefault_NegativeValue(t *testing.T) {
+	origValue := os.Getenv("TEST_ENV_VAR")
+	defer func() {
+		if origValue != "" {
+			_ = os.Setenv("TEST_ENV_VAR", origValue)
+		} else {
+			_ = os.Unsetenv("TEST_ENV_VAR")
+		}
+	}()
+	
+	_ = os.Setenv("TEST_ENV_VAR", "-10")
+	
+	result := getIntEnvOrDefault("TEST_ENV_VAR", 100)
+	if result != 100 {
+		t.Errorf("Expected default value 100 for negative input, got %d", result)
 	}
 }
 

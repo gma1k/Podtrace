@@ -1,8 +1,8 @@
-# Distributed Tracing with podtrace
+# Distributed Tracing with Podtrace
 
 ## Overview
 
-`podtrace` supports distributed tracing, allowing you to correlate events. This feature extracts trace context from HTTP requests, correlates events by trace ID, and exports traces to popular observability backends.
+`Podtrace` supports distributed tracing, allowing you to correlate events. This feature extracts trace context from HTTP requests, correlates events by trace ID, and exports traces to popular observability backends.
 
 ## Features
 
@@ -56,7 +56,7 @@
 
 ### Trace Context Extraction
 
-`podtrace` extracts trace context from HTTP/HTTP2 headers (including gRPC metadata) in the following order:
+`Podtrace` extracts trace context from HTTP/HTTP2 headers (including gRPC metadata) in the following order:
 
 1. **W3C Trace Context** (preferred)
    - `traceparent`: `00-<trace-id>-<span-id>-<flags>`
@@ -210,7 +210,7 @@ All tracing configuration can be set via:
 
 ## Request Flow Graphs
 
-`podtrace` builds request flow graphs showing service interactions:
+`Podtrace` builds request flow graphs showing service interactions:
 
 - **Nodes**: Services/pods in your cluster
 - **Edges**: HTTP requests between services

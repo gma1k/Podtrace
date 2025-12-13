@@ -29,6 +29,7 @@ const (
 	DefaultAlertMaxRetries       = 3
 	DefaultAlertRetryBackoffBase = 1 * time.Second
 	DefaultAlertMaxPayloadSize   = 1024 * 1024
+	DefaultVersion               = "v0.7.0"
 )
 
 const (
@@ -97,6 +98,7 @@ var (
 	MaxBytesForBandwidth      = getInt64EnvOrDefault("PODTRACE_MAX_BYTES_FOR_BANDWIDTH", DefaultMaxBytesForBandwidth)
 	EventSamplingRate         = getIntEnvOrDefault("PODTRACE_EVENT_SAMPLING_RATE", DefaultEventSamplingRate)
 	ContainerPID              = getIntEnvOrDefault("PODTRACE_CONTAINER_PID", DefaultContainerPID)
+	Version                   = getEnvOrDefault("PODTRACE_VERSION", DefaultVersion)
 )
 
 const (
@@ -342,4 +344,26 @@ func AllowNonLoopbackMetrics() bool {
 
 func GetAlertMinSeverity() string {
 	return getEnvOrDefault("PODTRACE_ALERT_MIN_SEVERITY", "warning")
+}
+
+func GetSplunkEndpoint() string {
+	if AlertSplunkEnabled {
+		return SplunkEndpoint
+	}
+	return ""
+}
+
+func GetSplunkToken() string {
+	if AlertSplunkEnabled {
+		return SplunkToken
+	}
+	return ""
+}
+
+func GetVersion() string {
+	return Version
+}
+
+func GetUserAgent() string {
+	return "Podtrace/" + Version
 }

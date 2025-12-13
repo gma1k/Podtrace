@@ -5,7 +5,7 @@ set -e
 BPF_OBJ="$(make -pn | awk '/^BPF_OBJ/ {print $3}' || true)"
 
 print_header() {
-	echo "Building podtrace..."
+	echo "Building Podtrace..."
 }
 
 check_requirements() {

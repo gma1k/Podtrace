@@ -1,6 +1,6 @@
 # Tracing Exporters Setup Guide
 
-This guide provides detailed instructions for setting up and configuring each tracing exporter supported by `podtrace`.
+This guide provides detailed instructions for setting up and configuring each tracing exporter supported by `Podtrace`.
 
 ## Table of Contents
 
@@ -13,7 +13,7 @@ This guide provides detailed instructions for setting up and configuring each tr
 
 ### Overview
 
-OpenTelemetry Protocol (OTLP) is the industry-standard protocol for observability data. `podtrace` exports traces via OTLP HTTP to any OpenTelemetry-compatible backend.
+OpenTelemetry Protocol (OTLP) is the industry-standard protocol for observability data. `Podtrace` exports traces via OTLP HTTP to any OpenTelemetry-compatible backend.
 
 ### Supported Backends
 
@@ -120,7 +120,7 @@ service:
       exporters: [jaeger, splunk_hec, logging]
 ```
 
-#### 2. Configure podtrace
+#### 2. Configure Podtrace
 
 ```bash
 ./bin/podtrace -n production my-pod \
@@ -162,7 +162,7 @@ kubectl logs -n monitoring deployment/otel-collector | grep "traces"
 
 ### Overview
 
-Jaeger is a popular open-source distributed tracing system. `podtrace` exports traces directly to Jaeger's HTTP Thrift endpoint.
+Jaeger is a popular open-source distributed tracing system. `Podtrace` exports traces directly to Jaeger's HTTP Thrift endpoint.
 
 ### Setup
 
@@ -220,7 +220,7 @@ spec:
     targetPort: 14250
 ```
 
-#### 2. Configure podtrace
+#### 2. Configure Podtrace
 
 ```bash
 ./bin/podtrace -n production my-pod \
@@ -250,14 +250,14 @@ kubectl logs -n monitoring deployment/jaeger | grep "POST /api/traces"
 ```
 
 2. Query traces in Jaeger UI:
-   - Select service: `podtrace`
+   - Select service: `Podtrace`
    - Click "Find Traces"
 
 ## Splunk HEC
 
 ### Overview
 
-Splunk HTTP Event Collector (HEC) is Splunk's API for ingesting events. `podtrace` exports traces as JSON events to Splunk HEC.
+Splunk HTTP Event Collector (HEC) is Splunk's API for ingesting events. `Podtrace` exports traces as JSON events to Splunk HEC.
 
 ### Setup
 
@@ -266,12 +266,12 @@ Splunk HTTP Event Collector (HEC) is Splunk's API for ingesting events. `podtrac
 1. **Access Splunk Web UI**
 2. **Navigate to**: Settings → Data Inputs → HTTP Event Collector
 3. **Create New Token**:
-   - Name: `podtrace-tracing`
-   - Source type: `podtrace:trace`
+   - Name: `Podtrace-tracing`
+   - Source type: `Podtrace:trace`
    - Index: `main` (or create dedicated index)
 4. **Copy the token**
 
-#### 2. Configure podtrace
+#### 2. Configure Podtrace
 
 ```bash
 ./bin/podtrace -n production my-pod \
@@ -293,7 +293,7 @@ kubectl create secret generic splunk-hec-token \
   --from-literal=token=YOUR_HEC_TOKEN \
   -n monitoring
 
-# Use in podtrace (if running as pod)
+# Use in Podtrace (if running as pod)
 env:
 - name: PODTRACE_TRACING_SPLUNK_TOKEN
   valueFrom:
@@ -306,17 +306,17 @@ env:
 
 #### Find All Traces
 ```
-index=main sourcetype="podtrace:trace"
+index=main sourcetype="Podtrace:trace"
 ```
 
 #### Find Traces by Service
 ```
-index=main sourcetype="podtrace:trace" service="my-service"
+index=main sourcetype="Podtrace:trace" service="my-service"
 ```
 
 #### Find Error Traces
 ```
-index=main sourcetype="podtrace:trace" error=true
+index=main sourcetype="Podtrace:trace" error=true
 ```
 
 ### Verification
@@ -327,5 +327,5 @@ index=main sourcetype="podtrace:trace" error=true
 
 2. **Query Splunk**:
 ```spl
-index=main sourcetype="podtrace:trace" | head 10
+index=main sourcetype="Podtrace:trace" | head 10
 ```

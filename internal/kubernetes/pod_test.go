@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -841,6 +842,422 @@ func TestResolvePod_ContainerID_NoSeparator(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid container ID format") {
 		t.Errorf("expected error about invalid container ID format, got: %v", err)
+	}
+}
+
+func TestPodResolver_GetClientset(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	resolver := NewPodResolverForTesting(clientset)
+	
+	result := resolver.GetClientset()
+	if result != clientset {
+		t.Error("GetClientset() should return the same clientset")
+	}
+}
+
+func TestFindCgroupPathFromProc_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "abcdef1234567890"
+	pid := "12345"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupPath := filepath.Join(tmpDir, "kubepods", "pod_"+containerID)
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		t.Fatalf("failed to create cgroup path: %v", err)
+	}
+	cgroupProcsPath := filepath.Join(cgroupPath, "cgroup.procs")
+	if err := os.WriteFile(cgroupProcsPath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create cgroup.procs: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	path, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithShortID(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	fullID := "abcdef1234567890abcdef1234567890abcdef12"
+	shortID := fullID[:12]
+	pid := "12346"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupPath := filepath.Join(tmpDir, "kubepods", "pod_"+shortID)
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		t.Fatalf("failed to create cgroup path: %v", err)
+	}
+	cgroupProcsPath := filepath.Join(cgroupPath, "cgroup.procs")
+	if err := os.WriteFile(cgroupProcsPath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create cgroup.procs: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", shortID)
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	path, err := findCgroupPathFromProc(fullID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithV1Format(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "test123"
+	pid := "12347"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupPath := filepath.Join(tmpDir, "kubepods", "pod_"+containerID)
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		t.Fatalf("failed to create cgroup path: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := fmt.Sprintf("1:cpu:/kubepods/pod_%s\n", containerID)
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	path, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithRootPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "test456"
+	pid := "12348"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupProcsPath := filepath.Join(tmpDir, "cgroup.procs")
+	if err := os.WriteFile(cgroupProcsPath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create cgroup.procs: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := "0::/\n"
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	path, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathFromProc_ReadDirError(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(filepath.Join(tmpDir, "nonexistent"))
+	defer func() { config.SetProcBasePath(origProcBase) }()
+	
+	_, err := findCgroupPathFromProc("test123")
+	if err == nil {
+		t.Error("Expected error when proc path doesn't exist")
+	}
+}
+
+func TestFindCgroupPathFromProc_NonNumericPID(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+	
+	nonNumericDir := filepath.Join(tmpDir, "not-a-pid")
+	if err := os.MkdirAll(nonNumericDir, 0755); err != nil {
+		t.Fatalf("failed to create non-numeric dir: %v", err)
+	}
+	
+	_, err := findCgroupPathFromProc("test123")
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (expected): %v", err)
+	}
+}
+
+func TestFindCgroupPathV2_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origCgroupBase := config.CgroupBasePath
+	config.SetCgroupBasePath(tmpDir)
+	defer func() { config.SetCgroupBasePath(origCgroupBase) }()
+	
+	_, err := findCgroupPathV2("nonexistent-container")
+	if err == nil {
+		t.Error("Expected error for nonexistent container")
+	}
+}
+
+func TestFindCgroupPathV2_FoundInKubepods(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origCgroupBase := config.CgroupBasePath
+	config.SetCgroupBasePath(tmpDir)
+	defer func() { config.SetCgroupBasePath(origCgroupBase) }()
+	
+	containerID := "test789"
+	kubepodsPath := filepath.Join(tmpDir, "kubepods", "pod_"+containerID)
+	if err := os.MkdirAll(kubepodsPath, 0755); err != nil {
+		t.Fatalf("failed to create kubepods path: %v", err)
+	}
+	cgroupProcsPath := filepath.Join(kubepodsPath, "cgroup.procs")
+	if err := os.WriteFile(cgroupProcsPath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create cgroup.procs: %v", err)
+	}
+	
+	path, err := findCgroupPathV2(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathV2 returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathV2_WithShortID(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origCgroupBase := config.CgroupBasePath
+	config.SetCgroupBasePath(tmpDir)
+	defer func() { config.SetCgroupBasePath(origCgroupBase) }()
+	
+	fullID := "abcdef1234567890abcdef1234567890abcdef12"
+	shortID := fullID[:12]
+	kubepodsPath := filepath.Join(tmpDir, "kubepods.slice", "pod_"+shortID)
+	if err := os.MkdirAll(kubepodsPath, 0755); err != nil {
+		t.Fatalf("failed to create kubepods path: %v", err)
+	}
+	cgroupProcsPath := filepath.Join(kubepodsPath, "cgroup.procs")
+	if err := os.WriteFile(cgroupProcsPath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create cgroup.procs: %v", err)
+	}
+	
+	path, err := findCgroupPathV2(fullID)
+	if err != nil {
+		t.Logf("findCgroupPathV2 returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithV1Format_PartsLessThan3(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "test123"
+	pid := "12349"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := "1:cpu:\n"
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	_, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (expected): %v", err)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithV1Format_EmptyCgroupPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "test123"
+	pid := "12350"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := "1:cpu:/\n"
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	_, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (expected): %v", err)
+	}
+}
+
+func TestFindCgroupPathFromProc_WithV1Format_EmptyLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origProcBase := config.ProcBasePath
+	origCgroupBase := config.CgroupBasePath
+	config.SetProcBasePath(tmpDir)
+	config.SetCgroupBasePath(tmpDir)
+	defer func() {
+		config.SetProcBasePath(origProcBase)
+		config.SetCgroupBasePath(origCgroupBase)
+	}()
+	
+	containerID := "test123"
+	pid := "12351"
+	procDir := filepath.Join(tmpDir, pid)
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+	
+	cgroupFile := filepath.Join(procDir, "cgroup")
+	cgroupContent := fmt.Sprintf("   \n1:cpu:/kubepods/pod_%s\n", containerID)
+	if err := os.WriteFile(cgroupFile, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup file: %v", err)
+	}
+	
+	cgroupPath := filepath.Join(tmpDir, "kubepods", "pod_"+containerID)
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		t.Fatalf("failed to create cgroup path: %v", err)
+	}
+	
+	path, err := findCgroupPathFromProc(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathFromProc returned error (may be expected): %v", err)
+	}
+	if path != "" {
+		t.Logf("Found cgroup path: %s", path)
+	}
+}
+
+func TestFindCgroupPathV2_WalkError(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origCgroupBase := config.CgroupBasePath
+	config.SetCgroupBasePath(tmpDir)
+	defer func() { config.SetCgroupBasePath(origCgroupBase) }()
+	
+	kubepodsPath := filepath.Join(tmpDir, "kubepods")
+	if err := os.MkdirAll(kubepodsPath, 0755); err != nil {
+		t.Fatalf("failed to create kubepods path: %v", err)
+	}
+	if err := os.Chmod(kubepodsPath, 0000); err != nil {
+		t.Fatalf("failed to chmod: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(kubepodsPath, 0755)
+	}()
+	
+	_, err := findCgroupPathV2("test123")
+	if err != nil {
+		t.Logf("findCgroupPathV2 returned error (expected): %v", err)
+	}
+}
+
+func TestFindCgroupPathV2_NoCgroupProcs(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	origCgroupBase := config.CgroupBasePath
+	config.SetCgroupBasePath(tmpDir)
+	defer func() { config.SetCgroupBasePath(origCgroupBase) }()
+	
+	containerID := "test123"
+	kubepodsPath := filepath.Join(tmpDir, "kubepods", "pod_"+containerID)
+	if err := os.MkdirAll(kubepodsPath, 0755); err != nil {
+		t.Fatalf("failed to create kubepods path: %v", err)
+	}
+	
+	_, err := findCgroupPathV2(containerID)
+	if err != nil {
+		t.Logf("findCgroupPathV2 returned error (expected when no cgroup.procs): %v", err)
 	}
 }
 

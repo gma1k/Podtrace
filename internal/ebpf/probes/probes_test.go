@@ -1485,3 +1485,569 @@ func TestAttachTLSProbes_NoPrograms(t *testing.T) {
 		t.Logf("AttachTLSProbes returned %d links (expected 0 when no programs)", len(links))
 	}
 }
+
+func TestAttachPoolProbes(t *testing.T) {
+	coll := &ebpf.Collection{
+		Programs: make(map[string]*ebpf.Program),
+	}
+
+	tests := []struct {
+		name        string
+		containerID string
+	}{
+		{"empty container ID", ""},
+		{"non-empty container ID", "test-container"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			links := AttachPoolProbes(coll, tt.containerID)
+			if len(links) > 0 {
+				t.Logf("AttachPoolProbes returned %d links", len(links))
+			} else {
+				t.Log("AttachPoolProbes returned nil or empty slice (expected when no DB libs found)")
+			}
+		})
+	}
+}
+
+func TestAttachPoolProbes_WithPrograms(t *testing.T) {
+	coll := &ebpf.Collection{
+		Programs: map[string]*ebpf.Program{
+			"uprobe_sqlite3_prepare_v2":    {},
+			"uretprobe_sqlite3_finalize":   {},
+			"uprobe_sqlite3_step":          {},
+			"uretprobe_sqlite3_step":       {},
+			"uprobe_PQconnectStart":        {},
+			"uretprobe_PQfinish":            {},
+			"uprobe_PQexec_pool":            {},
+			"uprobe_mysql_real_connect":     {},
+			"uretprobe_mysql_close":         {},
+			"uprobe_mysql_real_query_pool":  {},
+		},
+	}
+
+	links := AttachPoolProbes(coll, "")
+	if len(links) > 0 {
+		t.Logf("AttachPoolProbes returned %d links", len(links))
+	} else {
+		t.Log("AttachPoolProbes returned nil or empty slice (expected when no DB libs found)")
+	}
+}
+
+func TestFindGoBinaryInProcess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12355)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	binaryPath := filepath.Join(tmpDir, "bin", "test-binary")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0755); err != nil {
+		t.Fatalf("failed to create bin dir: %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	exePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink(binaryPath, exePath); err != nil {
+		t.Fatalf("failed to create exe symlink: %v", err)
+	}
+
+	result := findGoBinaryInProcess(pid)
+	if result == "" {
+		t.Log("findGoBinaryInProcess returned empty (expected when binary not found in container root)")
+	}
+}
+
+func TestFindGoBinaryInProcess_RelativePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12356)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	binaryPath := filepath.Join(tmpDir, "bin", "test-binary")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0755); err != nil {
+		t.Fatalf("failed to create bin dir: %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	exePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink("bin/test-binary", exePath); err != nil {
+		t.Fatalf("failed to create exe symlink: %v", err)
+	}
+
+	cwdPath := filepath.Join(procDir, "cwd")
+	if err := os.Symlink(tmpDir, cwdPath); err != nil {
+		t.Fatalf("failed to create cwd symlink: %v", err)
+	}
+
+	result := findGoBinaryInProcess(pid)
+	if result == "" {
+		t.Log("findGoBinaryInProcess returned empty (expected when binary not found)")
+	}
+}
+
+func TestFindGoBinaryInProcess_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(99999)
+	result := findGoBinaryInProcess(pid)
+	if result != "" {
+		t.Errorf("Expected empty, got %q", result)
+	}
+}
+
+func TestFindGoBinaryViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12357)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	binaryPath := filepath.Join(tmpDir, "bin", "test-binary")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0755); err != nil {
+		t.Fatalf("failed to create bin dir: %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", binaryPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findGoBinaryViaProcessMaps(pid)
+	if result != binaryPath {
+		t.Logf("findGoBinaryViaProcessMaps returned %q (expected %q)", result, binaryPath)
+	}
+}
+
+func TestFindGoBinaryViaProcessMaps_WithContainerRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12358)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	procRoot := filepath.Join(procDir, "root")
+	containerBinaryPath := "/bin/test-binary"
+	hostBinaryPath := filepath.Join(procRoot, strings.TrimPrefix(containerBinaryPath, "/"))
+	if err := os.MkdirAll(filepath.Dir(hostBinaryPath), 0755); err != nil {
+		t.Fatalf("failed to create bin dir: %v", err)
+	}
+	if err := os.WriteFile(hostBinaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", containerBinaryPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findGoBinaryViaProcessMaps(pid)
+	if result == "" {
+		t.Log("findGoBinaryViaProcessMaps returned empty (expected when binary not found)")
+	}
+}
+
+func TestFindGoBinaryViaProcessMaps_SkipsLibraries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12359)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	mapsContent := "7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 /lib/libc.so.6\n"
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findGoBinaryViaProcessMaps(pid)
+	if result != "" {
+		t.Errorf("Expected empty (should skip .so files), got %q", result)
+	}
+}
+
+func TestFindGoBinaryViaProcessMaps_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(99999)
+	result := findGoBinaryViaProcessMaps(pid)
+	if result != "" {
+		t.Errorf("Expected empty, got %q", result)
+	}
+}
+
+func TestFindGoBinaryInContainer(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-go-container"
+	pid := uint32(12360)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	procRoot := filepath.Join(procDir, "root")
+	binaryPath := "/app/test-binary"
+	hostBinaryPath := filepath.Join(procRoot, strings.TrimPrefix(binaryPath, "/"))
+	if err := os.MkdirAll(filepath.Dir(hostBinaryPath), 0755); err != nil {
+		t.Fatalf("failed to create app dir: %v", err)
+	}
+	if err := os.WriteFile(hostBinaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	cmdlinePath := filepath.Join(procDir, "cmdline")
+	if err := os.WriteFile(cmdlinePath, []byte(binaryPath+"\x00"), 0644); err != nil {
+		t.Fatalf("failed to create cmdline: %v", err)
+	}
+
+	result := findGoBinaryInContainer(containerID, pid)
+	if result == "" {
+		t.Log("findGoBinaryInContainer returned empty (expected when binary not found)")
+	}
+}
+
+func TestFindGoBinaryInContainer_ViaComm(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-go-container-comm"
+	pid := uint32(12361)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	procRoot := filepath.Join(procDir, "root")
+	binaryPath := "/app/test-binary"
+	hostBinaryPath := filepath.Join(procRoot, strings.TrimPrefix(binaryPath, "/"))
+	if err := os.MkdirAll(filepath.Dir(hostBinaryPath), 0755); err != nil {
+		t.Fatalf("failed to create app dir: %v", err)
+	}
+	if err := os.WriteFile(hostBinaryPath, []byte("fake binary"), 0755); err != nil {
+		t.Fatalf("failed to create binary: %v", err)
+	}
+
+	commPath := filepath.Join(procDir, "comm")
+	if err := os.WriteFile(commPath, []byte("test-binary\n"), 0644); err != nil {
+		t.Fatalf("failed to create comm: %v", err)
+	}
+
+	result := findGoBinaryInContainer(containerID, pid)
+	if result == "" {
+		t.Log("findGoBinaryInContainer returned empty (expected when binary not found)")
+	}
+}
+
+func TestFindGoBinaryInContainer_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(99999)
+	result := findGoBinaryInContainer("test-container", pid)
+	if result != "" {
+		t.Errorf("Expected empty, got %q", result)
+	}
+}
+
+func TestFindTLSLibsViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12362)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libsslPath := filepath.Join(tmpDir, "usr", "lib", "x86_64-linux-gnu", "libssl.so.3")
+	if err := os.MkdirAll(filepath.Dir(libsslPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libsslPath, []byte("fake libssl"), 0644); err != nil {
+		t.Fatalf("failed to create libssl: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libsslPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findTLSLibsViaProcessMaps(pid, []string{"libssl.so.3", "libcrypto.so.3"})
+	if len(result) == 0 {
+		t.Error("findTLSLibsViaProcessMaps should find libssl")
+	}
+	if len(result) > 0 && result[0] != libsslPath {
+		t.Errorf("Expected %q, got %q", libsslPath, result[0])
+	}
+}
+
+func TestFindTLSLibsViaProcessMaps_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	pid := uint32(12363)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	mapsContent := "7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 /lib/other.so\n"
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findTLSLibsViaProcessMaps(pid, []string{"libssl.so.3"})
+	if len(result) != 0 {
+		t.Errorf("Expected empty, got %v", result)
+	}
+}
+
+func TestFindTLSLibsViaProcessMaps_InvalidPid(t *testing.T) {
+	result := findTLSLibsViaProcessMaps(99999, []string{"libssl.so.3"})
+	if len(result) != 0 {
+		t.Errorf("Expected empty, got %v", result)
+	}
+}
+
+func TestFindTLSLibsInContainer_ViaProcessMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-tls-container"
+	pid := uint32(12364)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libsslPath := filepath.Join(tmpDir, "usr", "lib", "x86_64-linux-gnu", "libssl.so.3")
+	if err := os.MkdirAll(filepath.Dir(libsslPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libsslPath, []byte("fake libssl"), 0644); err != nil {
+		t.Fatalf("failed to create libssl: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libsslPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findTLSLibsInContainer(containerID, []string{"libssl.so.3"})
+	if len(result) == 0 {
+		t.Log("findTLSLibsInContainer returned empty (may not find in test environment)")
+	} else {
+		found := false
+		for _, path := range result {
+			if strings.Contains(path, "libssl.so.3") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Log("findTLSLibsInContainer did not find libssl via process maps")
+		}
+	}
+}
+
+func TestAttachDBProbes_DirectoryInsteadOfFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	libpqPath := filepath.Join(tmpDir, "libpq.so.5")
+	if err := os.MkdirAll(libpqPath, 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	coll := &ebpf.Collection{
+		Programs: map[string]*ebpf.Program{
+			"uprobe_PQexec": {},
+		},
+	}
+
+	links := AttachDBProbes(coll, "")
+	if len(links) > 0 {
+		t.Logf("AttachDBProbes returned %d links", len(links))
+	} else {
+		t.Log("AttachDBProbes returned nil or empty slice (expected when path is directory)")
+	}
+}
+
+func TestFindLibcInContainer_AllPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-libc-all-paths"
+	pid := uint32(12365)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libcPath := filepath.Join(tmpDir, "lib", "x86_64-linux-gnu", "libc.so.6")
+	if err := os.MkdirAll(filepath.Dir(libcPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libcPath, []byte("fake libc"), 0644); err != nil {
+		t.Fatalf("failed to create libc: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libcPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findLibcInContainer(containerID)
+	if result == "" {
+		t.Log("findLibcInContainer returned empty (may not find in test environment)")
+	} else if result != libcPath {
+		t.Logf("findLibcInContainer returned %q (expected %q)", result, libcPath)
+	}
+}
+
+func TestProbeAttachError_Unwrap(t *testing.T) {
+	originalErr := fmt.Errorf("original error")
+	err := NewProbeAttachError("test_probe", originalErr)
+	
+	unwrapped := err.Unwrap()
+	if unwrapped != originalErr {
+		t.Errorf("Unwrap() = %v, want %v", unwrapped, originalErr)
+	}
+}
+
+func TestFindDBLibsInContainer_AllPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origProcBase := config.ProcBasePath
+	config.SetProcBasePath(tmpDir)
+	defer func() { config.SetProcBasePath(origProcBase) }()
+
+	containerID := "test-db-all-paths"
+	pid := uint32(12366)
+	procDir := filepath.Join(tmpDir, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(procDir, 0755); err != nil {
+		t.Fatalf("failed to create proc dir: %v", err)
+	}
+
+	libpqPath := filepath.Join(tmpDir, "usr", "lib", "x86_64-linux-gnu", "libpq.so.5")
+	if err := os.MkdirAll(filepath.Dir(libpqPath), 0755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	if err := os.WriteFile(libpqPath, []byte("fake libpq"), 0644); err != nil {
+		t.Fatalf("failed to create libpq: %v", err)
+	}
+
+	cgroupContent := fmt.Sprintf("0::/kubepods/pod_%s\n", containerID)
+	cgroupPath := filepath.Join(procDir, "cgroup")
+	if err := os.WriteFile(cgroupPath, []byte(cgroupContent), 0644); err != nil {
+		t.Fatalf("failed to create cgroup: %v", err)
+	}
+
+	mapsContent := fmt.Sprintf("7f8a1c000000-7f8a1c021000 r-xp 00000000 08:01 123456 %s\n", libpqPath)
+	mapsPath := filepath.Join(procDir, "maps")
+	if err := os.WriteFile(mapsPath, []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("failed to create maps: %v", err)
+	}
+
+	result := findDBLibsInContainer(containerID, []string{"libpq.so.5"})
+	if len(result) == 0 {
+		t.Log("findDBLibsInContainer returned empty (may not find in test environment)")
+	} else {
+		found := false
+		for _, path := range result {
+			if strings.Contains(path, "libpq.so.5") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Log("findDBLibsInContainer did not find libpq")
+		}
+	}
+}

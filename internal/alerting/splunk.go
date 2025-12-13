@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/podtrace/podtrace/internal/config"
 )
 
 type SplunkAlertSender struct {
@@ -75,15 +77,15 @@ func (s *SplunkAlertSender) Send(ctx context.Context, alert *Alert) error {
 	}
 	event := SplunkAlertEvent{
 		Time:       alert.Timestamp.Unix(),
-		Sourcetype: "podtrace:alert",
+		Sourcetype: "Podtrace:alert",
 		Event:      eventData,
 	}
 	jsonData, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal Splunk event: %w", err)
 	}
-	if int64(len(jsonData)) > AlertMaxPayloadSize {
-		return fmt.Errorf("payload size %d exceeds maximum %d", len(jsonData), AlertMaxPayloadSize)
+	if int64(len(jsonData)) > config.AlertMaxPayloadSize {
+		return fmt.Errorf("payload size %d exceeds maximum %d", len(jsonData), config.AlertMaxPayloadSize)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", s.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
@@ -91,7 +93,7 @@ func (s *SplunkAlertSender) Send(ctx context.Context, alert *Alert) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Splunk "+s.token)
-	req.Header.Set("User-Agent", "podtrace/1.0")
+	req.Header.Set("User-Agent", config.GetUserAgent())
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)

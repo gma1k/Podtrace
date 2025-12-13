@@ -42,7 +42,7 @@ func NewOTLPExporter(endpoint string, sampleRate float64) (*OTLPExporter, error)
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
-			semconv.ServiceNameKey.String("podtrace"),
+			semconv.ServiceNameKey.String("Podtrace"),
 		),
 	)
 	if err != nil {
@@ -59,7 +59,7 @@ func NewOTLPExporter(endpoint string, sampleRate float64) (*OTLPExporter, error)
 	return &OTLPExporter{
 		exporter:   otlpExporter,
 		tp:         tp,
-		tracer:     tp.Tracer("podtrace"),
+		tracer:     tp.Tracer("Podtrace"),
 		endpoint:   endpoint,
 		enabled:    true,
 		sampleRate: sampleRate,

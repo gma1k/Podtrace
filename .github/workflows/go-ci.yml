@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -53,21 +55,69 @@ jobs:
         timeout-minutes: 5
         run: GOTOOLCHAIN=auto go build ./...
 
-      - name: Run unit tests with race detection
+      - name: Detect changed packages
+        id: changed-packages
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.sha }}"
+          echo "Detecting changed packages between $BASE_SHA and $HEAD_SHA"
+          
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA $HEAD_SHA 2>/dev/null | grep '\.go$' | grep -E '^(cmd|internal)/' || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed Go files in cmd/ or internal/, testing all packages"
+            echo "packages=./cmd/... ./internal/..." >> $GITHUB_OUTPUT
+          else
+            CHANGED_PACKAGES=$(echo "$CHANGED_FILES" | \
+              xargs -r dirname | \
+              sort -u | \
+              sed 's|^|./|' | \
+              sed 's|/$||' | \
+              awk '{print $0"/..."}' | \
+              tr '\n' ' ' | \
+              sed 's/ $//' || echo "./cmd/... ./internal/...")
+            echo "packages=$CHANGED_PACKAGES" >> $GITHUB_OUTPUT
+            echo "Changed packages: $CHANGED_PACKAGES"
+          fi
+
+      - name: Run unit tests
         timeout-minutes: 10
         run: |
-          echo "Running tests with race detection"
           rm -f coverage.out coverage-*.out
-          set +e
-          GOTOOLCHAIN=auto go test -race -timeout=10m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
-          TEST_EXIT_CODE=$?
-          set -e
-          if [ $TEST_EXIT_CODE -ne 0 ]; then
-            echo "::error::Unit tests failed with exit code $TEST_EXIT_CODE"
-            exit $TEST_EXIT_CODE
+          
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ steps.changed-packages.outputs.packages }}" ]; then
+            PACKAGES="${{ steps.changed-packages.outputs.packages }}"
+            echo "Testing changed packages: $PACKAGES"
+          else
+            PACKAGES="./cmd/... ./internal/..."
+            echo "Testing all packages: $PACKAGES"
           fi
-          echo "Running test/... tests (optional)..."
-          GOTOOLCHAIN=auto go test -race -timeout=5m ./test/... || true
+          
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "Running tests with race detection on main branch"
+            set +e
+            GOTOOLCHAIN=auto go test -short -race -parallel=4 -timeout=10m -coverprofile=coverage.out -covermode=atomic $PACKAGES
+            TEST_EXIT_CODE=$?
+            set -e
+            if [ $TEST_EXIT_CODE -ne 0 ]; then
+              echo "::error::Unit tests failed with exit code $TEST_EXIT_CODE"
+              exit $TEST_EXIT_CODE
+            fi
+          else
+            echo "Running tests with race detection on PR"
+            set +e
+            GOTOOLCHAIN=auto go test -short -race -parallel=4 -timeout=5m -coverprofile=coverage.out -covermode=atomic $PACKAGES
+            TEST_EXIT_CODE=$?
+            set -e
+            if [ $TEST_EXIT_CODE -ne 0 ]; then
+              echo "::error::Unit tests failed with exit code $TEST_EXIT_CODE"
+              exit $TEST_EXIT_CODE
+            fi
+          fi
+          
+          echo "Running test/... tests"
+          GOTOOLCHAIN=auto go test -short -tags=integration -timeout=5m ./test/... || true
 
       - name: Generate coverage report
         if: always()

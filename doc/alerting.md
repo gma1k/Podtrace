@@ -84,7 +84,7 @@ Alerts will be sent automatically when issues are detected.
 | `PODTRACE_SPLUNK_ENDPOINT` | (from tracing config) | Splunk HEC endpoint |
 | `PODTRACE_SPLUNK_TOKEN` | (from tracing config) | Splunk HEC token |
 
-**Note**: Splunk alerts use the same endpoint as tracing but with `sourcetype=podtrace:alert` instead of `podtrace:trace`.
+**Note**: Splunk alerts use the same endpoint as tracing but with `sourcetype=Podtrace:alert` instead of `Podtrace:trace`.
 
 ### Advanced Configuration
 
@@ -212,7 +212,7 @@ Triggered when fatal errors occur:
   "recommendations": [
     "Check CAP_SYS_ADMIN capability",
     "Verify cgroup path exists",
-    "Check podtrace permissions"
+    "Check Podtrace permissions"
   ]
 }
 ```
@@ -271,7 +271,7 @@ export PODTRACE_ALERT_RATE_LIMIT=10
 ```bash
 export PODTRACE_ALERTING_ENABLED=true
 export PODTRACE_ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
-export PODTRACE_ALERT_SLACK_CHANNEL="#podtrace-alerts"
+export PODTRACE_ALERT_SLACK_CHANNEL="#Podtrace-alerts"
 export PODTRACE_ALERT_MIN_SEVERITY=critical
 
 ./bin/podtrace -n production my-pod
@@ -318,7 +318,7 @@ Configure PagerDuty to accept the webhook payload format.
 
 ```bash
 export PODTRACE_ALERTING_ENABLED=true
-export PODTRACE_ALERT_WEBHOOK_URL=https://api.opsgenie.com/v1/json/podtrace
+export PODTRACE_ALERT_WEBHOOK_URL=https://api.opsgenie.com/v1/json/Podtrace
 export PODTRACE_ALERT_MIN_SEVERITY=warning
 ```
 
