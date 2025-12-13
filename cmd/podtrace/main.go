@@ -42,6 +42,7 @@ var (
 	tracingSplunkEndpoint string
 	tracingSplunkToken    string
 	tracingSampleRate     float64
+	showVersion           bool
 
 	resolverFactory func() (kubernetes.PodResolverInterface, error)
 	tracerFactory   func() (ebpf.TracerInterface, error)
@@ -63,7 +64,7 @@ func main() {
 		Use:          "./bin/podtrace -n <namespace> <pod-name> --diagnose 10s",
 		Short:        "eBPF-based troubleshooting tool for Kubernetes pods",
 		Long:         `Podtrace attaches eBPF program to a Kubernetes pod's container and prints high-level, human-readable events that help diagnose application issues.`,
-		Args:         cobra.ExactArgs(1),
+		Args:         cobra.MaximumNArgs(1),
 		RunE:         runPodtrace,
 		SilenceUsage: true,
 	}
@@ -84,6 +85,7 @@ func main() {
 	rootCmd.Flags().StringVar(&tracingSplunkEndpoint, "tracing-splunk-endpoint", config.DefaultSplunkEndpoint, "Splunk HEC endpoint")
 	rootCmd.Flags().StringVar(&tracingSplunkToken, "tracing-splunk-token", "", "Splunk HEC token")
 	rootCmd.Flags().Float64Var(&tracingSampleRate, "tracing-sample-rate", config.DefaultTracingSampleRate, "Tracing sample rate (0.0-1.0)")
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Print version information")
 
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if logLevel != "" {
@@ -99,6 +101,15 @@ func main() {
 }
 
 func runPodtrace(cmd *cobra.Command, args []string) error {
+	if showVersion {
+		fmt.Println(config.GetVersion())
+		return nil
+	}
+
+	if len(args) < 1 {
+		return fmt.Errorf("pod name is required")
+	}
+
 	if enableTracing {
 		config.TracingEnabled = true
 		if tracingOTLPEndpoint != "" {
