@@ -94,6 +94,13 @@ static inline struct event *get_event_buf(void) {
 	struct event *e = bpf_map_lookup_elem(&event_buf, &zero);
 	if (e) {
 		__builtin_memset(e, 0, sizeof(*e));
+		e->cgroup_id = bpf_get_current_cgroup_id();
+		bpf_get_current_comm(&e->comm, sizeof(e->comm));
+
+		u64 *target = bpf_map_lookup_elem(&target_cgroup_id, &zero);
+		if (target && *target != 0 && *target != e->cgroup_id) {
+			return NULL;
+		}
 	}
 	return e;
 }

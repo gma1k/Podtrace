@@ -100,6 +100,13 @@ struct {
 	__type(value, u32);
 } cgroup_alerts SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, u64);
+} target_cgroup_id SEC(".maps");
+
 struct pool_state {
 	u64 last_use_ns;
 	u32 connection_id;

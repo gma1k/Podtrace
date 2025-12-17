@@ -39,6 +39,60 @@ func GenerateSummarySection(d Diagnostician, duration time.Duration) string {
 	return report
 }
 
+func GenerateCgroupScopeSection(d Diagnostician) string {
+	evs := d.GetEvents()
+	if len(evs) == 0 {
+		return ""
+	}
+
+	zero := 0
+	counts := make(map[uint64]int)
+	for _, e := range evs {
+		if e == nil {
+			continue
+		}
+		if e.CgroupID == 0 {
+			zero++
+			continue
+		}
+		counts[e.CgroupID]++
+	}
+
+	var report string
+	report += "Cgroup Scope:\n"
+	report += fmt.Sprintf("  Events with cgroup_id=0: %d (%.1f%%)\n", zero, float64(zero)*100.0/float64(len(evs)))
+	report += fmt.Sprintf("  Distinct non-zero cgroup_ids: %d\n", len(counts))
+
+	// Show top 3 cgroup ids by volume (helps detect "slipping" quickly).
+	type kv struct {
+		id    uint64
+		count int
+	}
+	var top []kv
+	for id, c := range counts {
+		top = append(top, kv{id: id, count: c})
+	}
+	sort.Slice(top, func(i, j int) bool { return top[i].count > top[j].count })
+	limit := 3
+	if len(top) < limit {
+		limit = len(top)
+	}
+	if limit > 0 {
+		report += "  Top cgroup_ids:\n"
+		for i := 0; i < limit; i++ {
+			report += fmt.Sprintf("    - %d: %d events (%.1f%%)\n", top[i].id, top[i].count, float64(top[i].count)*100.0/float64(len(evs)))
+		}
+	}
+	if len(counts) > 1 {
+		report += "  Warning: multiple cgroup_ids seen; target scoping may be too broad.\n"
+	}
+	if zero == len(evs) {
+		report += "  Warning: all events have cgroup_id=0; your loaded BPF object may not include cgroup_id support.\n"
+	}
+	report += "\n"
+	return report
+}
+
 func GenerateDNSSection(d Diagnostician, duration time.Duration) string {
 	dnsEvents := d.FilterEvents(events.EventDNS)
 	if len(dnsEvents) == 0 {

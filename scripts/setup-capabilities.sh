@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BINARY="${PROJECT_ROOT}/bin/podtrace"
 
-REQUIRED_CAPS="cap_bpf,cap_sys_admin,cap_sys_resource"
+REQUIRED_CAPS="cap_bpf,cap_sys_admin,cap_sys_resource,cap_net_admin"
 
 check_binary_exists() {
 	if [[ ! -f "${BINARY}" ]]; then

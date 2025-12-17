@@ -12,7 +12,24 @@ BINARY = bin/podtrace
 # For Go < 1.21, user needs to upgrade Go manually
 export GOTOOLCHAIN=auto
 
-BPF_CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v3
+BPF_MCPU ?= v2
+BPF_GOARCH ?= $(shell $(GO) env GOARCH)
+
+ifeq ($(BPF_GOARCH),amd64)
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_x86
+else ifeq ($(BPF_GOARCH),arm64)
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_arm64
+else ifeq ($(BPF_GOARCH),ppc64le)
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_powerpc
+else ifeq ($(BPF_GOARCH),s390x)
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_s390
+else ifeq ($(BPF_GOARCH),riscv64)
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_riscv
+else
+  BPF_ARCH_DEFINE = -D__TARGET_ARCH_x86
+endif
+
+BPF_CFLAGS = -O2 -g -target bpf $(BPF_ARCH_DEFINE) -mcpu=$(BPF_MCPU)
 
 all: check-go build
 

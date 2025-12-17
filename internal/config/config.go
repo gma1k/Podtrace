@@ -29,7 +29,7 @@ const (
 	DefaultAlertMaxRetries       = 3
 	DefaultAlertRetryBackoffBase = 1 * time.Second
 	DefaultAlertMaxPayloadSize   = 1024 * 1024
-	DefaultVersion               = "v0.7.0"
+	DefaultVersion               = "v0.8.0"
 )
 
 const (
@@ -205,6 +205,7 @@ var (
 	CgroupBasePath     = getEnvOrDefault("PODTRACE_CGROUP_BASE", "/sys/fs/cgroup")
 	ProcBasePath       = getEnvOrDefault("PODTRACE_PROC_BASE", "/proc")
 	BPFObjectPath      = getEnvOrDefault("PODTRACE_BPF_OBJECT", "bpf/podtrace.bpf.o")
+	BTFFilePath        = getEnvOrDefault("PODTRACE_BTF_FILE", "")
 	DockerBasePath     = getEnvOrDefault("PODTRACE_DOCKER_BASE", DockerContainersPath)
 	ContainerdBasePath = getEnvOrDefault("PODTRACE_CONTAINERD_BASE", "/var/lib/containerd")
 	LdSoConfBasePath   = getEnvOrDefault("PODTRACE_LDSOCONF_BASE", "/etc")

@@ -95,7 +95,7 @@ func TestServiceResolver_ResolveService_WrongPort(t *testing.T) {
 func TestServiceResolver_ResolveService_EmptyIP(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo := resolver.ResolveService(context.Background(), "", 8080)
 	if serviceInfo != nil {
 		t.Errorf("Expected nil for empty IP, got %+v", serviceInfo)
@@ -105,7 +105,7 @@ func TestServiceResolver_ResolveService_EmptyIP(t *testing.T) {
 func TestServiceResolver_ResolveService_ZeroPort(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo := resolver.ResolveService(context.Background(), "10.244.1.5", 0)
 	if serviceInfo != nil {
 		t.Errorf("Expected nil for zero port, got %+v", serviceInfo)
@@ -114,7 +114,7 @@ func TestServiceResolver_ResolveService_ZeroPort(t *testing.T) {
 
 func TestServiceResolver_ResolveService_NilClientset(t *testing.T) {
 	resolver := NewServiceResolver(nil)
-	
+
 	serviceInfo := resolver.ResolveService(context.Background(), "10.244.1.5", 8080)
 	if serviceInfo != nil {
 		t.Errorf("Expected nil for nil clientset, got %+v", serviceInfo)
@@ -127,7 +127,7 @@ func TestServiceResolver_ResolveService_CacheHit(t *testing.T) {
 			Name: "default",
 		},
 	}
-	
+
 	endpoints := &corev1.Endpoints{ //nolint:staticcheck // Endpoints API still widely used
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-service",
@@ -144,13 +144,13 @@ func TestServiceResolver_ResolveService_CacheHit(t *testing.T) {
 			},
 		},
 	}
-	
+
 	clientset := fake.NewSimpleClientset(ns, endpoints)
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo1 := resolver.ResolveService(context.Background(), "10.244.1.5", 8080)
 	serviceInfo2 := resolver.ResolveService(context.Background(), "10.244.1.5", 8080)
-	
+
 	if serviceInfo1 != nil && serviceInfo2 != nil {
 		if serviceInfo1.Name != serviceInfo2.Name {
 			t.Error("Expected cached result to match first result")
@@ -164,7 +164,7 @@ func TestServiceResolver_ResolveService_CacheExpired(t *testing.T) {
 			Name: "default",
 		},
 	}
-	
+
 	endpoints := &corev1.Endpoints{ //nolint:staticcheck // Endpoints API still widely used
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-service",
@@ -181,17 +181,17 @@ func TestServiceResolver_ResolveService_CacheExpired(t *testing.T) {
 			},
 		},
 	}
-	
+
 	clientset := fake.NewSimpleClientset(ns, endpoints)
 	resolver := NewServiceResolver(clientset)
 	resolver.cacheTTL = 100 * time.Millisecond
-	
+
 	serviceInfo1 := resolver.ResolveService(context.Background(), "10.244.1.5", 8080)
-	
+
 	time.Sleep(150 * time.Millisecond)
-	
+
 	serviceInfo2 := resolver.ResolveService(context.Background(), "10.244.1.5", 8080)
-	
+
 	if serviceInfo1 != nil && serviceInfo2 != nil {
 		if serviceInfo1.Name != serviceInfo2.Name {
 			t.Log("Cache expired and service was re-resolved")
@@ -205,10 +205,10 @@ func TestServiceResolver_FetchServiceByEndpoint_NotFound(t *testing.T) {
 			Name: "default",
 		},
 	}
-	
+
 	clientset := fake.NewSimpleClientset(ns)
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo := resolver.fetchServiceByEndpoint(context.Background(), "10.244.1.5", 8080)
 	if serviceInfo != nil {
 		t.Errorf("Expected nil for non-existent endpoint, got %+v", serviceInfo)
@@ -221,7 +221,7 @@ func TestServiceResolver_FetchServiceByEndpoint_WrongIP(t *testing.T) {
 			Name: "default",
 		},
 	}
-	
+
 	endpoints := &corev1.Endpoints{ //nolint:staticcheck // Endpoints API still widely used
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-service",
@@ -238,10 +238,10 @@ func TestServiceResolver_FetchServiceByEndpoint_WrongIP(t *testing.T) {
 			},
 		},
 	}
-	
+
 	clientset := fake.NewSimpleClientset(ns, endpoints)
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo := resolver.fetchServiceByEndpoint(context.Background(), "10.244.1.6", 8080)
 	if serviceInfo != nil {
 		t.Errorf("Expected nil for wrong IP, got %+v", serviceInfo)
@@ -254,7 +254,7 @@ func TestServiceResolver_FetchServiceByEndpoint_MultipleSubsets(t *testing.T) {
 			Name: "default",
 		},
 	}
-	
+
 	endpoints := &corev1.Endpoints{ //nolint:staticcheck // Endpoints API still widely used
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-service",
@@ -279,10 +279,10 @@ func TestServiceResolver_FetchServiceByEndpoint_MultipleSubsets(t *testing.T) {
 			},
 		},
 	}
-	
+
 	clientset := fake.NewSimpleClientset(ns, endpoints)
 	resolver := NewServiceResolver(clientset)
-	
+
 	serviceInfo := resolver.fetchServiceByEndpoint(context.Background(), "10.244.1.5", 8080)
 	if serviceInfo != nil {
 		if serviceInfo.Name != "test-service" {
@@ -290,4 +290,3 @@ func TestServiceResolver_FetchServiceByEndpoint_MultipleSubsets(t *testing.T) {
 		}
 	}
 }
-

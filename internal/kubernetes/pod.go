@@ -14,7 +14,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/podtrace/podtrace/internal/config"
+	"github.com/podtrace/podtrace/internal/cri"
+	"github.com/podtrace/podtrace/internal/logger"
 	"github.com/podtrace/podtrace/internal/validation"
+	"go.uber.org/zap"
 )
 
 type PodResolver struct {
@@ -118,14 +121,24 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, contai
 		return nil, NewInvalidContainerIDError("validation failed")
 	}
 
-	cgroupPath, err := findCgroupPath(shortID)
-	if err != nil {
-		cgroupPathFromProc, procErr := findCgroupPathFromProc(shortID)
-		if procErr == nil && cgroupPathFromProc != "" {
-			cgroupPath = cgroupPathFromProc
+	cgroupPath, err := resolveCgroupPathCRI(ctx, shortID)
+	if err != nil || cgroupPath == "" {
+		logger.Debug("CRI cgroup resolution failed, trying filesystem scan", zap.Error(err), zap.String("container_id", shortID))
+		cgroupPath, err = findCgroupPath(shortID)
+		if err != nil {
+			logger.Debug("Filesystem cgroup scan failed, trying /proc fallback", zap.Error(err), zap.String("container_id", shortID))
+			cgroupPathFromProc, procErr := findCgroupPathFromProc(shortID)
+			if procErr == nil && cgroupPathFromProc != "" {
+				cgroupPath = cgroupPathFromProc
+				logger.Debug("Found cgroup path via /proc fallback", zap.String("cgroup_path", cgroupPath))
+			} else {
+				return nil, NewCgroupNotFoundError(shortID)
+			}
 		} else {
-			return nil, NewCgroupNotFoundError(shortID)
+			logger.Debug("Found cgroup path via filesystem scan", zap.String("cgroup_path", cgroupPath))
 		}
+	} else {
+		logger.Debug("Found cgroup path via CRI", zap.String("cgroup_path", cgroupPath))
 	}
 
 	labels := make(map[string]string)
@@ -152,6 +165,47 @@ func (r *PodResolver) ResolvePod(ctx context.Context, podName, namespace, contai
 		OwnerKind:     ownerKind,
 		OwnerName:     ownerName,
 	}, nil
+}
+
+func resolveCgroupPathCRI(ctx context.Context, containerID string) (string, error) {
+	if os.Getenv("PODTRACE_CRI_RESOLVE") == "false" {
+		return "", errors.New("podtrace: CRI resolution disabled")
+	}
+	r, err := cri.NewResolver()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = r.Close() }()
+
+	info, err := r.ResolveContainer(ctx, containerID)
+	if err != nil {
+		return "", err
+	}
+	if info == nil || info.CgroupsPath == "" {
+		return "", errors.New("podtrace: CRI returned no cgroups path")
+	}
+
+	cg := info.CgroupsPath
+	if !strings.HasPrefix(cg, "/") {
+		cg = "/" + cg
+	}
+	if cg == "/" {
+		return "", errors.New("podtrace: CRI returned root cgroups path")
+	}
+	fullPath := filepath.Join(config.CgroupBasePath, strings.TrimPrefix(cg, "/"))
+	if fullPath == config.CgroupBasePath {
+		return "", errors.New("podtrace: resolved to cgroup base path")
+	}
+	if _, err := os.Stat(fullPath); err == nil {
+		return fullPath, nil
+	}
+	if _, err := os.Stat(cg); err == nil {
+		if cg == config.CgroupBasePath {
+			return "", errors.New("podtrace: resolved to cgroup base path")
+		}
+		return cg, nil
+	}
+	return "", errors.New("podtrace: CRI cgroup path not found on filesystem")
 }
 
 type PodInfo struct {

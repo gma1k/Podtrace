@@ -2,119 +2,46 @@ package loader
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/podtrace/podtrace/internal/config"
 )
 
-func TestLoadPodtrace(t *testing.T) {
-	originalPath := config.BPFObjectPath
-	defer func() { config.BPFObjectPath = originalPath }()
-
-	tests := []struct {
-		name          string
-		setupPath     string
-		expectError   bool
-		expectNilSpec bool
-	}{
-		{
-			name:          "non-existent path",
-			setupPath:     "/nonexistent/path/to/bpf.o",
-			expectError:   true,
-			expectNilSpec: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config.BPFObjectPath = tt.setupPath
-			spec, err := LoadPodtrace()
-
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-			if tt.expectNilSpec && spec != nil {
-				t.Error("Expected nil spec but got non-nil")
-			}
-			if !tt.expectNilSpec && spec == nil {
-				t.Error("Expected non-nil spec but got nil")
-			}
-		})
-	}
-}
-
-func TestLoadPodtraceFallback(t *testing.T) {
-	originalPath := config.BPFObjectPath
-	defer func() { config.BPFObjectPath = originalPath }()
-
-	tempDir := t.TempDir()
-	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
-	fallbackPath := filepath.Join(tempDir, "..", "bpf", "podtrace.bpf.o")
-
-	_ = os.MkdirAll(filepath.Dir(primaryPath), 0755)
-	_ = os.MkdirAll(filepath.Dir(fallbackPath), 0755)
-
-	config.BPFObjectPath = primaryPath
-
-	spec, err := LoadPodtrace()
-	if err == nil && spec == nil {
-		t.Log("LoadPodtrace returned nil spec without error (expected for non-existent BPF object)")
-	}
-}
-
-func TestLoadPodtrace_FallbackPath(t *testing.T) {
-	originalPath := config.BPFObjectPath
-	defer func() { config.BPFObjectPath = originalPath }()
-
-	tempDir := t.TempDir()
-	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
-	fallbackDir := filepath.Join(tempDir, "..", "bpf")
-
-	_ = os.MkdirAll(filepath.Dir(primaryPath), 0755)
-	_ = os.MkdirAll(fallbackDir, 0755)
-
-	config.BPFObjectPath = primaryPath
-
-	spec, err := LoadPodtrace()
-	if err == nil && spec == nil {
-		t.Log("LoadPodtrace attempted fallback path (expected for non-existent BPF object)")
-	}
-}
-
-func TestLoadPodtrace_SuccessPath(t *testing.T) {
+func TestLoadPodtrace_ExplicitPathIsStrict(t *testing.T) {
 	originalPath := config.BPFObjectPath
 	defer func() { config.BPFObjectPath = originalPath }()
 
 	config.BPFObjectPath = "/nonexistent/path/to/bpf.o"
 	spec, err := LoadPodtrace()
-	if err == nil && spec == nil {
-		t.Log("LoadPodtrace returned nil spec without error (expected for non-existent BPF object)")
+	if err == nil {
+		t.Fatalf("expected error for explicit non-existent path, got nil")
+	}
+	if spec != nil {
+		t.Fatalf("expected nil spec on error, got non-nil")
 	}
 }
 
-func TestLoadPodtrace_FallbackSuccess(t *testing.T) {
+func TestLoadPodtrace_DefaultPathFallsBackToEmbedded(t *testing.T) {
 	originalPath := config.BPFObjectPath
 	defer func() { config.BPFObjectPath = originalPath }()
 
-	tempDir := t.TempDir()
-	primaryPath := filepath.Join(tempDir, "bpf", "podtrace.bpf.o")
-	fallbackPath := filepath.Join(tempDir, "..", "bpf", "podtrace.bpf.o")
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
 
-	_ = os.MkdirAll(filepath.Dir(primaryPath), 0755)
-	_ = os.MkdirAll(filepath.Dir(fallbackPath), 0755)
+	emptyWD := t.TempDir()
+	if err := os.Chdir(emptyWD); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
 
-	config.BPFObjectPath = primaryPath
-
+	config.BPFObjectPath = "bpf/podtrace.bpf.o"
 	spec, err := LoadPodtrace()
 	if err != nil {
-		t.Logf("LoadPodtrace returned error (expected for non-existent BPF object): %v", err)
+		t.Skipf("BPF object not available in test environment: %v", err)
 	}
-	if spec == nil && err != nil {
-		t.Log("LoadPodtrace attempted fallback path and failed as expected")
+	if spec == nil {
+		t.Fatalf("expected non-nil spec from embedded fallback")
 	}
 }
-

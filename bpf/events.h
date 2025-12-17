@@ -46,6 +46,8 @@ struct event {
 	u64 bytes;
 	u32 tcp_state;
 	u64 stack_key;
+	u64 cgroup_id;
+	char comm[COMM_LEN];
 	char target[MAX_STRING_LEN];
 	char details[MAX_STRING_LEN];
 };

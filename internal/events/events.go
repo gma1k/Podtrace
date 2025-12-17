@@ -59,6 +59,7 @@ const (
 type Event struct {
 	Timestamp    uint64
 	PID          uint32
+	CgroupID     uint64
 	ProcessName  string
 	Type         EventType
 	LatencyNS    uint64

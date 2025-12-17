@@ -40,6 +40,9 @@ func TestParseEvent_ValidEvent(t *testing.T) {
 	if event.PID != raw.PID {
 		t.Errorf("Expected PID %d, got %d", raw.PID, event.PID)
 	}
+	if event.CgroupID != 0 {
+		t.Errorf("Expected cgroup ID 0 for v1 event, got %d", event.CgroupID)
+	}
 	if event.Type != events.EventType(raw.Type) {
 		t.Errorf("Expected type %d, got %d", raw.Type, event.Type)
 	}
@@ -54,6 +57,50 @@ func TestParseEvent_ValidEvent(t *testing.T) {
 	}
 	if event.Target != "example.com" {
 		t.Errorf("Expected target 'example.com', got '%s'", event.Target)
+	}
+}
+
+func TestParseEvent_ValidEventV2_WithCgroupID(t *testing.T) {
+	type rawEventV2 struct {
+		Timestamp uint64
+		PID       uint32
+		Type      uint32
+		LatencyNS uint64
+		Error     int32
+		_         uint32
+		Bytes     uint64
+		TCPState  uint32
+		_         uint32
+		StackKey  uint64
+		CgroupID  uint64
+		Target    [128]byte
+		Details   [128]byte
+	}
+
+	var raw rawEventV2
+	raw.Timestamp = 1234567890
+	raw.PID = 1234
+	raw.Type = uint32(events.EventDNS)
+	raw.LatencyNS = 5000000
+	raw.Error = 0
+	raw.Bytes = 1024
+	raw.TCPState = 0
+	raw.StackKey = 0
+	raw.CgroupID = 0x1122334455667788
+	copy(raw.Target[:], "example.com")
+	copy(raw.Details[:], "details")
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, raw); err != nil {
+		t.Fatalf("Failed to write binary data: %v", err)
+	}
+
+	event := ParseEvent(buf.Bytes())
+	if event == nil {
+		t.Fatal("ParseEvent returned nil for valid v2 event")
+	}
+	if event.CgroupID != raw.CgroupID {
+		t.Errorf("Expected cgroup ID %d, got %d", raw.CgroupID, event.CgroupID)
 	}
 }
 

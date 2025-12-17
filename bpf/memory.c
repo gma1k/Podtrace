@@ -7,26 +7,21 @@
 
 SEC("tp/exceptions/page_fault_user")
 int tracepoint_page_fault_user(void *ctx) {
-	struct {
-		unsigned short common_type;
-		unsigned char common_flags;
-		unsigned char common_preempt_count;
-		int common_pid;
-		unsigned long address;
-		unsigned int error_code;
-	} args_local;
-	
-	bpf_probe_read_kernel(&args_local, sizeof(args_local), ctx);
+	// NOTE: Tracepoint argument layouts can differ across kernels/distros when using raw tracepoints.
+	// For stability, avoid relying on tracepoint "common_pid" field offsets here and use the
+	// current task PID from bpf_get_current_pid_tgid().
+	u32 pid = bpf_get_current_pid_tgid() >> 32;
 	
 	struct event *e = get_event_buf();
 	if (!e) {
 		return 0;
 	}
 	e->timestamp = bpf_ktime_get_ns();
-	e->pid = args_local.common_pid;
+	e->pid = pid;
 	e->type = EVENT_PAGE_FAULT;
 	e->latency_ns = 0;
-	e->error = args_local.error_code;
+	// Best-effort: omit error_code (layout is not stable without BTF-typed tracepoints).
+	e->error = 0;
 	e->bytes = 0;
 	e->tcp_state = 0;
 	e->target[0] = '\0';

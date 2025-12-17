@@ -98,11 +98,13 @@ func (f *CgroupFilter) IsPIDInCgroup(pid uint32) bool {
 	normalizedPID := NormalizeCgroupPath(pidCgroupPath)
 
 	result := false
-	if normalizedPID == normalizedTarget {
+	// If the configured target normalizes to empty (e.g. "/" or the cgroup base),
+	// treat it as invalid to avoid accidentally matching everything.
+	if normalizedTarget == "" {
+		result = false
+	} else if normalizedPID == normalizedTarget {
 		result = true
 	} else if strings.HasPrefix(normalizedPID, normalizedTarget+"/") {
-		result = true
-	} else if strings.HasPrefix(normalizedTarget, normalizedPID+"/") {
 		result = true
 	}
 
@@ -132,11 +134,29 @@ func NormalizeCgroupPath(path string) string {
 }
 
 func ExtractCgroupPathFromProc(cgroupContent string) string {
-	if strings.HasPrefix(cgroupContent, "0::") {
-		return strings.TrimPrefix(cgroupContent, "0::")
+	lines := strings.Split(cgroupContent, "\n")
+	// Prefer cgroup v2 unified hierarchy line wherever it appears.
+	for _, l := range lines {
+		line := strings.TrimSpace(l)
+		if strings.HasPrefix(line, "0::") {
+			return strings.TrimPrefix(line, "0::")
+		}
 	}
 
-	lines := strings.Split(cgroupContent, "\n")
+	// Fallback to cgroup v1: pick a "cpu" controller if possible, else any valid line.
+	for _, l := range lines {
+		line := strings.TrimSpace(l)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) >= 3 {
+			controllers := parts[1]
+			if controllers == "cpu" || controllers == "cpu,cpuacct" || strings.Contains(controllers, "cpu") {
+				return parts[2]
+			}
+		}
+	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {

@@ -69,6 +69,8 @@ func main() {
 		SilenceUsage: true,
 	}
 
+	rootCmd.AddCommand(newDiagnoseEnvCmd())
+
 	rootCmd.Flags().StringVarP(&namespace, "namespace", "n", config.DefaultNamespace, "Kubernetes namespace")
 	rootCmd.Flags().StringVar(&diagnoseDuration, "diagnose", "", "Run in diagnose mode for the specified duration (e.g., 10s, 5m)")
 	rootCmd.Flags().BoolVar(&enableMetrics, "metrics", false, "Enable Prometheus metrics server")
@@ -214,6 +216,16 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		zap.String("container_id", podInfo.ContainerID),
 		zap.String("cgroup_path", podInfo.CgroupPath))
 
+	if os.Getenv("PODTRACE_ALLOW_BROAD_CGROUP") != "1" && podInfo.CgroupPath != "" {
+		short := podInfo.ContainerID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		if !strings.Contains(podInfo.CgroupPath, podInfo.ContainerID) && (short == "" || !strings.Contains(podInfo.CgroupPath, short)) {
+			return fmt.Errorf("resolved cgroup path %q does not contain container id %q; refusing to run (set PODTRACE_ALLOW_BROAD_CGROUP=1 to override)", podInfo.CgroupPath, short)
+		}
+	}
+
 	tracer, err := tracerFactory()
 	if err != nil {
 		return fmt.Errorf("failed to create tracer: %w", err)
@@ -245,6 +257,8 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 			clientset := clientsetProvider.GetClientset()
 			if clientset != nil {
 				enricher = kubernetes.NewContextEnricher(clientset, podInfo)
+				enricher.Start(ctx)
+				defer enricher.Stop()
 				eventsCorrelator = kubernetes.NewEventsCorrelator(clientset, podName, namespace)
 				if err := eventsCorrelator.Start(ctx); err != nil {
 					logger.Warn("Failed to start Kubernetes events correlator", zap.Error(err))

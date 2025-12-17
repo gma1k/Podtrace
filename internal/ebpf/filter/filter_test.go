@@ -89,6 +89,11 @@ func TestExtractCgroupPathFromProc(t *testing.T) {
 			expected: "/kubepods/test",
 		},
 		{
+			name:     "cgroup v2 line not first",
+			input:    "2:cpu:/system\n0::/kubepods/test\n1:name=systemd:/system",
+			expected: "/kubepods/test",
+		},
+		{
 			name:     "cgroup v1 format",
 			input:    "1:name=systemd:/kubepods/test",
 			expected: "/kubepods/test",
@@ -96,6 +101,11 @@ func TestExtractCgroupPathFromProc(t *testing.T) {
 		{
 			name:     "multiple lines v1",
 			input:    "1:name=systemd:/system\n2:cpu:/kubepods/test",
+			expected: "/kubepods/test",
+		},
+		{
+			name:     "v1 prefer cpu controller even if not last",
+			input:    "10:memory:/memcg\n2:cpu:/kubepods/test\n1:name=systemd:/system",
 			expected: "/kubepods/test",
 		},
 		{
@@ -244,7 +254,13 @@ func TestCgroupFilter_RelationshipsAndSuccessCache(t *testing.T) {
 			name:        "target under pid",
 			targetPath:  "/sys/fs/cgroup/kubepods/pod1/container1",
 			procContent: "0::/kubepods/pod1",
-			expect:      true,
+			expect:      false,
+		},
+		{
+			name:        "invalid root target should not match everything",
+			targetPath:  "/sys/fs/cgroup",
+			procContent: "0::/kubepods/pod1/container1",
+			expect:      false,
 		},
 		{
 			name:        "unrelated paths",

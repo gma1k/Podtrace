@@ -18,14 +18,14 @@ import (
 )
 
 type KubernetesContext struct {
-	SourceNamespace   string
-	SourceLabels      map[string]string
-	TargetNamespace   string
-	TargetPodName     string
-	TargetLabels      map[string]string
-	ServiceName       string
-	ServiceNamespace  string
-	IsExternal        bool
+	SourceNamespace  string
+	SourceLabels     map[string]string
+	TargetNamespace  string
+	TargetPodName    string
+	TargetLabels     map[string]string
+	ServiceName      string
+	ServiceNamespace string
+	IsExternal       bool
 }
 
 type EnrichedEvent struct {
@@ -52,24 +52,41 @@ type cacheEntry struct {
 }
 
 type ContextEnricher struct {
-	clientset     kubernetes.Interface
-	podCache      *sync.Map
-	serviceCache  *sync.Map
-	podInfo       *PodInfo
+	clientset       kubernetes.Interface
+	podCache        *sync.Map
+	serviceCache    *sync.Map
+	podInfo         *PodInfo
 	serviceResolver *ServiceResolver
-	cacheTTL      time.Duration
+	cacheTTL        time.Duration
+	informerCache   *InformerCache
 }
 
 func NewContextEnricher(clientset kubernetes.Interface, podInfo *PodInfo) *ContextEnricher {
 	ttl := time.Duration(getIntEnvOrDefault("PODTRACE_K8S_CACHE_TTL", 300)) * time.Second
+	ic := NewInformerCache(clientset)
 	return &ContextEnricher{
-		clientset:      clientset,
-		podCache:       &sync.Map{},
-		serviceCache:   &sync.Map{},
-		podInfo:        podInfo,
-		serviceResolver: NewServiceResolver(clientset),
-		cacheTTL:       ttl,
+		clientset:       clientset,
+		podCache:        &sync.Map{},
+		serviceCache:    &sync.Map{},
+		podInfo:         podInfo,
+		serviceResolver: NewServiceResolverWithCache(clientset, ic),
+		cacheTTL:        ttl,
+		informerCache:   ic,
 	}
+}
+
+func (ce *ContextEnricher) Start(ctx context.Context) {
+	if ce == nil || ce.informerCache == nil {
+		return
+	}
+	ce.informerCache.Start(ctx)
+}
+
+func (ce *ContextEnricher) Stop() {
+	if ce == nil || ce.informerCache == nil {
+		return
+	}
+	ce.informerCache.Stop()
 }
 
 func (ce *ContextEnricher) EnrichEvent(ctx context.Context, event *events.Event) *EnrichedEvent {
@@ -81,7 +98,7 @@ func (ce *ContextEnricher) EnrichEvent(ctx context.Context, event *events.Event)
 		Event: event,
 		KubernetesContext: &KubernetesContext{
 			SourceNamespace: ce.podInfo.Namespace,
-			SourceLabels:     ce.podInfo.Labels,
+			SourceLabels:    ce.podInfo.Labels,
 		},
 	}
 
@@ -128,6 +145,12 @@ func (ce *ContextEnricher) resolvePodByIP(ctx context.Context, ip string) *PodMe
 		return nil
 	}
 
+	if ce.informerCache != nil {
+		if pod := ce.informerCache.GetPodByIP(ip); pod != nil {
+			return pod
+		}
+	}
+
 	if cached, ok := ce.podCache.Load(ip); ok {
 		entry := cached.(*cacheEntry)
 		if time.Now().Before(entry.expiresAt) {
@@ -152,34 +175,28 @@ func (ce *ContextEnricher) fetchPodByIP(ctx context.Context, ip string) *PodMeta
 		return nil
 	}
 
-	namespaces, err := ce.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	pods, err := ce.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("status.podIP=%s", ip),
+	})
 	if err != nil {
 		return nil
 	}
 
-	for _, ns := range namespaces.Items {
-		pods, err := ce.clientset.CoreV1().Pods(ns.Name).List(ctx, metav1.ListOptions{
-			FieldSelector: fmt.Sprintf("status.podIP=%s", ip),
-		})
-		if err != nil {
+	for _, pod := range pods.Items {
+		if pod.Status.PodIP != ip {
 			continue
 		}
-
-		for _, pod := range pods.Items {
-			if pod.Status.PodIP == ip {
-				labels := make(map[string]string)
-				if pod.Labels != nil {
-					for k, v := range pod.Labels {
-						labels[k] = v
-					}
-				}
-				return &PodMetadata{
-					Name:      pod.Name,
-					Namespace: pod.Namespace,
-					Labels:    labels,
-					IP:        pod.Status.PodIP,
-				}
+		labels := make(map[string]string)
+		if pod.Labels != nil {
+			for k, v := range pod.Labels {
+				labels[k] = v
 			}
+		}
+		return &PodMetadata{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			Labels:    labels,
+			IP:        pod.Status.PodIP,
 		}
 	}
 
@@ -244,4 +261,3 @@ func getIntEnvOrDefault(key string, defaultValue int) int {
 	}
 	return defaultValue
 }
-

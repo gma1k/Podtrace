@@ -150,8 +150,12 @@ func AttachProbes(coll *ebpf.Collection) ([]link.Link, error) {
 }
 
 func AttachDNSProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	return AttachDNSProbesWithPID(coll, containerID, 0)
+}
+
+func AttachDNSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32) []link.Link {
 	var links []link.Link
-	libcPath := FindLibcPath(containerID)
+	libcPath := FindLibcPathWithPID(containerID, pid)
 	if libcPath != "" {
 		uprobe, err := link.OpenExecutable(libcPath)
 		if err == nil {
@@ -181,8 +185,12 @@ func AttachDNSProbes(coll *ebpf.Collection, containerID string) []link.Link {
 }
 
 func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	return AttachSyncProbesWithPID(coll, containerID, 0)
+}
+
+func AttachSyncProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32) []link.Link {
 	var links []link.Link
-	libcPath := FindLibcPath(containerID)
+	libcPath := FindLibcPathWithPID(containerID, pid)
 	if libcPath == "" {
 		return links
 	}
@@ -211,9 +219,13 @@ func AttachSyncProbes(coll *ebpf.Collection, containerID string) []link.Link {
 }
 
 func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	return AttachDBProbesWithPID(coll, containerID, 0)
+}
+
+func AttachDBProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32) []link.Link {
 	var links []link.Link
 
-	libpqPaths := findDBLibs(containerID, []string{"libpq.so.5", "libpq.so"})
+	libpqPaths := findDBLibsWithPID(containerID, pid, []string{"libpq.so.5", "libpq.so"})
 	for _, path := range libpqPaths {
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
@@ -237,7 +249,7 @@ func AttachDBProbes(coll *ebpf.Collection, containerID string) []link.Link {
 		}
 	}
 
-	mysqlPaths := findDBLibs(containerID, []string{"libmysqlclient.so.21", "libmysqlclient.so"})
+	mysqlPaths := findDBLibsWithPID(containerID, pid, []string{"libmysqlclient.so.21", "libmysqlclient.so"})
 	for _, path := range mysqlPaths {
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
@@ -277,10 +289,17 @@ type dbProbeConfig struct {
 }
 
 func AttachPoolProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	return AttachPoolProbesWithPID(coll, containerID, 0)
+}
+
+func AttachPoolProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32) []link.Link {
 	var links []link.Link
 
 	var binaryPaths []string
-	if pid := findContainerProcess(containerID); pid > 0 {
+	if pid == 0 && containerID != "" {
+		pid = findContainerProcess(containerID)
+	}
+	if pid > 0 {
 		logger.Debug("Found container process", zap.Uint32("pid", pid), zap.String("containerID", containerID))
 
 		binaryPath := findGoBinaryViaProcessMaps(pid)
@@ -340,7 +359,7 @@ func AttachPoolProbes(coll *ebpf.Collection, containerID string) []link.Link {
 	for _, dbConfig := range dbConfigs {
 		var dbPaths []string
 		dbPaths = append(dbPaths, binaryPaths...)
-		libPaths := findDBLibs(containerID, dbConfig.libPatterns)
+		libPaths := findDBLibsWithPID(containerID, pid, dbConfig.libPatterns)
 		dbPaths = append(dbPaths, libPaths...)
 
 		if len(dbPaths) == 0 {
@@ -433,6 +452,18 @@ func FindLibcPath(containerID string) string {
 	}
 
 	return findLibcViaCommonPaths()
+}
+
+func FindLibcPathWithPID(containerID string, pid uint32) string {
+	if pid > 0 {
+		if path := findLibcViaProcessMapsProcRoot(pid); path != "" {
+			return path
+		}
+		if path := findLibcInProcess(pid); path != "" {
+			return path
+		}
+	}
+	return FindLibcPath(containerID)
 }
 
 func findLibcViaLdconfig() string {
@@ -532,6 +563,53 @@ func findLibcViaProcessMaps(pid uint32) string {
 				}
 			}
 		}
+	}
+	return ""
+}
+
+func findLibcViaProcessMapsProcRoot(pid uint32) string {
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "libc.so") || strings.Contains(line, "libc.musl") {
+			parts := strings.Fields(line)
+			if len(parts) >= 6 {
+				containerPath := parts[5]
+				if path := fileInProcRoot(pid, containerPath); path != "" {
+					return path
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func findLibcInProcess(pid uint32) string {
+	procRootPaths := getArchitecturePaths()
+	for _, basePath := range procRootPaths {
+		path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", basePath)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+func fileInProcRoot(pid uint32, containerPath string) string {
+	if containerPath == "" || strings.HasPrefix(containerPath, "[") {
+		return ""
+	}
+	procRoot := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+	hostPath := filepath.Join(procRoot, strings.TrimPrefix(containerPath, "/"))
+	if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+		return hostPath
+	}
+	if info, err := os.Stat(containerPath); err == nil && !info.IsDir() {
+		return containerPath
 	}
 	return ""
 }
@@ -951,6 +1029,32 @@ func findDBLibsViaProcessMaps(pid uint32, libNames []string) []string {
 	return paths
 }
 
+func findDBLibsViaProcessMapsProcRoot(pid uint32, libNames []string) []string {
+	var paths []string
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		return paths
+	}
+
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, libName := range libNames {
+			if strings.Contains(line, libName) {
+				parts := strings.Fields(line)
+				if len(parts) >= 6 {
+					containerPath := parts[5]
+					if hostPath := fileInProcRoot(pid, containerPath); hostPath != "" && !seen[hostPath] {
+						paths = append(paths, hostPath)
+						seen[hostPath] = true
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
 func findDBLibsInContainer(containerID string, libNames []string) []string {
 	var paths []string
 
@@ -1010,6 +1114,34 @@ func findDBLibsInContainer(containerID string, libNames []string) []string {
 	}
 
 	return paths
+}
+
+func findDBLibsWithPID(containerID string, pid uint32, libNames []string) []string {
+	if pid > 0 {
+		var out []string
+		seen := make(map[string]bool)
+
+		for _, p := range findDBLibsViaProcessMapsProcRoot(pid, libNames) {
+			if !seen[p] {
+				out = append(out, p)
+				seen[p] = true
+			}
+		}
+
+		archPaths := getArchitectureDBPaths(libNames)
+		for _, basePath := range archPaths {
+			p := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", strings.TrimPrefix(basePath, "/"))
+			if info, err := os.Stat(p); err == nil && !info.IsDir() && !seen[p] {
+				out = append(out, p)
+				seen[p] = true
+			}
+		}
+
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return findDBLibs(containerID, libNames)
 }
 
 func findDBLibs(containerID string, libNames []string) []string {
@@ -1100,6 +1232,32 @@ func findTLSLibsViaProcessMaps(pid uint32, libPatterns []string) []string {
 	return paths
 }
 
+func findTLSLibsViaProcessMapsProcRoot(pid uint32, libPatterns []string) []string {
+	var paths []string
+	mapsPath := fmt.Sprintf("%s/%d/maps", config.ProcBasePath, pid)
+	data, err := os.ReadFile(mapsPath)
+	if err != nil {
+		return paths
+	}
+
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, pattern := range libPatterns {
+			if strings.Contains(line, pattern) {
+				parts := strings.Fields(line)
+				if len(parts) >= 6 {
+					containerPath := parts[5]
+					if hostPath := fileInProcRoot(pid, containerPath); hostPath != "" && !seen[hostPath] {
+						paths = append(paths, hostPath)
+						seen[hostPath] = true
+					}
+				}
+			}
+		}
+	}
+	return paths
+}
+
 func findTLSLibsInContainer(containerID string, libPatterns []string) []string {
 	var paths []string
 
@@ -1163,6 +1321,15 @@ func findTLSLibsInContainer(containerID string, libPatterns []string) []string {
 	}
 
 	return paths
+}
+
+func findTLSLibsInContainerWithPID(containerID string, pid uint32, libPatterns []string) []string {
+	if pid > 0 {
+		if foundPaths := findTLSLibsViaProcessMapsProcRoot(pid, libPatterns); len(foundPaths) > 0 {
+			return foundPaths
+		}
+	}
+	return findTLSLibsInContainer(containerID, libPatterns)
 }
 
 func findTLSLibsViaLdconfig(libPatterns []string) []string {
@@ -1328,6 +1495,51 @@ func findTLSLibs(containerID string) []string {
 	return paths
 }
 
+func findTLSLibsWithPID(containerID string, pid uint32) []string {
+	var paths []string
+	seen := make(map[string]bool)
+
+	libPatterns := []string{"libssl", "libgnutls", "libnss", "libmbedtls", "libmbedx509", "ssl"}
+
+	if containerID != "" || pid > 0 {
+		containerPaths := findTLSLibsInContainerWithPID(containerID, pid, libPatterns)
+		for _, path := range containerPaths {
+			if !seen[path] {
+				paths = append(paths, path)
+				seen[path] = true
+			}
+		}
+	}
+
+	ldconfigPaths := findTLSLibsViaLdconfig(libPatterns)
+	for _, path := range ldconfigPaths {
+		if !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+
+	ldSoConfPaths := findTLSLibsViaLdSoConf(libPatterns)
+	for _, path := range ldSoConfPaths {
+		if !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+
+	archPaths := getArchitectureTLSPaths(libPatterns)
+	for _, path := range archPaths {
+		if !seen[path] {
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				paths = append(paths, path)
+				seen[path] = true
+			}
+		}
+	}
+
+	return paths
+}
+
 func getArchitectureTLSPaths(libPatterns []string) []string {
 	var paths []string
 	arch := runtime.GOARCH
@@ -1403,9 +1615,13 @@ func getArchitectureTLSPaths(libPatterns []string) []string {
 }
 
 func AttachTLSProbes(coll *ebpf.Collection, containerID string) []link.Link {
+	return AttachTLSProbesWithPID(coll, containerID, 0)
+}
+
+func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32) []link.Link {
 	links := []link.Link{}
 
-	tlsLibPaths := findTLSLibs(containerID)
+	tlsLibPaths := findTLSLibsWithPID(containerID, pid)
 	tlsSymbols := map[string][]string{
 		"SSL_connect":           {"uprobe_SSL_connect", "uretprobe_SSL_connect"},
 		"SSL_accept":            {"uprobe_SSL_accept", "uretprobe_SSL_accept"},
