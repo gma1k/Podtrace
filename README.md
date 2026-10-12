@@ -22,7 +22,12 @@
   <a href="https://github.com/gma1k/podtrace/actions/workflows/go-ci.yml?query=branch%3Amain"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/gma1k/5935cb4275b5ae9369b2b8cb097ae0e2/raw/podtrace-go-coverage.json" alt="Coverage"/></a>
 </p>
 
-A lightweight yet powerful eBPF-driven diagnostic tool for Kubernetes applications. Podtrace delivers full-stack observability from kernel events to application-layer behavior, all activated on demand, with no prior configuration or instrumentation. With a single command, it uncovers insights across the entire lifecycle of a pod, including network flows, TCP/UDP performance, file system activity, memory behavior, latency patterns, system calls, and high-level application events such as HTTP, DNS, and database queries.
+Podtrace is an eBPF-based observability tool for Kubernetes, with no code changes, no sidecars and no instrumentation. It works in two ways from one agent:
+
+- **Always on.** Every pod on every node reports its golden signals continuously: request rate, errors and latency per workload, plus network, DNS, TLS, filesystem, CPU and connection-pool health. Podtrace watches those signals, raises an issue when something is wrong, names its likely root cause, and can start a deep-dive on the affected pod by itself.
+- **On demand.** Point it at a pod, or at a whole application across all its pods, and it records everything they do for as long as you ask: network flows, TCP and UDP performance, file activity, system calls, and application events such as HTTP/1, HTTP/2, HTTP/3, gRPC, DNS and database queries, then explains what it found in a report.
+
+The always-on side tells you *which* workload is unhealthy, cheaply and at low cardinality. The on-demand side tells you *why*, in depth, for the pods you point it at.
 
 ## Overview
 
@@ -37,8 +42,40 @@ Instead of assembling data from multiple systems or modifying application code, 
 - How requests flow through the application  
 - What happens inside the pod during incidents  
 
-By combining system-level details, application-layer insights, and real-time event correlation, Podtrace acts as a single on-demand observability lens. This makes it uniquely effective for debugging, performance analysis, and production incident response in Kubernetes environments, especially when time, context, or access is limited.
+By combining system-level details, application-layer insights, and real-time event correlation, Podtrace is effective for debugging, performance analysis, and production incident response in Kubernetes environments, especially when time, context, or access is limited.
 
+## Continuous APM
+
+Once the operator is installed, the agent on every node measures every pod, with no configuration.
+
+```text
+KERNEL     eBPF probes ──┬──► ringbuf ─────────── one event at a time ──────────────┐
+                         └──► LRU per-CPU map ─── aggregated in the kernel ─────┐   │
+                                                                                │   │
+AGENT      tracer engine ◄──────────────────────────────────────────────────────┼───┘
+(per node)    │                                                                 │
+              ├──► router (per CR, sampled) ──► exporters ──► traces & events   │   on demand
+              │                                                                 │
+              └──► metrics sink (every pod) ◄───────────────────────────────────┘   continuous
+                      ├──► /metrics or OTLP ──► Prometheus, Grafana, any OTLP backend
+                      └──► inspections ──► issue ──► Event on the pod ──► deep-dive session
+
+OPERATOR   reads every agent's issues ──► likely root cause, across workloads
+```
+
+What you get:
+
+- **Golden signals per workload.** Rate, errors and latency for HTTP, gRPC, databases, caches and messaging, plus network, DNS, TLS, filesystem, CPU and connection-pool metrics, labelled by namespace and workload, so a series survives a rollout. Scraped by Prometheus (a PodMonitor ships with the chart) or pushed over OTLP.
+- **OpenTelemetry semantic conventions.** Signals such as `http.server.request.duration` are emitted beside the native `podtrace_*` names, so stock Grafana, Datadog and Honeycomb dashboards work as they are.
+- **A service map.** Every call carries both ends of the edge, so the map is a PromQL query, and the bundled Grafana dashboard draws it.
+- **Issues, not thresholds.** Rules for error rate, latency, connection failures, RTT spikes, resource and pool saturation, CPU contention, slow and failing DNS, slow storage and TLS handshake failures raise `podtrace_issue_active` and a Kubernetes Event on the affected pod.
+- **Likely root causes.** Issues are linked to what likely caused them, on the same workload and through the workloads it calls: front is slow because backend is slow, because backend's connection pool is saturated.
+- **From finding to explaining.** A `PodTraceSchedule` with an `Issue` trigger starts a deep-dive session on the affected pod, and its report opens with the issue that started it.
+- **`kubectl podtrace status`** shows fleet health, active issues with their likely causes, and the busiest workloads, with no metrics backend.
+
+See [docs/continuous-metrics.md](docs/continuous-metrics.md) for the metrics and
+[docs/continuous-inspections.md](docs/continuous-inspections.md) for the issues and
+their likely causes.
 
 ## Documentation
 
@@ -50,10 +87,9 @@ Podtrace runs privileged and loads eBPF into your kernel, so every release
 artifact ships SLSA v1.0 Build L2 provenance you can verify, and enforce at
 admission time. See [docs/supply-chain.md](docs/supply-chain.md).
 
-## Three usage patterns
+## Usage patterns
 
-Podtrace ships one binary that runs in three modes. Pick the one that
-fits your workflow:
+Podtrace ships one binary. Pick the workflow that fits:
 
 ### 1. Standalone CLI binary
 
