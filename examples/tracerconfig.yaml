@@ -5,7 +5,7 @@ kind: TracerConfig
 metadata:
   name: default
 spec:
-  image: ghcr.io/gma1k/podtrace:0.14.8 # x-release-please-version
+  image: ghcr.io/gma1k/podtrace:0.14.9 # x-release-please-version
   imagePullPolicy: IfNotPresent
   systemNamespace: podtrace-system
   # Cap privileged Job pods per node to protect scheduling capacity.

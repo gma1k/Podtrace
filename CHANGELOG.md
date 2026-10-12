@@ -9,6 +9,54 @@ under the rules described in [STABILITY.md](STABILITY.md).
 Going forward, releases are managed by [release-please](https://github.com/googleapis/release-please)
 based on [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.14.9](https://github.com/gma1k/podtrace/compare/v0.14.8...v0.14.9) (2026-10-12)
+
+
+### Features
+
+* add a dns failure rule and count dns lookups by answer ([#523](https://github.com/gma1k/podtrace/issues/523)) ([12d4da9](https://github.com/gma1k/podtrace/commit/12d4da9340761e18d4e6d0994dc2c19fbc5ab3d0))
+* add a per-request critical path and a slow-dns inspection ([#519](https://github.com/gma1k/podtrace/issues/519)) ([110a449](https://github.com/gma1k/podtrace/commit/110a4493a21d1414b27f8e18967966de74f65ddc))
+* add a tls failure rule and count go and netty tls handshakes ([#524](https://github.com/gma1k/podtrace/issues/524)) ([f86a7e5](https://github.com/gma1k/podtrace/commit/f86a7e5444b84032cb66707033b610a368d57b38))
+* add filesystem metrics to the plane and a slow-fs inspection ([#522](https://github.com/gma1k/podtrace/issues/522)) ([4d55a7a](https://github.com/gma1k/podtrace/commit/4d55a7ad366220774e237fd78e56dfe66499d5c5))
+* add Go pool utilization metrics and user-supplied BTF ([#503](https://github.com/gma1k/podtrace/issues/503)) ([f11d87a](https://github.com/gma1k/podtrace/commit/f11d87af0a6b095036d013ed5db23613a3c9c885))
+* add on-cpu profiler, flame graphs and p99 request cpu attribution ([#513](https://github.com/gma1k/podtrace/issues/513)) ([75a504e](https://github.com/gma1k/podtrace/commit/75a504ed30a79d1cc69a444cf9f5f95dbe3d9025))
+* add podtrace status for a backend-free cluster view ([#512](https://github.com/gma1k/podtrace/issues/512)) ([247a0b5](https://github.com/gma1k/podtrace/commit/247a0b53f9e1cf737e8cc9e39d1073994067cbf0))
+* attribute request cpu across every protocol and harden capture ([#514](https://github.com/gma1k/podtrace/issues/514)) ([a4d80a2](https://github.com/gma1k/podtrace/commit/a4d80a2e50176d3b8e650d32a57453322ae4688c))
+* charge event-loop cpu to the connection a loop is serving ([#517](https://github.com/gma1k/podtrace/issues/517)) ([28a773d](https://github.com/gma1k/podtrace/commit/28a773de64b3e9b6dd7b8b491091b79cda9d2a09))
+* close the continuous apm gaps and enable them by default ([#510](https://github.com/gma1k/podtrace/issues/510)) ([2f01eb6](https://github.com/gma1k/podtrace/commit/2f01eb677750e709faf9311c9ba48a53f44595b6))
+* correlate slow requests with symbolised stack frames ([#505](https://github.com/gma1k/podtrace/issues/505)) ([613d490](https://github.com/gma1k/podtrace/commit/613d490a98d02cfce1e69c890870eea67a2e5f7a))
+* link active issues to their likely root cause across workloads ([#525](https://github.com/gma1k/podtrace/issues/525)) ([bf4e9fd](https://github.com/gma1k/podtrace/commit/bf4e9fd217df046b6f8e2607b96d35e3b4c5ada4))
+* start a session for a chosen issue and open its report with it ([#518](https://github.com/gma1k/podtrace/issues/518)) ([5ef77cc](https://github.com/gma1k/podtrace/commit/5ef77ccd512bc842ec1c13417f1c0e1866287e41))
+* turn every tracerconfig agent toggle on unless set to false ([#511](https://github.com/gma1k/podtrace/issues/511)) ([fa4218b](https://github.com/gma1k/podtrace/commit/fa4218b7ca655d9bb69e428ef91ff5095b2f2cec))
+
+
+### Bug Fixes
+
+* correct process names and pool figures in the diagnose report ([#500](https://github.com/gma1k/podtrace/issues/500)) ([8ef3183](https://github.com/gma1k/podtrace/commit/8ef3183ba1c7882bf7b7340896511988c8ca5884))
+* report pool peak connections and connection age consistently ([#502](https://github.com/gma1k/podtrace/issues/502)) ([719eb12](https://github.com/gma1k/podtrace/commit/719eb123a721c53679b1d36b9b894fc063ab1d5b))
+
+
+### Documentation
+
+* describe continuous apm in the readme and update dependencies ([#527](https://github.com/gma1k/podtrace/issues/527)) ([6af8c2b](https://github.com/gma1k/podtrace/commit/6af8c2b213f0c3c75f8b2562a20d39e293301e59))
+* document clang 18+ and libbpf 0.8+ build prerequisites ([#521](https://github.com/gma1k/podtrace/issues/521)) ([a847378](https://github.com/gma1k/podtrace/commit/a8473786b023ef1f076f3810dc0e1f6e607b5d11))
+
+
+### Build System
+
+* check for clang 18+ before compiling the eBPF objects ([#520](https://github.com/gma1k/podtrace/issues/520)) ([85d6310](https://github.com/gma1k/podtrace/commit/85d6310b992a7de434077eb4506dabe0211e669c))
+
+
+### CI
+
+* disable codeql trap caching to fix cpp analysis on ubuntu 26.04 ([#509](https://github.com/gma1k/podtrace/issues/509)) ([9ede6ee](https://github.com/gma1k/podtrace/commit/9ede6eef32322b5e3a172fce729481d8d67cf610))
+
+
+### Maintenance
+
+* **deps:** update module sigs.k8s.io/controller-runtime to v0.25.1 ([#504](https://github.com/gma1k/podtrace/issues/504)) ([f4289d5](https://github.com/gma1k/podtrace/commit/f4289d55038bc2f46565c18cde8e3ec30d5ad7be))
+* update dependencies, toolchain pins and generated client ([#508](https://github.com/gma1k/podtrace/issues/508)) ([afd4fb0](https://github.com/gma1k/podtrace/commit/afd4fb00d48d4487da01efe693978238b9a98150))
+
 ## [0.14.8](https://github.com/gma1k/podtrace/compare/v0.14.7...v0.14.8) (2026-09-11)
 
 

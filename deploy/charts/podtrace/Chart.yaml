@@ -5,8 +5,8 @@ description: |
   Kubernetes applications.
 type: application
 kubeVersion: '>=1.28.0-0'
-version: 0.14.8
-appVersion: 0.14.8
+version: 0.14.9
+appVersion: 0.14.9
 keywords:
   - ebpf
   - tracing
@@ -30,7 +30,7 @@ annotations:
   artifacthub.io/category: monitoring-logging
   artifacthub.io/images: |
     - name: podtrace
-      image: ghcr.io/gma1k/podtrace:0.14.8 # x-release-please-version
+      image: ghcr.io/gma1k/podtrace:0.14.9 # x-release-please-version
       platforms:
         - linux/amd64
         - linux/arm64
