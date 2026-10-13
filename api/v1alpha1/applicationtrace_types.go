@@ -58,7 +58,7 @@ type ApplicationTraceStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=appt,categories=podtrace
+// +kubebuilder:resource:shortName=appt,categories=podtrace-all
 // +kubebuilder:printcolumn:name="Matched",type=integer,JSONPath=`.status.matchedPods`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Exporter",type=string,JSONPath=`.spec.exporterRef.name`

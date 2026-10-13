@@ -86,7 +86,7 @@ func TestRetransmitsAndDeviceErrorsLandInSeparateFamilies(t *testing.T) {
 
 func TestLockContentionIsGroupedUnderItsOwnErrorKind(t *testing.T) {
 	families, _ := recordOne(t, &events.Event{
-		Type: events.EventLockContention, Error: 11, LatencyNS: 5_000_000, K8s: enriched(),
+		Type: events.EventLockContention, Error: -22, LatencyNS: 5_000_000, K8s: enriched(),
 	})
 
 	metrics, ok := families["podtrace_workload_errors_total"]

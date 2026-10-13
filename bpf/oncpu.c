@@ -163,7 +163,7 @@ static __always_inline int oncpu_sample(struct pt_regs *ctx, int task_regs)
 	u32 tid = (u32)pid_tgid;
 
 	u64 cgid = bpf_get_current_cgroup_id();
-	if (!bpf_map_lookup_elem(&target_cgroup_ids, &cgid))
+	if (!cgroup_targeted(cgid))
 		return 0;
 
 	long stack_id = bpf_get_stackid(ctx, &oncpu_stacks, BPF_F_USER_STACK);

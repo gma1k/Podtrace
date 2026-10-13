@@ -169,7 +169,7 @@ connection's open request. An event loop handles one ready connection at a
 time, reading, working and writing, so the work between a connection's reads
 and writes is charged to its request. A TLS connection is followed through
 its socket, which podtrace ties to the TLS connection the first time the
-socket is read inside `SSL_read` or `gnutls_record_recv`.
+socket is read inside `SSL_read`, `SSL_read_ex` or `gnutls_record_recv`.
 
 A sample is left unjoined, not charged to anyone, when the connection last
 touched has no open request: a loop waiting in `epoll_wait`, or working on a

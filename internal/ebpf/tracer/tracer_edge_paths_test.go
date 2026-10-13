@@ -2,6 +2,7 @@ package tracer
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"testing"
@@ -29,18 +30,19 @@ func TestAContainerWhoseBinariesAllVanishedStillGetsOnePID(t *testing.T) {
 
 func TestAnUnknownGroupAttachesNoContainerUprobes(t *testing.T) {
 	tr := &Tracer{collection: &ebpf.Collection{}}
-	if ls := tr.attachContainerGroupUprobes(probes.ProbeGroup("no-such-group"), "c1", []uint32{1}); ls != nil {
+	if ls := tr.attachContainerGroupUprobes(probes.ProbeGroup("no-such-group"), "c1", []uint32{1}, nil); ls != nil {
 		t.Errorf("an unknown group attached %d links", len(ls))
 	}
 }
 
-func TestReattachSkipsEmptyAttachesAndDropsLinksForAContainerThatChanged(t *testing.T) {
+func TestReattachSkipsEmptyAttachesAndDropsLinksForAContainerThatLeft(t *testing.T) {
 	tr := &Tracer{containerUprobes: map[string]*containerUprobeSet{
 		"empty":   {pids: []uint32{1}},
 		"nolinks": {pids: []uint32{2}},
 		"moved":   {pids: []uint32{3}},
+		"gone":    {pids: []uint32{4}},
 	}}
-	var stale *fakeLink
+	var kept, stale *fakeLink
 	tr.attachContainerGroupFn = func(_ probes.ProbeGroup, id string, _ []uint32) []link.Link {
 		switch id {
 		case "empty":
@@ -49,6 +51,12 @@ func TestReattachSkipsEmptyAttachesAndDropsLinksForAContainerThatChanged(t *test
 			tr.probeGroupsMu.Lock()
 			tr.containerUprobes["moved"].pids = []uint32{99}
 			tr.probeGroupsMu.Unlock()
+			kept = &fakeLink{}
+			return []link.Link{kept}
+		case "gone":
+			tr.probeGroupsMu.Lock()
+			delete(tr.containerUprobes, "gone")
+			tr.probeGroupsMu.Unlock()
 			stale = &fakeLink{}
 			return []link.Link{stale}
 		default:
@@ -56,16 +64,17 @@ func TestReattachSkipsEmptyAttachesAndDropsLinksForAContainerThatChanged(t *test
 		}
 	}
 
-	if got := tr.reattachContainerGroupUprobes(probes.GroupTLS); got != 1 {
-		t.Errorf("reattached %d links, want 1 (only the container that stayed put)", got)
+	if got := tr.reattachContainerGroupUprobes(probes.GroupTLS); got != 2 {
+		t.Errorf("reattached %d links, want 2 (the containers still targeted)", got)
 	}
 	if len(tr.containerUprobes["nolinks"].links[probes.GroupTLS]) != 1 {
 		t.Error("a container with no link map did not get its reattached link")
 	}
+	if kept.closes.Load() != 0 || len(tr.containerUprobes["moved"].links[probes.GroupTLS]) != 1 {
+		t.Error("a uprobe is bound to a file, not a PID: a container whose processes changed keeps its link")
+	}
 	if stale.closes.Load() != 1 {
-		t.Errorf("a link attached for a container whose processes changed meanwhile was closed "+
-			"%d times, want 1; stored against the new PIDs it would probe the wrong binary",
-			stale.closes.Load())
+		t.Errorf("a link attached for a container that left the target set was closed %d times, want 1", stale.closes.Load())
 	}
 }
 
@@ -130,5 +139,30 @@ func TestAManagementAPIThatCannotListenReturns(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("serveManagementAPI did not return when its port was taken")
+	}
+}
+
+func TestASecondProcessOfTheSameBinaryAddsNoBinaryProbes(t *testing.T) {
+	tr := &Tracer{collection: &ebpf.Collection{}}
+	af := probes.NewAttachedFiles()
+	self := uint32(os.Getpid())
+	if ls := tr.attachContainerGroupUprobes(probes.GroupTLS, "c1", []uint32{self, self}, af); len(ls) != 0 {
+		t.Errorf("an empty collection attached %d links", len(ls))
+	}
+	if af.Claim("exe:"+string(probes.GroupTLS), fmt.Sprintf("/proc/%d/exe", self)) {
+		t.Error("the first process's binary was not recorded, so a second process would attach its probes again")
+	}
+}
+
+func TestReenablingAGroupStartsItsAttachedFileRecordAfresh(t *testing.T) {
+	stale := probes.NewAttachedFiles()
+	set := &containerUprobeSet{pids: []uint32{1}, claimed: map[probes.ProbeGroup]*probes.AttachedFiles{probes.GroupTLS: stale}}
+	tr := &Tracer{containerUprobes: map[string]*containerUprobeSet{"c": set}}
+	var got *probes.AttachedFiles
+	tr.attachContainerGroupFn = func(probes.ProbeGroup, string, []uint32) []link.Link { return nil }
+	tr.reattachContainerGroupUprobes(probes.GroupTLS)
+	got = set.claimed[probes.GroupTLS]
+	if got == nil || got == stale {
+		t.Error("re-enabling a group must forget which files the closed probes had covered, or nothing is re-attached")
 	}
 }

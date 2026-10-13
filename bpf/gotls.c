@@ -40,7 +40,7 @@ int uprobe_go_tls_write(struct pt_regs *ctx)
 
 	void *base = GO_ARG_PTR(ctx);
 	u64 avail = GO_ARG_LEN(ctx);
-	u64 conn = GO_ARG_RECV(ctx);
+	u64 conn = process_scoped_id(GO_ARG_RECV(ctx));
 	if (!base || avail < HTTP2_FRAME_HDR)
 		return 0;
 
@@ -70,10 +70,10 @@ int uprobe_go_tls_read(struct pt_regs *ctx)
 	if (!buf)
 		return 0;
 
-	u64 key = GO_GOROUTINE(ctx);
+	u64 key = process_scoped_id(GO_GOROUTINE(ctx));
 	struct go_tls_read_state st = {
 		.buf = (u64)buf,
-		.conn = GO_ARG_RECV(ctx),
+		.conn = process_scoped_id(GO_ARG_RECV(ctx)),
 	};
 	bpf_map_update_elem(&go_tls_read_args, &key, &st, BPF_ANY);
 	return 0;
@@ -82,7 +82,7 @@ int uprobe_go_tls_read(struct pt_regs *ctx)
 SEC("uprobe/go_tls_read_ret")
 int uprobe_go_tls_read_ret(struct pt_regs *ctx)
 {
-	u64 key = GO_GOROUTINE(ctx);
+	u64 key = process_scoped_id(GO_GOROUTINE(ctx));
 	struct go_tls_read_state *st = bpf_map_lookup_elem(&go_tls_read_args, &key);
 	if (!st)
 		return 0;

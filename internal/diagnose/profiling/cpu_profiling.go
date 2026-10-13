@@ -16,6 +16,13 @@ import (
 )
 
 func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) string {
+	return GenerateProcessCPUReport(allEvents, duration, nil)
+}
+
+// GenerateProcessCPUReport reports CPU time per traced process. kernelNS is
+// the kernel's on-CPU time per process ID, which also covers processes that
+// exited before /proc could be read; /proc is the fallback for the rest.
+func GenerateProcessCPUReport(allEvents []*events.Event, duration time.Duration, kernelNS map[uint32]uint64) string {
 	pidActivity := tracker.AnalyzeProcessActivity(allEvents)
 	if len(pidActivity) == 0 {
 		return GenerateCPUUsageFromProc(duration)
@@ -28,13 +35,9 @@ func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) s
 
 	pidCPUTimes := make(map[uint32]cpuTimeInfo)
 	for _, info := range pidActivity {
-		var totalNS uint64
-		if proc := getProcessCPUTime(info.Pid); proc.totalNS > 0 {
-			totalNS = proc.totalNS
-		}
-		deltaNS := totalNS
-		if base := cache.GetCPUTime(info.Pid).BaselineNS; base > 0 && totalNS >= base {
-			deltaNS = totalNS - base
+		deltaNS := kernelNS[info.Pid]
+		if deltaNS == 0 {
+			deltaNS = procCPUDeltaNS(info.Pid)
 		}
 		if deltaNS > 0 {
 			cpuPercent := (float64(deltaNS) / 1e9) / durationSec * 100.0
@@ -49,20 +52,8 @@ func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) s
 		}
 	}
 
-	if len(pidCPUTimes) == 0 && len(pidActivity) > 0 {
-		report += "  Process Activity Ranking:\n"
-		limit := config.TopProcessesLimit
-		if limit > len(pidActivity) {
-			limit = len(pidActivity)
-		}
-		for i := 0; i < limit; i++ {
-			a := pidActivity[i]
-			report += fmt.Sprintf("    PID %d (%s)%s: %d events (%.1f%%)\n",
-				a.Pid, a.Name, a.PodSuffix(), a.Count, a.Percentage)
-		}
-		report += "\n  Total CPU usage: unavailable (no /proc samples)\n"
-		report += fmt.Sprintf("  Sample duration: %.2fs across %d distinct processes\n\n", durationSec, len(pidActivity))
-		return report
+	if len(pidCPUTimes) == 0 {
+		return report + "  " + cpuUnavailable(pidActivity) + "\n\n"
 	}
 
 	type cpuUsageInfo struct {
@@ -103,8 +94,8 @@ func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) s
 			if i >= config.TopProcessesLimit*2 {
 				break
 			}
-			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%.2fs / %.2fs)\n",
-				info.pid, info.name, info.cpuPercent, info.cpuTimeSec, durationSec)
+			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%s / %.2fs)\n",
+				info.pid, info.name, info.cpuPercent, formatCPUTime(info.cpuTimeSec), durationSec)
 			podCPUPercent += info.cpuPercent
 		}
 		report += "\n"
@@ -117,8 +108,8 @@ func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) s
 			if i >= config.TopProcessesLimit {
 				break
 			}
-			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%.2fs / %.2fs)\n",
-				info.pid, info.name, info.cpuPercent, info.cpuTimeSec, durationSec)
+			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%s / %.2fs)\n",
+				info.pid, info.name, info.cpuPercent, formatCPUTime(info.cpuTimeSec), durationSec)
 			kernelCPUPercent += info.cpuPercent
 		}
 		if extra := len(kernelProcesses) - config.TopProcessesLimit; extra > 0 {
@@ -140,6 +131,53 @@ func GenerateCPUUsageReport(allEvents []*events.Event, duration time.Duration) s
 		idlePercent, idlePercent*durationSec/100.0, durationSec)
 
 	return report
+}
+
+// formatCPUTime keeps a short-lived process's few milliseconds readable
+// instead of rounding them to 0.00s.
+func formatCPUTime(sec float64) string {
+	if sec < 1 {
+		return fmt.Sprintf("%.1fms", sec*1000)
+	}
+	return fmt.Sprintf("%.2fs", sec)
+}
+
+// procCPUDeltaNS is the CPU time /proc shows for pid since the tracer first
+// saw it, in whole scheduler ticks; zero once the process has exited.
+func procCPUDeltaNS(pid uint32) uint64 {
+	totalNS := getProcessCPUTime(pid).totalNS
+	if base := cache.GetCPUTime(pid).BaselineNS; base > 0 && totalNS >= base {
+		return totalNS - base
+	}
+	return totalNS
+}
+
+// cpuUnavailable says why no process got a CPU figure, instead of repeating
+// the event ranking the Process Activity section already shows.
+func cpuUnavailable(activity []tracker.PidInfo) string {
+	exited := 0
+	for _, a := range activity {
+		if _, err := procfs.ReadFile(fmt.Sprintf("%d/stat", a.Pid)); err != nil {
+			exited++
+		}
+	}
+	n := len(activity)
+	noun := "processes"
+	if n == 1 {
+		noun = "process"
+	}
+	var why string
+	switch {
+	case exited == n && n == 1:
+		why = "it exited before sampling"
+	case exited == n:
+		why = "all exited before sampling"
+	case exited > 0:
+		why = fmt.Sprintf("%d exited before sampling, the rest had no CPU samples", exited)
+	default:
+		why = "no CPU samples"
+	}
+	return fmt.Sprintf("CPU time unavailable for the %d traced %s (%s); see Process Activity for event counts.", n, noun, why)
 }
 
 type cpuTimeInfo struct {

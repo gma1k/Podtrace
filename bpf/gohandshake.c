@@ -28,7 +28,7 @@ struct {
 SEC("uprobe/go_tls_handshake")
 int uprobe_go_tls_handshake(struct pt_regs *ctx)
 {
-	u64 g = GO_HS_GOROUTINE(ctx);
+	u64 g = process_scoped_id(GO_HS_GOROUTINE(ctx));
 	if (g == 0)
 		return 0;
 	u64 now = bpf_ktime_get_ns();
@@ -39,7 +39,7 @@ int uprobe_go_tls_handshake(struct pt_regs *ctx)
 SEC("uprobe/go_tls_handshake_ret")
 int uprobe_go_tls_handshake_ret(struct pt_regs *ctx)
 {
-	u64 g = GO_HS_GOROUTINE(ctx);
+	u64 g = process_scoped_id(GO_HS_GOROUTINE(ctx));
 	u64 error_type = GO_HS_ERROR_TYPE(ctx);
 	if (g == 0)
 		return 0;

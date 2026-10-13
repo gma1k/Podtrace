@@ -215,7 +215,7 @@ static __always_inline struct h3_field_offsets h3_field_offs(void)
 
 static __always_inline u64 h3_stash_key(u64 goroutine, u8 is_client)
 {
-	return goroutine | (is_client ? (1ULL << 63) : 0);
+	return goroutine ^ (is_client ? (1ULL << 63) : 0);
 }
 
 static __always_inline u64 h3_stash_request(u64 goroutine, u64 req, u64 recv,
@@ -312,7 +312,7 @@ int uprobe_h3_roundtrip(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	h3_stash_request(GO_GOROUTINE(ctx), GO_REG1(ctx), GO_REG0(ctx), 1);
+	h3_stash_request(process_scoped_id(GO_GOROUTINE(ctx)), GO_REG1(ctx), GO_REG0(ctx), 1);
 	return 0;
 }
 
@@ -327,7 +327,7 @@ int uprobe_h3_roundtrip_ret(struct pt_regs *ctx)
 		if (bpf_probe_read_user(&sc, sizeof(sc), (void *)(resp + off.status)) == 0)
 			status = (u16)sc;
 	}
-	h3_emit_txn(GO_GOROUTINE(ctx), status, 1, NULL, 0);
+	h3_emit_txn(process_scoped_id(GO_GOROUTINE(ctx)), status, 1, NULL, 0);
 	return 0;
 }
 
@@ -337,7 +337,7 @@ int uprobe_h3_req_from_headers_ret(struct pt_regs *ctx)
 	if (!http_should_trace())
 		return 0;
 	u64 goroutine = GO_GOROUTINE(ctx);
-	u64 start = h3_stash_request(goroutine, GO_REG0(ctx), 0, 0);
+	u64 start = h3_stash_request(process_scoped_id(goroutine), GO_REG0(ctx), 0, 0);
 	if (start)
 		oncpu_begin_goroutine(goroutine, ONCPU_GO_H3, start);
 	return 0;
@@ -354,7 +354,7 @@ int uprobe_h3_write_header(struct pt_regs *ctx)
 	struct h3_peer_paths *paths = h3_peer_path_lookup();
 	if (paths && h3_walk_peer(GO_REG0(ctx), &paths->server, &peer))
 		pp = &peer;
-	h3_emit_txn(GO_GOROUTINE(ctx), status, 0, pp, 0);
+	h3_emit_txn(process_scoped_id(GO_GOROUTINE(ctx)), status, 0, pp, 0);
 	return 0;
 }
 
@@ -362,7 +362,7 @@ SEC("uprobe/h3_handle_request_ret")
 int uprobe_h3_handle_request_ret(struct pt_regs *ctx)
 {
 	u64 goroutine = GO_GOROUTINE(ctx);
-	h3_emit_txn(goroutine, 0, 0, NULL, H3_TXN_F_ABORTED);
+	h3_emit_txn(process_scoped_id(goroutine), 0, 0, NULL, H3_TXN_F_ABORTED);
 	oncpu_finish_goroutine(goroutine, ONCPU_GO_H3);
 	return 0;
 }
@@ -372,7 +372,7 @@ int uprobe_h3_qpack_write_field(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	h3_capture_field(GO_GOROUTINE(ctx), GO_REG1(ctx), GO_REG2(ctx),
+	h3_capture_field(process_scoped_id(GO_GOROUTINE(ctx)), GO_REG1(ctx), GO_REG2(ctx),
 			 GO_REG3(ctx), GO_REG4(ctx));
 	return 0;
 }
@@ -382,7 +382,7 @@ int uprobe_h3_parse_headers(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	u64 g = GO_GOROUTINE(ctx);
+	u64 g = process_scoped_id(GO_GOROUTINE(ctx));
 	struct h3_parse_state st = { .fields_ptr = GO_REG3(ctx) };
 	bpf_map_update_elem(&h3_parse_args, &g, &st, BPF_ANY);
 	return 0;
@@ -410,7 +410,7 @@ static long h3_tp_field_cb(u32 idx, void *vctx)
 SEC("uprobe/h3_parse_headers_ret")
 int uprobe_h3_parse_headers_ret(struct pt_regs *ctx)
 {
-	u64 g = GO_GOROUTINE(ctx);
+	u64 g = process_scoped_id(GO_GOROUTINE(ctx));
 	struct h3_parse_state *st = bpf_map_lookup_elem(&h3_parse_args, &g);
 	if (!st)
 		return 0;

@@ -12,28 +12,58 @@ var pairedLifetimeMaps = []string{"start_times", "syscall_paths", "lock_targets"
 
 var earlyReturnRe = regexp.MustCompile(`if\s*\([^)]*\)\s*\{[^{}]*?return[^;]*;[^{}]*\}`)
 
-func TestPairedLifetimeMapsAreLRU(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(locateBPFDir(t), "maps.h"))
-	if err != nil {
-		t.Fatalf("read maps.h: %v", err)
-	}
-	text := string(src)
+var pairedSideMaps = []string{
+	"socket_conns", "tcp_target", "connect_addrs", "recvmsg_args",
+	"redis_cmds", "memcached_ops", "grpc_methods", "kafka_topic_tmp", "proto_bytes",
+}
 
-	for _, name := range pairedLifetimeMaps {
-		end := strings.Index(text, "} "+name+" SEC(")
-		if end < 0 {
+func TestPairedLifetimeMapsAreLRU(t *testing.T) {
+	assertMapsAreLRU(t, pairedLifetimeMaps)
+}
+
+func TestPairedSideMapsAreLRU(t *testing.T) {
+	assertMapsAreLRU(t, pairedSideMaps)
+}
+
+func assertMapsAreLRU(t *testing.T, names []string) {
+	t.Helper()
+	text := bpfSource(t, "maps.h")
+	for _, name := range names {
+		block, ok := mapBlock(text, name)
+		if !ok {
 			t.Errorf("map %q not found in maps.h", name)
 			continue
 		}
-		start := strings.LastIndex(text[:end], "struct {")
-		if start < 0 {
-			t.Errorf("map %q: no struct opener before its declaration", name)
-			continue
-		}
-		if !strings.Contains(text[start:end], "BPF_MAP_TYPE_LRU_HASH") {
+		if !strings.Contains(block, "BPF_MAP_TYPE_LRU_HASH") {
 			t.Errorf("map %q must be BPF_MAP_TYPE_LRU_HASH so an entry whose return probe never "+
 				"fires (kretprobe miss, thread death) is evicted rather than pinned; a plain HASH "+
 				"fills and silently disables every probe sharing it", name)
+		}
+	}
+}
+
+func TestReturnProbesFreeSideMapsWhenStartTimeIsMissing(t *testing.T) {
+	cases := []struct {
+		file, function string
+		maps           []string
+	}{
+		{"network.c", "tcp_sendmsg_return", []string{"grpc_methods"}},
+		{"kafka.c", "uretprobe_rd_kafka_produce", []string{"kafka_topic_tmp", "proto_bytes"}},
+		{"redis.c", "redis_emit", []string{"redis_cmds"}},
+		{"memcached.c", "mc_emit", []string{"memcached_ops", "proto_bytes"}},
+	}
+	missingStart := regexp.MustCompile(`if\s*\(!start_ts\)\s*\{[^{}]*\}`)
+	for _, tc := range cases {
+		body := functionBody(t, bpfSource(t, tc.file), tc.function)
+		blk := missingStart.FindString(body)
+		if blk == "" {
+			t.Errorf("%s:%s has no braced `if (!start_ts)` cleanup block", tc.file, tc.function)
+			continue
+		}
+		for _, mp := range tc.maps {
+			if !strings.Contains(blk, "bpf_map_delete_elem(&"+mp+",") {
+				t.Errorf("%s:%s leaks %s when its start time is missing", tc.file, tc.function, mp)
+			}
 		}
 	}
 }
@@ -117,6 +147,41 @@ func braceBody(text string, openIdx int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func bpfSource(t *testing.T, name string) string {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join(locateBPFDir(t), name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(src)
+}
+
+func mapBlock(text, name string) (string, bool) {
+	end := strings.Index(text, "} "+name+" SEC(")
+	if end < 0 {
+		return "", false
+	}
+	start := strings.LastIndex(text[:end], "struct {")
+	if start < 0 {
+		return "", false
+	}
+	return text[start:end], true
+}
+
+func functionBody(t *testing.T, text, name string) string {
+	t.Helper()
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\s*\([^;{]*\)\s*\{`)
+	loc := re.FindStringIndex(text)
+	if loc == nil {
+		t.Fatalf("function %s not found", name)
+	}
+	body, ok := braceBody(text, loc[1]-1)
+	if !ok {
+		t.Fatalf("function %s: unbalanced braces", name)
+	}
+	return body
 }
 
 func locateBPFDir(t *testing.T) string {

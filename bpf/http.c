@@ -57,7 +57,7 @@ static __always_inline int http_should_trace(void)
 	u32 *enabled = bpf_map_lookup_elem(&cgroup_filter_enabled, &zero);
 	if (enabled && *enabled) {
 		u64 cgid = bpf_get_current_cgroup_id();
-		if (!bpf_map_lookup_elem(&target_cgroup_ids, &cgid))
+		if (!cgroup_targeted(cgid))
 			return 0;
 	}
 	return 1;
@@ -351,18 +351,12 @@ static __always_inline void h2_emit_frames(void *base, u64 avail, u64 conn,
 
 #define SSL_TLS_PEEK 16
 
-SEC("uprobe/SSL_write")
-int uprobe_SSL_write(struct pt_regs *ctx)
+static __always_inline int ssl_write_dispatch(struct pt_regs *ctx, u64 ssl, void *base, u64 num)
 {
-	if (!http_should_trace())
-		return 0;
-	void *ssl = (void *)PT_REGS_PARM1(ctx);
-	void *base = (void *)PT_REGS_PARM2(ctx);
-	u64 num = (u64)(s64)PT_REGS_PARM3(ctx);
 	if (!base || num == 0)
 		return 0;
 	if (oncpu_is_enabled())
-		oncpu_note_thread_conn((u64)ssl);
+		oncpu_note_thread_conn(ssl);
 
 	u8 peek[SSL_TLS_PEEK] = {};
 	u32 plen = num < sizeof(peek) ? (u32)num : sizeof(peek);
@@ -370,18 +364,17 @@ int uprobe_SSL_write(struct pt_regs *ctx)
 		return 0;
 
 	if (http_method_len(peek) > 0)
-		http_emit_request(ctx, base, num, HTTP_TRANSPORT_TLS, (u64)ssl);
+		http_emit_request(ctx, base, num, HTTP_TRANSPORT_TLS, ssl);
 	else if (peek[0] == 'H' && peek[1] == 'T' && peek[2] == 'T' && peek[3] == 'P' &&
 		 peek[4] == '/' && peek[5] == '1' && peek[6] == '.')
-		http_emit_response(ctx, base, num, HTTP_TRANSPORT_TLS, (u64)ssl);
+		http_emit_response(ctx, base, num, HTTP_TRANSPORT_TLS, ssl);
 	else
-		h2_emit_frames(base, num, (u64)ssl, H2_DIR_EGRESS,
+		h2_emit_frames(base, num, ssl, H2_DIR_EGRESS,
 			       HTTP_TRANSPORT_H2_TLS);
 	return 0;
 }
 
-SEC("uprobe/SSL_read")
-int uprobe_SSL_read(struct pt_regs *ctx)
+static __always_inline int ssl_write_stash(u64 ssl, u64 buf, u64 out_len)
 {
 	if (!http_should_trace())
 		return 0;
@@ -389,59 +382,215 @@ int uprobe_SSL_read(struct pt_regs *ctx)
 	u32 tid = (u32)bpf_get_current_pid_tgid();
 	u64 key = get_key(pid, tid);
 	struct ssl_read_state st = {
-		.buf = (u64)PT_REGS_PARM2(ctx),
-		.conn = (u64)PT_REGS_PARM1(ctx),
+		.buf = buf,
+		.conn = ssl,
+		.out_len = out_len,
+	};
+	bpf_map_update_elem(&ssl_write_args, &key, &st, BPF_ANY);
+	return 0;
+}
+
+static __always_inline struct ssl_read_state *ssl_write_pending(u64 *key)
+{
+	u32 pid = agent_ns_tgid();
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	*key = get_key(pid, tid);
+	return bpf_map_lookup_elem(&ssl_write_args, key);
+}
+
+SEC("uprobe/SSL_write")
+int uprobe_SSL_write(struct pt_regs *ctx)
+{
+	u64 ssl = (u64)PT_REGS_PARM1(ctx);
+	u64 buf = (u64)PT_REGS_PARM2(ctx);
+	u64 key;
+	struct ssl_read_state *outer = ssl_write_pending(&key);
+	if (outer && outer->out_len && outer->conn == ssl)
+		return 0;
+	return ssl_write_stash(ssl, buf, 0);
+}
+
+SEC("uretprobe/SSL_write")
+int uretprobe_SSL_write(struct pt_regs *ctx)
+{
+	s64 ret = PT_REGS_RC_INT(ctx);
+	u64 key;
+	struct ssl_read_state *st = ssl_write_pending(&key);
+	if (!st || st->out_len)
+		return 0;
+	void *base = (void *)st->buf;
+	u64 conn = st->conn;
+	bpf_map_delete_elem(&ssl_write_args, &key);
+	if (ret <= 0)
+		return 0;
+	return ssl_write_dispatch(ctx, conn, base, (u64)ret);
+}
+
+SEC("uprobe/SSL_write_ex")
+int uprobe_SSL_write_ex(struct pt_regs *ctx)
+{
+	u64 ssl = (u64)PT_REGS_PARM1(ctx);
+	u64 buf = (u64)PT_REGS_PARM2(ctx);
+	u64 out_len = (u64)PT_REGS_PARM4(ctx);
+	if (!out_len)
+		return 0;
+	return ssl_write_stash(ssl, buf, out_len);
+}
+
+SEC("uretprobe/SSL_write_ex")
+int uretprobe_SSL_write_ex(struct pt_regs *ctx)
+{
+	s64 rc = PT_REGS_RC_INT(ctx);
+	u64 key;
+	struct ssl_read_state *st = ssl_write_pending(&key);
+	if (!st || !st->out_len)
+		return 0;
+	void *base = (void *)st->buf;
+	u64 conn = st->conn;
+	u64 out_len = st->out_len;
+	bpf_map_delete_elem(&ssl_write_args, &key);
+	if (rc != 1)
+		return 0;
+	u64 n = 0;
+	if (bpf_probe_read_user(&n, sizeof(n), (void *)out_len) != 0 || n >= MAX_BYTES_THRESHOLD)
+		return 0;
+	return ssl_write_dispatch(ctx, conn, base, n);
+}
+
+static __always_inline int ssl_read_stash(u64 ssl, u64 buf, u64 out_len)
+{
+	if (!http_should_trace() && !ssl_hs_undecided(ssl))
+		return 0;
+	u32 pid = agent_ns_tgid();
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	u64 key = get_key(pid, tid);
+	struct ssl_read_state st = {
+		.buf = buf,
+		.conn = ssl,
+		.out_len = out_len,
 	};
 	bpf_map_update_elem(&ssl_read_args, &key, &st, BPF_ANY);
 	return 0;
 }
 
-SEC("uretprobe/SSL_read")
-int uretprobe_SSL_read(struct pt_regs *ctx)
+static __always_inline int ssl_read_complete(struct pt_regs *ctx, void *base, u64 conn, u64 n)
 {
-	u32 pid = agent_ns_tgid();
-	u32 tid = (u32)bpf_get_current_pid_tgid();
-	u64 key = get_key(pid, tid);
-	struct ssl_read_state *st = bpf_map_lookup_elem(&ssl_read_args, &key);
-	if (!st)
+	if (n == 0 || n >= MAX_BYTES_THRESHOLD)
 		return 0;
-	void *base = (void *)st->buf;
-	u64 conn = st->conn;
-	bpf_map_delete_elem(&ssl_read_args, &key);
-	s64 ret = PT_REGS_RC_INT(ctx);
-	if (ret <= 0)
+	ssl_hs_settle(ctx, conn);
+	if (!http_should_trace())
 		return 0;
 	if (oncpu_is_enabled())
 		oncpu_note_thread_conn(conn);
 
 	u8 peek[SSL_TLS_PEEK] = {};
-	u32 plen = (u64)ret < sizeof(peek) ? ((u32)ret & (SSL_TLS_PEEK - 1)) : sizeof(peek);
+	u32 plen = n < sizeof(peek) ? ((u32)n & (SSL_TLS_PEEK - 1)) : sizeof(peek);
 	if (bpf_probe_read_user(peek, plen, base) != 0)
 		return 0;
 
 	if (peek[0] == 'H' && peek[1] == 'T' && peek[2] == 'T' && peek[3] == 'P' &&
 	    peek[4] == '/' && peek[5] == '1' && peek[6] == '.')
-		http_emit_response(ctx, base, (u64)ret, HTTP_TRANSPORT_TLS | HTTP_INBOUND, conn);
+		http_emit_response(ctx, base, n, HTTP_TRANSPORT_TLS | HTTP_INBOUND, conn);
 	else if (http_method_len(peek) > 0)
-		http_emit_request(ctx, base, (u64)ret, HTTP_TRANSPORT_TLS | HTTP_INBOUND, conn);
+		http_emit_request(ctx, base, n, HTTP_TRANSPORT_TLS | HTTP_INBOUND, conn);
 	else
-		h2_emit_frames(base, (u64)ret, conn, H2_DIR_INGRESS,
+		h2_emit_frames(base, n, conn, H2_DIR_INGRESS,
 			       HTTP_TRANSPORT_H2_TLS);
 	return 0;
+}
+
+static __always_inline struct ssl_read_state *ssl_read_pending(u64 *key)
+{
+	u32 pid = agent_ns_tgid();
+	u32 tid = (u32)bpf_get_current_pid_tgid();
+	*key = get_key(pid, tid);
+	return bpf_map_lookup_elem(&ssl_read_args, key);
+}
+
+SEC("uprobe/SSL_read")
+int uprobe_SSL_read(struct pt_regs *ctx)
+{
+	u64 ssl = (u64)PT_REGS_PARM1(ctx);
+	u64 buf = (u64)PT_REGS_PARM2(ctx);
+	u64 key;
+	struct ssl_read_state *outer = ssl_read_pending(&key);
+	if (outer && outer->out_len && outer->conn == ssl)
+		return 0;
+	return ssl_read_stash(ssl, buf, 0);
+}
+
+SEC("uretprobe/SSL_read")
+int uretprobe_SSL_read(struct pt_regs *ctx)
+{
+	s64 ret = PT_REGS_RC_INT(ctx);
+	u64 key;
+	struct ssl_read_state *st = ssl_read_pending(&key);
+	if (!st || st->out_len)
+		return 0;
+	void *base = (void *)st->buf;
+	u64 conn = st->conn;
+	bpf_map_delete_elem(&ssl_read_args, &key);
+	if (ret <= 0)
+		return 0;
+	return ssl_read_complete(ctx, base, conn, (u64)ret);
+}
+
+SEC("uprobe/SSL_read_ex")
+int uprobe_SSL_read_ex(struct pt_regs *ctx)
+{
+	u64 ssl = (u64)PT_REGS_PARM1(ctx);
+	u64 buf = (u64)PT_REGS_PARM2(ctx);
+	u64 out_len = (u64)PT_REGS_PARM4(ctx);
+	if (!out_len)
+		return 0;
+	return ssl_read_stash(ssl, buf, out_len);
+}
+
+SEC("uretprobe/SSL_read_ex")
+int uretprobe_SSL_read_ex(struct pt_regs *ctx)
+{
+	s64 rc = PT_REGS_RC_INT(ctx);
+	u64 key;
+	struct ssl_read_state *st = ssl_read_pending(&key);
+	if (!st || !st->out_len)
+		return 0;
+	void *base = (void *)st->buf;
+	u64 conn = st->conn;
+	u64 out_len = st->out_len;
+	bpf_map_delete_elem(&ssl_read_args, &key);
+	if (rc != 1)
+		return 0;
+	u64 n = 0;
+	if (bpf_probe_read_user(&n, sizeof(n), (void *)out_len) != 0)
+		return 0;
+	return ssl_read_complete(ctx, base, conn, n);
 }
 
 SEC("uprobe/gnutls_record_send")
 int uprobe_gnutls_record_send(struct pt_regs *ctx)
 {
-	if (!http_should_trace())
+	u64 session = (u64)PT_REGS_PARM1(ctx);
+	u64 buf = (u64)PT_REGS_PARM2(ctx);
+	return ssl_write_stash(session, buf, 0);
+}
+
+SEC("uretprobe/gnutls_record_send")
+int uretprobe_gnutls_record_send(struct pt_regs *ctx)
+{
+	s64 ret = PT_REGS_RC(ctx);
+	u64 key;
+	struct ssl_read_state *st = ssl_write_pending(&key);
+	if (!st)
 		return 0;
-	void *session = (void *)PT_REGS_PARM1(ctx);
-	void *base = (void *)PT_REGS_PARM2(ctx);
-	u64 num = (u64)PT_REGS_PARM3(ctx);
+	void *base = (void *)st->buf;
+	u64 session = st->conn;
+	bpf_map_delete_elem(&ssl_write_args, &key);
+	if (ret <= 0 || (u64)ret >= MAX_BYTES_THRESHOLD)
+		return 0;
 	if (oncpu_is_enabled())
-		oncpu_note_thread_conn((u64)session);
-	if (!http_emit_request(ctx, base, num, HTTP_TRANSPORT_TLS, (u64)session))
-		http_emit_response(ctx, base, num, HTTP_TRANSPORT_TLS, (u64)session);
+		oncpu_note_thread_conn(session);
+	if (!http_emit_request(ctx, base, (u64)ret, HTTP_TRANSPORT_TLS, session))
+		http_emit_response(ctx, base, (u64)ret, HTTP_TRANSPORT_TLS, session);
 	return 0;
 }
 

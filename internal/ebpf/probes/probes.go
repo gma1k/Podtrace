@@ -1909,9 +1909,11 @@ func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 		"SSL_free":              {"uprobe_SSL_free", ""},
 		"gnutls_handshake":      {"uprobe_gnutls_handshake", "uretprobe_gnutls_handshake"},
 		"mbedtls_ssl_handshake": {"uprobe_mbedtls_ssl_handshake", "uretprobe_mbedtls_ssl_handshake"},
-		"SSL_write":             {"uprobe_SSL_write", ""},
+		"SSL_write":             {"uprobe_SSL_write", "uretprobe_SSL_write"},
 		"SSL_read":              {"uprobe_SSL_read", "uretprobe_SSL_read"},
-		"gnutls_record_send":    {"uprobe_gnutls_record_send", ""},
+		"SSL_write_ex":          {"uprobe_SSL_write_ex", "uretprobe_SSL_write_ex"},
+		"SSL_read_ex":           {"uprobe_SSL_read_ex", "uretprobe_SSL_read_ex"},
+		"gnutls_record_send":    {"uprobe_gnutls_record_send", "uretprobe_gnutls_record_send"},
 		"gnutls_record_recv":    {"uprobe_gnutls_record_recv", "uretprobe_gnutls_record_recv"},
 	}
 

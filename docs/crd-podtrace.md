@@ -61,8 +61,8 @@ spec:
 
 | Field | Notes |
 |---|---|
-| `matchedPods` | Sum of `activeCgroups` across all reporting nodes. |
-| `nodeStatus[]` | One entry per node hosting a matched pod. Each carries `node`, `ready`, `activeCgroups`, `totalEvents`, `droppedEvents`, `lastHeartbeat`, `message`, and `policyHash` (the hash of the bundle the agent last observed — see "Verifying policy propagation" below). |
+| `matchedPods` | Number of matched pods: the sum of every node's `matchedPods`. |
+| `nodeStatus[]` | One entry per node hosting a matched pod. Each carries `node`, `ready`, `matchedPods`, `activeCgroups` (the pod and container cgroups traced there, so usually more than the pods), `totalEvents`, `droppedEvents`, `lastHeartbeat`, `message`, and `policyHash` (the hash of the bundle the agent last observed — see "Verifying policy propagation" below). |
 | `conditions` | Standard Kubernetes condition objects. `Ready=True` once at least one node reports healthy. `Degraded=True` on bundle sync errors. `Paused` mirrors `spec.paused`. `PolicyApplied=True` once the operator has resolved `spec.filters`/`spec.samplePercent`/`spec.thresholds` and written them to the bundle. |
 | `observedGeneration` | Most recent generation reconciled. |
 | `policy.effectiveSampleRate` | The operator-resolved sample rate (0–100), already reduced to the minimum of `spec.samplePercent` and `ExporterConfig.spec.samplePercent`. This is what every agent and exporter actually applies — do not infer effective sampling from `spec` alone. |

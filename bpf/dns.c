@@ -208,7 +208,27 @@ static __always_inline void dns_drop_inc(void) {
 		(*c)++;
 }
 
-static __always_inline void emit_encrypted_dns(struct __sk_buff *skb, u8 is_v6, __u16 port, int is_doh) {
+static __always_inline int encrypted_dns_first_seen(struct __sk_buff *skb, u8 is_v6,
+						    __u16 dport, __u16 sport) {
+	struct encrypted_dns_flow k = {};
+	k.cgroup_id = bpf_skb_cgroup_id(skb);
+	k.dport = dport;
+	k.sport = sport;
+	int rc = is_v6 ? bpf_skb_load_bytes(skb, 24, k.daddr6, 16)
+		       : bpf_skb_load_bytes(skb, 16, k.daddr6, 4);
+	if (rc < 0)
+		return 1;
+	if (bpf_map_lookup_elem(&encrypted_dns_seen, &k))
+		return 0;
+	u8 one = 1;
+	bpf_map_update_elem(&encrypted_dns_seen, &k, &one, BPF_ANY);
+	return 1;
+}
+
+static __always_inline void emit_encrypted_dns(struct __sk_buff *skb, u8 is_v6, __u16 port,
+					       __u16 sport, int is_doh) {
+	if (!encrypted_dns_first_seen(skb, is_v6, port, sport))
+		return;
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e) {
 		dns_drop_inc();
@@ -269,9 +289,11 @@ int dns_egress(struct __sk_buff *skb) {
 	if (bpf_skb_load_bytes(skb, l4 + 2, &dport, sizeof(dport)) < 0)
 		return 1;
 	__u16 dporth = bpf_ntohs(dport);
+	__u16 sport = 0;
+	bpf_skb_load_bytes(skb, l4, &sport, sizeof(sport));
 
 	if (dporth == DOT_PORT) {
-		emit_encrypted_dns(skb, is_v6, DOT_PORT, 0);
+		emit_encrypted_dns(skb, is_v6, DOT_PORT, sport, 0);
 		return 1;
 	}
 
@@ -279,13 +301,13 @@ int dns_egress(struct __sk_buff *skb) {
 		if (!is_v6) {
 			__u32 daddr = 0;
 			if (bpf_skb_load_bytes(skb, 16, &daddr, sizeof(daddr)) == 0 && is_known_doh(daddr)) {
-				emit_encrypted_dns(skb, 0, DOH_PORT, 1);
+				emit_encrypted_dns(skb, 0, DOH_PORT, sport, 1);
 				return 1;
 			}
 		} else {
 			u8 a6[16] = {};
 			if (bpf_skb_load_bytes(skb, 24, a6, sizeof(a6)) == 0 && is_known_doh6(a6)) {
-				emit_encrypted_dns(skb, 1, DOH_PORT, 1);
+				emit_encrypted_dns(skb, 1, DOH_PORT, sport, 1);
 				return 1;
 			}
 		}
@@ -321,10 +343,8 @@ int dns_egress(struct __sk_buff *skb) {
 	struct dns_query_state q = {};
 	q.ts_ns = bpf_ktime_get_ns();
 	q.last_ns = q.ts_ns;
-	q.pid = bpf_get_current_pid_tgid() >> 32;
+	q.pid = agent_ns_tgid();
 	q.transport = transport;
-	/* bpf_get_current_comm is not available to cgroup_skb programs;
-	 * q.comm stays zeroed and userspace resolves the name from q.pid. */
 	if (!is_v6) {
 		__u32 daddr = 0;
 		if (bpf_skb_load_bytes(skb, 16, &daddr, sizeof(daddr)) == 0)

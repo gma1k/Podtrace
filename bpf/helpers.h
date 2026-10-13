@@ -17,10 +17,10 @@ static __noinline u32 task_ns_tgid(struct task_struct *task, u32 fallback)
 		return init_tgid;
 
 	if (!task)
-		return init_tgid;
+		return 0;
 	struct pid *tpid = BPF_CORE_READ(task, group_leader, thread_pid);
 	if (!tpid)
-		return init_tgid;
+		return 0;
 	u32 level = BPF_CORE_READ(tpid, level);
 
 #pragma unroll
@@ -33,7 +33,7 @@ static __noinline u32 task_ns_tgid(struct task_struct *task, u32 fallback)
 		if (up.ns && BPF_CORE_READ(up.ns, ns.inum) == (u32)want->ino)
 			return (u32)up.nr;
 	}
-	return init_tgid;
+	return 0;
 }
 
 static __always_inline u32 agent_ns_tgid(void)
@@ -44,6 +44,25 @@ static __always_inline u32 agent_ns_tgid(void)
 
 static inline u64 get_key(u32 pid, u32 tid) {
 	return ((u64)pid << 32) | tid;
+}
+
+static __always_inline u64 mix64(u64 h)
+{
+	h ^= h >> 33;
+	h *= 0xff51afd7ed558ccdULL;
+	h ^= h >> 33;
+	h *= 0xc4ceb9fe1a85ec53ULL;
+	h ^= h >> 33;
+	return h;
+}
+
+static __always_inline u64 process_scoped_id(u64 ptr)
+{
+	if (!ptr)
+		return 0;
+	u64 tgid = bpf_get_current_pid_tgid() >> 32;
+	u64 h = mix64(ptr ^ (tgid * 0x9e3779b97f4a7c15ULL));
+	return h ? h : 1;
 }
 
 static inline struct pair_key make_pair_key(u32 pair) {
@@ -223,13 +242,18 @@ static inline struct event *get_event_buf_unfiltered(void) {
 	return e;
 }
 
+static __always_inline int cgroup_targeted(u64 cgid) {
+	return bpf_map_lookup_elem(&target_cgroup_ids, &cgid) != NULL ||
+	       bpf_map_lookup_elem(&inherited_cgroup_ids, &cgid) != NULL;
+}
+
 static inline int cgroup_allows(u64 cgid) {
 	u32 zero = 0;
 	u32 *enabled = bpf_map_lookup_elem(&cgroup_filter_enabled, &zero);
 	if (!enabled || !*enabled) {
 		return 1;
 	}
-	return bpf_map_lookup_elem(&target_cgroup_ids, &cgid) != NULL;
+	return cgroup_targeted(cgid);
 }
 
 __noinline u64 podtrace_current_request(void);
@@ -240,14 +264,8 @@ static inline struct event *get_event_buf(void) {
 		return NULL;
 	}
 
-	u32 zero = 0;
-	u32 *enabled = bpf_map_lookup_elem(&cgroup_filter_enabled, &zero);
-	if (enabled && *enabled) {
-		u64 cgid = e->cgroup_id;
-		u8 *allowed = bpf_map_lookup_elem(&target_cgroup_ids, &cgid);
-		if (!allowed) {
-			return NULL;
-		}
+	if (!cgroup_allows(e->cgroup_id)) {
+		return NULL;
 	}
 	e->correlation_id = podtrace_current_request();
 	return e;

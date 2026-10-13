@@ -64,9 +64,19 @@ int tracepoint_oom_mark_victim(void *ctx) {
 
 	struct trace_event_raw_mark_victim *tp = ctx;
 	e->pid = BPF_CORE_READ(tp, pid);
+	if (bpf_core_field_exists(tp->anon_rss)) {
+		u64 rss_kb = BPF_CORE_READ(tp, anon_rss) + BPF_CORE_READ(tp, file_rss) +
+			     BPF_CORE_READ(tp, shmem_rss);
+		e->bytes = rss_kb * 1024;
+	}
 	struct task_struct *victim = bpf_task_from_pid((s32)e->pid);
+	e->net_ns_id = 0;
+	u32 victim_tgid = 0;
 	if (victim) {
+		victim_tgid = BPF_CORE_READ(victim, tgid);
 		e->cgroup_id = BPF_CORE_READ(victim, cgroups, dfl_cgrp, kn, id);
+		e->net_ns_id = BPF_CORE_READ(victim, nsproxy, net_ns, ns.inum);
+		e->pid = task_ns_tgid(victim, e->pid);
 		bpf_task_release(victim);
 	}
 	if (bpf_core_field_exists(tp->__data_loc_comm)) {
@@ -80,7 +90,8 @@ int tracepoint_oom_mark_victim(void *ctx) {
 		}
 	}
 
-	capture_user_stack(ctx, e->pid, 0, e);
+	if (victim_tgid && victim_tgid == (u32)(bpf_get_current_pid_tgid() >> 32))
+		capture_user_stack(ctx, e->pid, 0, e);
 	bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	return 0;
 }

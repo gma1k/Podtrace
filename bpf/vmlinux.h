@@ -82,7 +82,15 @@ struct kernfs_node {
 	unsigned long long id;
 };
 
+struct cgroup;
+
+struct cgroup_subsys_state {
+	struct cgroup *cgroup;
+	struct cgroup_subsys_state *parent;
+};
+
 struct cgroup {
+	struct cgroup_subsys_state self;
 	struct kernfs_node *kn;
 };
 
@@ -104,6 +112,9 @@ struct task_struct {
 struct trace_event_raw_mark_victim {
 	int pid;
 	unsigned int __data_loc_comm;
+	unsigned long anon_rss;
+	unsigned long file_rss;
+	unsigned long shmem_rss;
 };
 
 struct in6_addr {
@@ -122,9 +133,18 @@ struct sock_common {
 	struct in6_addr skc_v6_rcv_saddr;
 };
 
+struct sock_cgroup_data {
+	struct cgroup *cgroup;
+};
+
 struct sock {
 	struct sock_common __sk_common;
 	int sk_err;
+	struct sock_cgroup_data sk_cgrp_data;
+};
+
+struct sk_buff {
+	struct sock *sk;
 };
 
 struct iovec {

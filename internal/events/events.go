@@ -157,11 +157,16 @@ func (e *Event) Latency() time.Duration {
 
 // IsError reports whether the event represents a failure.
 func (e *Event) IsError() bool {
+	if kernelRestartCode(e.Error) {
+		return false
+	}
 	switch e.Type {
 	case EventResourceLimit, EventDBPoolStats:
 		return false
 	case EventOpen:
 		return e.Error != 0 && e.Error != -errnoENOENT
+	case EventLockContention:
+		return e.Error < 0 && !futexWaitOutcome(e.Error)
 	case EventDNS:
 		return e.IsDNSLookup() && DNSAnswerFailed(e.DNSAnswer())
 	default:
@@ -181,6 +186,37 @@ func CountsAsConnectionAttempt(t EventType, failed bool) bool {
 		return false
 	}
 }
+
+// kernelRestartCode reports whether code is one of the kernel-internal
+// ERESTART* values (512-516): the syscall layer restarts the call or turns
+// it into EINTR, so no application ever sees it as a failure.
+func kernelRestartCode(code int32) bool {
+	return code <= -errnoERESTARTSYS && code >= -errnoERESTARTRESTARTBLOCK
+}
+
+// futexWaitOutcome reports whether a negative futex return is how a wait
+// normally ends rather than a failure: the value had already changed
+// (EAGAIN), a timed wait expired (ETIMEDOUT), or a signal interrupted it
+// (EINTR, or a kernel-internal ERESTART* the syscall layer restarts).
+// FUTEX_WAKE returns how many waiters it woke, which is never an error.
+func futexWaitOutcome(code int32) bool {
+	switch -code {
+	case errnoEINTR, errnoEAGAIN, errnoETIMEDOUT,
+		errnoERESTARTSYS, errnoERESTARTNOINTR, errnoERESTARTNOHAND, errnoERESTARTRESTARTBLOCK:
+		return true
+	}
+	return false
+}
+
+const (
+	errnoEINTR                = 4
+	errnoEAGAIN               = 11
+	errnoETIMEDOUT            = 110
+	errnoERESTARTSYS          = 512
+	errnoERESTARTNOINTR       = 513
+	errnoERESTARTNOHAND       = 514
+	errnoERESTARTRESTARTBLOCK = 516
+)
 
 const (
 	errnoENOENT       = 2

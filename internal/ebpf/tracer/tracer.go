@@ -78,14 +78,16 @@ type ProfilingControllerSetter interface {
 }
 
 type Tracer struct {
-	collection      *ebpf.Collection
-	links           []link.Link
-	probeGroupsMu   sync.Mutex
-	probeGroups     map[probes.ProbeGroup][]link.Link
-	dnsPacketLinks  map[string][]link.Link
-	http3Links      map[string][]link.Link
-	sockOpsLinks    map[string][]link.Link
-	sockOpsCoverage sockOpsCoverage
+	cgroupMkdirAttached bool
+	inheritedCache      sync.Map
+	collection          *ebpf.Collection
+	links               []link.Link
+	probeGroupsMu       sync.Mutex
+	probeGroups         map[probes.ProbeGroup][]link.Link
+	dnsPacketLinks      map[string][]link.Link
+	http3Links          map[string][]link.Link
+	sockOpsLinks        map[string][]link.Link
+	sockOpsCoverage     sockOpsCoverage
 
 	onCPUMu      sync.Mutex
 	onCPUSampler *oncpu.Sampler
@@ -180,6 +182,48 @@ type ContainerProbeTarget struct {
 type containerUprobeSet struct {
 	pids  []uint32
 	links map[probes.ProbeGroup][]link.Link
+	// seen and claimed persist for the container's lifetime: a process that
+	// starts later only adds uprobes for files no earlier process covered,
+	// so the container's probes are never torn down while it runs.
+	seen    map[uint32]struct{}
+	claimed map[probes.ProbeGroup]*probes.AttachedFiles
+}
+
+func newContainerUprobeSet(pids []uint32) *containerUprobeSet {
+	s := &containerUprobeSet{
+		pids:    pids,
+		links:   map[probes.ProbeGroup][]link.Link{},
+		seen:    make(map[uint32]struct{}, len(pids)),
+		claimed: map[probes.ProbeGroup]*probes.AttachedFiles{},
+	}
+	for _, p := range pids {
+		s.seen[p] = struct{}{}
+	}
+	return s
+}
+
+// claimFor returns the group's record of attached files, creating it.
+func (s *containerUprobeSet) claimFor(g probes.ProbeGroup) *probes.AttachedFiles {
+	if s.claimed == nil {
+		s.claimed = map[probes.ProbeGroup]*probes.AttachedFiles{}
+	}
+	af := s.claimed[g]
+	if af == nil {
+		af = probes.NewAttachedFiles()
+		s.claimed[g] = af
+	}
+	return af
+}
+
+// unseenPIDs returns the pids this set has not attached for yet.
+func (s *containerUprobeSet) unseenPIDs(pids []uint32) []uint32 {
+	var out []uint32
+	for _, p := range pids {
+		if _, ok := s.seen[p]; !ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func samePIDSet(a, b []uint32) bool {
@@ -242,19 +286,25 @@ func (t *Tracer) attachGlobalProtocolProbesOnce() {
 // uprobes for one container and returns the links, without registering them
 // in the shared probeGroups registry, the per-container lifecycle in
 // SetContainerTargets owns them.
-func (t *Tracer) attachContainerGroupUprobes(g probes.ProbeGroup, id string, pids []uint32) []link.Link {
+func (t *Tracer) attachContainerGroupUprobes(g probes.ProbeGroup, id string, pids []uint32, af *probes.AttachedFiles) []link.Link {
 	coll := t.collection
 	if coll == nil || id == "" || len(pids) == 0 {
 		return nil
 	}
-	af := probes.NewAttachedFiles()
+	if af == nil {
+		af = probes.NewAttachedFiles()
+	}
 	var ls []link.Link
 	for _, pid := range pids {
+		newBinary := af.Claim("exe:"+string(g), fmt.Sprintf("%s/%d/exe", config.ProcBasePath, pid))
 		switch g {
 		case probes.GroupTLS:
 			ls = append(ls, probes.AttachDNSProbesWithPID(coll, id, pid, af)...)
 			ls = append(ls, probes.AttachSyncProbesWithPID(coll, id, pid, af)...)
 			ls = append(ls, probes.AttachTLSProbesWithPID(coll, id, pid, af)...)
+			if !newBinary {
+				continue
+			}
 			ls = append(ls, probes.AttachGoTLSProbes(coll, pid)...)
 			ls = append(ls, probes.AttachGoGRPCProbes(coll, pid)...)
 			ls = append(ls, probes.AttachRustlsProbes(coll, pid)...)
@@ -273,7 +323,9 @@ func (t *Tracer) attachContainerGroupUprobes(g probes.ProbeGroup, id string, pid
 		case probes.GroupMessaging:
 			ls = append(ls, probes.AttachKafkaProbesWithPID(coll, id, pid, af)...)
 		case probes.GroupUSDT:
-			ls = append(ls, probes.AttachUSDTProbes(coll, pid)...)
+			if newBinary {
+				ls = append(ls, probes.AttachUSDTProbes(coll, pid)...)
+			}
 		default:
 			return nil
 		}
@@ -282,25 +334,26 @@ func (t *Tracer) attachContainerGroupUprobes(g probes.ProbeGroup, id string, pid
 }
 
 // attachContainerGroup dispatches to the test seam when set.
-func (t *Tracer) attachContainerGroup(g probes.ProbeGroup, id string, pids []uint32) []link.Link {
+func (t *Tracer) attachContainerGroup(g probes.ProbeGroup, id string, pids []uint32, af *probes.AttachedFiles) []link.Link {
 	if t.attachContainerGroupFn != nil {
 		return t.attachContainerGroupFn(g, id, pids)
 	}
-	return t.attachContainerGroupUprobes(g, id, pids)
+	return t.attachContainerGroupUprobes(g, id, pids, af)
 }
 
 // attachContainerUprobes attaches every currently-enabled container-scoped
-// uprobe group for one container.
-func (t *Tracer) attachContainerUprobes(id string, pids []uint32) map[probes.ProbeGroup][]link.Link {
+// uprobe group for pids of one container, recording what it attached in set.
+func (t *Tracer) attachContainerUprobes(id string, pids []uint32, set *containerUprobeSet) map[probes.ProbeGroup][]link.Link {
 	out := make(map[probes.ProbeGroup][]link.Link, len(containerUprobeGroups))
 	for _, g := range containerUprobeGroups {
 		t.probeGroupsMu.Lock()
 		_, disabled := t.intentionallyDisabled[g]
+		af := set.claimFor(g)
 		t.probeGroupsMu.Unlock()
 		if disabled {
 			continue
 		}
-		if ls := t.attachContainerGroup(g, id, pids); len(ls) > 0 {
+		if ls := t.attachContainerGroup(g, id, pids, af); len(ls) > 0 {
 			out[g] = ls
 		}
 	}
@@ -329,16 +382,33 @@ func (t *Tracer) SetContainerTargets(targets []ContainerProbeTarget) error {
 	}
 	var stale []link.Link
 	for id, set := range t.containerUprobes {
-		if pids, ok := want[id]; ok && samePIDSet(pids, set.pids) {
+		if _, ok := want[id]; ok {
 			continue
 		}
 		stale = append(stale, set.allLinks()...)
 		delete(t.containerUprobes, id)
 	}
-	var toAttach []ContainerProbeTarget
+	type attachJob struct {
+		id   string
+		pids []uint32
+		set  *containerUprobeSet
+	}
+	var jobs []attachJob
 	for id, pids := range want {
-		if _, ok := t.containerUprobes[id]; !ok {
-			toAttach = append(toAttach, ContainerProbeTarget{ID: id, PIDs: pids})
+		set, ok := t.containerUprobes[id]
+		if !ok {
+			set = newContainerUprobeSet(pids)
+			t.containerUprobes[id] = set
+			jobs = append(jobs, attachJob{id: id, pids: pids, set: set})
+			continue
+		}
+		fresh := set.unseenPIDs(pids)
+		set.pids = pids
+		for _, p := range fresh {
+			set.seen[p] = struct{}{}
+		}
+		if len(fresh) > 0 {
+			jobs = append(jobs, attachJob{id: id, pids: fresh, set: set})
 		}
 	}
 	t.probeGroupsMu.Unlock()
@@ -347,15 +417,17 @@ func (t *Tracer) SetContainerTargets(targets []ContainerProbeTarget) error {
 		_ = l.Close()
 	}
 
-	for _, ct := range toAttach {
-		links := t.attachContainerUprobes(ct.ID, ct.PIDs)
+	for _, j := range jobs {
+		links := t.attachContainerUprobes(j.id, j.pids, j.set)
 		t.probeGroupsMu.Lock()
-		if t.probesClosed {
+		if t.probesClosed || t.containerUprobes[j.id] != j.set {
 			t.probeGroupsMu.Unlock()
 			closeLinks((&containerUprobeSet{links: links}).allLinks())
 			continue
 		}
-		t.containerUprobes[ct.ID] = &containerUprobeSet{pids: ct.PIDs, links: links}
+		for g, ls := range links {
+			j.set.links[g] = append(j.set.links[g], ls...)
+		}
 		t.probeGroupsMu.Unlock()
 	}
 	return nil
@@ -393,18 +465,27 @@ func (t *Tracer) reattachContainerGroupUprobes(g probes.ProbeGroup) int {
 	for id, set := range t.containerUprobes {
 		if len(set.links[g]) == 0 {
 			missing = append(missing, target{id: id, pids: set.pids})
+			if set.claimed != nil {
+				delete(set.claimed, g)
+			}
 		}
 	}
 	t.probeGroupsMu.Unlock()
 
 	reattached := 0
 	for _, c := range missing {
-		ls := t.attachContainerGroup(g, c.id, c.pids)
+		t.probeGroupsMu.Lock()
+		var af *probes.AttachedFiles
+		if set, ok := t.containerUprobes[c.id]; ok {
+			af = set.claimFor(g)
+		}
+		t.probeGroupsMu.Unlock()
+		ls := t.attachContainerGroup(g, c.id, c.pids, af)
 		if len(ls) == 0 {
 			continue
 		}
 		t.probeGroupsMu.Lock()
-		if set, ok := t.containerUprobes[c.id]; ok && samePIDSet(set.pids, c.pids) {
+		if set, ok := t.containerUprobes[c.id]; ok {
 			if set.links == nil {
 				set.links = map[probes.ProbeGroup][]link.Link{}
 			}
@@ -902,8 +983,11 @@ func (t *Tracer) cgroupAllows(event *events.Event) bool {
 	cgroupIDs := t.loadCgroupIDs()
 	switch {
 	case len(cgroupIDs) > 0 && event.CgroupID != 0:
-		_, ok := cgroupIDs[event.CgroupID]
-		return ok
+		if _, ok := cgroupIDs[event.CgroupID]; ok {
+			return true
+		}
+		_, inherited := t.InheritedCgroupParent(event.CgroupID)
+		return inherited
 	case t.idleDeny():
 		return false
 	case t.useUserspaceCgroupFilter.Load():
@@ -1060,6 +1144,7 @@ func (t *Tracer) attachCgroups(cgroupPaths []string, replace bool) error {
 		} else if len(newIDs) > 0 {
 			logger.Debug("Set target cgroup IDs for in-kernel filtering", zap.Int("count", len(newIDs)))
 		}
+		t.syncCgroupInheritance(allPaths)
 		if len(newIDs) > 0 && os.Getenv("PODTRACE_DISABLE_USERSPACE_CGROUP_FILTER") == "1" {
 			t.useUserspaceCgroupFilter.Store(false)
 		}
@@ -1764,6 +1849,9 @@ func (t *Tracer) processAndDispatch(ctx context.Context, event *events.Event,
 		allowed = true
 	} else if len(cgroupIDs) > 0 && event.CgroupID != 0 {
 		_, allowed = cgroupIDs[event.CgroupID]
+		if !allowed {
+			_, allowed = t.InheritedCgroupParent(event.CgroupID)
+		}
 		if !allowed {
 			if ec.filtered.Add(1) <= 5 || time.Now().Unix()%10 == 0 {
 				logger.Debug("Event filtered by cgroup ID mismatch",

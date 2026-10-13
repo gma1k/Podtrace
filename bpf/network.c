@@ -51,18 +51,56 @@ static __always_inline void stash_sk_owner(struct pt_regs *ctx)
 	bpf_map_update_elem(&sk_owner, &sk, &o, BPF_ANY);
 }
 
+struct sock_cgroup_data___old {
+	u64 val;
+} __attribute__((preserve_access_index));
+
+static __always_inline u64 sk_cgroup_id(u64 skaddr)
+{
+	if (!skaddr)
+		return 0;
+	struct sock *sk = (struct sock *)skaddr;
+	struct cgroup *cg = NULL;
+	if (bpf_core_field_exists(struct sock_cgroup_data, cgroup)) {
+		cg = BPF_CORE_READ(sk, sk_cgrp_data.cgroup);
+	} else {
+		struct sock_cgroup_data___old *d =
+			(struct sock_cgroup_data___old *)&sk->sk_cgrp_data;
+		u64 val = BPF_CORE_READ(d, val);
+		if (val & 1)
+			return 0;
+		cg = (struct cgroup *)val;
+	}
+	if (!cg)
+		return 0;
+	return BPF_CORE_READ(cg, kn, id);
+}
+
 static __always_inline void apply_sk_owner(struct event *e, u64 skaddr)
 {
 	struct sk_owner *o = skaddr ? bpf_map_lookup_elem(&sk_owner, &skaddr) : NULL;
+	u64 sk_cgid = sk_cgroup_id(skaddr);
+	if (o && sk_cgid && o->cgroup_id != sk_cgid)
+		o = NULL;
 	if (o) {
 		e->pid = o->pid;
 		e->cgroup_id = o->cgroup_id;
 		__builtin_memcpy(e->comm, o->comm, COMM_LEN);
 	} else {
 		e->pid = 0;
-		e->cgroup_id = 0;
+		e->cgroup_id = sk_cgid;
 		__builtin_memset(e->comm, 0, COMM_LEN);
 	}
+}
+
+static __always_inline void socket_event_context(void *ctx, struct event *e, u32 cur_pid)
+{
+	if (e->pid && e->pid == cur_pid) {
+		capture_user_stack(ctx, cur_pid, 0, e);
+		return;
+	}
+	e->stack_key = 0;
+	e->net_ns_id = 0;
 }
 
 static __always_inline void drop_pair_sidemaps(struct pair_key *key)
@@ -118,7 +156,6 @@ static __noinline void stash_udp_peer(struct pt_regs *ctx)
 		return;
 	}
 
-	/* Unconnected: the address is in the msghdr. */
 	struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
 	if (!peer_from_msghdr(msg, &peer))
 		return;
@@ -190,6 +227,8 @@ static __noinline void stash_udp_recv_peer(void)
 
 SEC("kprobe/tcp_v4_connect")
 int kprobe_tcp_connect(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_TCP_CONNECT_V4);
 	record_start_time(&key);
 	stash_sk_owner(ctx);
@@ -211,6 +250,8 @@ int kprobe_tcp_connect(struct pt_regs *ctx) {
 
 SEC("kprobe/tcp_v6_connect")
 int kprobe_tcp_v6_connect(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_TCP_CONNECT_V6);
 	record_start_time(&key);
 	stash_sk_owner(ctx);
@@ -332,6 +373,8 @@ int kretprobe_tcp_connect(struct pt_regs *ctx) {
 
 SEC("kprobe/tcp_sendmsg")
 int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_TCP_SENDMSG);
 	u64 ts = bpf_ktime_get_ns();
 
@@ -347,9 +390,11 @@ static __always_inline int tcp_sendmsg_return(void *ctx, long rc)
 	u32 tid = (u32)bpf_get_current_pid_tgid();
 	struct pair_key key = make_pair_key(PAIR_TCP_SENDMSG);
 	u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
+	u64 conn_key = get_key(pid, tid);
 
 	if (!start_ts) {
 		drop_pair_sidemaps(&key);
+		bpf_map_delete_elem(&grpc_methods, &conn_key);
 		return 0;
 	}
 
@@ -360,8 +405,6 @@ static __always_inline int tcp_sendmsg_return(void *ctx, long rc)
 	}
 
 	u64 latency_ns = calc_latency(*start_ts);
-
-	u64 conn_key = get_key(pid, tid);
 
 	struct event *e = get_event_buf();
 	if (!e) {
@@ -434,6 +477,8 @@ int fexit_tcp_sendmsg(u64 *ctx)
 
 SEC("kprobe/tcp_recvmsg")
 int kprobe_tcp_recvmsg(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_TCP_RECVMSG);
 	u64 ts = bpf_ktime_get_ns();
 
@@ -797,6 +842,12 @@ int tracepoint_inet_sock_set_state(void *ctx) {
 	}
 	e->timestamp = bpf_ktime_get_ns();
 	apply_sk_owner(e, (u64)args_local.skaddr);
+	if (args_local.newstate == PT_TCP_CLOSE) {
+		u64 skaddr = (u64)args_local.skaddr;
+		bpf_map_delete_elem(&sk_owner, &skaddr);
+	}
+	if (!cgroup_allows(e->cgroup_id))
+		return 0;
 	e->type = EVENT_TCP_STATE;
 	e->latency_ns = 0;
 	e->error = 0;
@@ -815,7 +866,7 @@ int tracepoint_inet_sock_set_state(void *ctx) {
 			format_ip_port(daddr, args_local.dport, e->target);
 		}
 	}
-	capture_user_stack(ctx, pid, 0, e);
+	socket_event_context(ctx, e, pid);
 	if (!agg_absorbed(e, 0))
 		bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 
@@ -863,6 +914,8 @@ int tracepoint_tcp_retransmit_skb(void *ctx) {
 	}
 	e->timestamp = bpf_ktime_get_ns();
 	apply_sk_owner(e, (u64)args_local.skaddr);
+	if (!cgroup_allows(e->cgroup_id))
+		return 0;
 	e->type = EVENT_TCP_RETRANS;
 	e->latency_ns = 0;
 	e->error = 0;
@@ -881,7 +934,7 @@ int tracepoint_tcp_retransmit_skb(void *ctx) {
 			format_ip_port(daddr, args_local.dport, e->target);
 		}
 	}
-	capture_user_stack(ctx, pid, 0, e);
+	socket_event_context(ctx, e, pid);
 	if (!agg_absorbed(e, 0))
 		bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	return 0;
@@ -916,7 +969,10 @@ int tracepoint_net_dev_xmit(void *ctx) {
 		return 0;
 	}
 	e->timestamp = bpf_ktime_get_ns();
-	apply_sk_owner(e, 0);
+	struct sk_buff *skb = (struct sk_buff *)args_local.skbaddr;
+	apply_sk_owner(e, skb ? (u64)BPF_CORE_READ(skb, sk) : 0);
+	if (!cgroup_allows(e->cgroup_id))
+		return 0;
 	e->type = EVENT_NET_DEV_ERROR;
 	e->latency_ns = 0;
 	e->error = args_local.rc;
@@ -924,7 +980,7 @@ int tracepoint_net_dev_xmit(void *ctx) {
 	e->tcp_state = 0;
 	unsigned short name_off = (unsigned short)(args_local.name_loc & 0xffff);
 	bpf_probe_read_kernel_str(e->target, sizeof(e->target), (char *)ctx + name_off);
-	capture_user_stack(ctx, pid, 0, e);
+	socket_event_context(ctx, e, pid);
 	if (!agg_absorbed(e, 0))
 		bpf_ringbuf_output(&events, e, sizeof(*e), 0);
 	return 0;
@@ -932,6 +988,8 @@ int tracepoint_net_dev_xmit(void *ctx) {
 
 SEC("kprobe/udp_sendmsg")
 int kprobe_udp_sendmsg(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_UDP_SENDMSG);
 	u64 ts = bpf_ktime_get_ns();
 	bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
@@ -996,6 +1054,8 @@ int fexit_udp_sendmsg(u64 *ctx)
 
 SEC("kprobe/udp_recvmsg")
 int kprobe_udp_recvmsg(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_UDP_RECVMSG);
 	u64 ts = bpf_ktime_get_ns();
 	bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
@@ -1433,6 +1493,24 @@ static __always_inline void ssl_emit_handshake(struct pt_regs *ctx, u64 latency,
 	capture_user_stack(ctx, pid, tid, e);
 	if (!agg_absorbed(e, 0))
 		bpf_ringbuf_output(&events, e, sizeof(*e), 0);
+}
+
+static __always_inline int ssl_hs_undecided(u64 ssl)
+{
+	if (!ssl)
+		return 0;
+	struct ssl_hs_key key = ssl_hs_key_of(ssl);
+	struct ssl_hs_state *st = bpf_map_lookup_elem(&ssl_hs_states, &key);
+	return st && !st->decided;
+}
+
+static __always_inline void ssl_hs_settle(struct pt_regs *ctx, u64 ssl)
+{
+	if (!ssl_hs_undecided(ssl))
+		return;
+	u64 latency = 0;
+	if (ssl_hs_decide(ssl, &latency))
+		ssl_emit_handshake(ctx, latency, 0);
 }
 
 static __always_inline int ssl_handshake_entry(struct pt_regs *ctx, u32 pair)

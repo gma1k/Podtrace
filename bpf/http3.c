@@ -27,7 +27,7 @@ static __always_inline int quic_is_initial(struct __sk_buff *skb, int l4) {
 }
 
 static __always_inline void quic_ship(struct __sk_buff *skb, u8 is_v6,
-				      u32 addr_off, u32 port_l4_off, int l4) {
+				      u32 addr_off, u32 port_l4_off, int l4, u8 egress) {
 	struct quic_flow_key k = {};
 	k.cgroup_id = bpf_skb_cgroup_id(skb);
 	u16 port_be = 0;
@@ -58,7 +58,7 @@ static __always_inline void quic_ship(struct __sk_buff *skb, u8 is_v6,
 		return;
 	rec->timestamp = bpf_ktime_get_ns();
 	rec->cgroup_id = k.cgroup_id;
-	rec->pid = agent_ns_tgid();
+	rec->pid = egress ? agent_ns_tgid() : 0;
 	__builtin_memset(rec->comm, 0, sizeof(rec->comm));
 	rec->family = is_v6 ? 10 : 2;
 	rec->_pad = 0;
@@ -84,7 +84,7 @@ int http3_egress(struct __sk_buff *skb) {
 		return 1;
 	if (!quic_is_initial(skb, l4))
 		return 1;
-	quic_ship(skb, is_v6, is_v6 ? 24 : 16, 2, l4);
+	quic_ship(skb, is_v6, is_v6 ? 24 : 16, 2, l4, 1);
 	return 1;
 }
 
@@ -96,6 +96,6 @@ int http3_ingress(struct __sk_buff *skb) {
 		return 1;
 	if (!quic_is_initial(skb, l4))
 		return 1;
-	quic_ship(skb, is_v6, is_v6 ? 8 : 12, 0, l4);
+	quic_ship(skb, is_v6, is_v6 ? 8 : 12, 0, l4, 0);
 	return 1;
 }

@@ -75,7 +75,7 @@ static __always_inline int h2_start_looks_h2(void *base, u64 avail)
 		return 1;
 	if (fh[0] >= 0x14 && fh[0] <= 0x17 && fh[1] == 0x03 && fh[2] <= 0x04)
 		return 0;
-	return fh[3] <= HTTP2_CONTINUATION;
+	return h2_frame_header_valid(fh);
 }
 
 static __always_inline void h2_oncpu_frame(u64 conn, u32 dir, u8 type, u8 flags, u32 sid)
@@ -131,6 +131,31 @@ static long h2_frames_cb(u32 idx, void *vctx)
 		return 0;
 	}
 
+	if (fs->remaining > 0 && fs->pad_len_pending) {
+		u8 pb = 0;
+		bpf_probe_read_user(&pb, 1, (u8 *)c->base + off);
+		off += 1;
+		fs->remaining -= 1;
+		fs->pad_len_pending = 0;
+		u32 pad = pb <= fs->remaining ? pb : fs->remaining;
+		fs->remaining -= pad;
+		fs->pad = (u8)pad;
+		s->off = off;
+		return 0;
+	}
+
+	if (fs->remaining > 0 && fs->pre_skip > 0) {
+		u32 avail_here = c->avail - off;
+		u32 skip = avail_here < fs->pre_skip ? avail_here : fs->pre_skip;
+		if (skip > fs->remaining)
+			skip = fs->remaining;
+		off += skip;
+		fs->remaining -= skip;
+		fs->pre_skip -= (u8)skip;
+		s->off = off;
+		return 0;
+	}
+
 	if (fs->remaining > 0) {
 		u32 avail_here = c->avail - off;
 		u32 take = avail_here < fs->remaining ? avail_here : fs->remaining;
@@ -138,7 +163,9 @@ static long h2_frames_cb(u32 idx, void *vctx)
 		if (type == HTTP2_HEADERS || type == HTTP2_CONTINUATION) {
 			u32 frag = take > H2_HDR_FRAG_MAX ? H2_HDR_FRAG_MAX : take;
 			if (frag > 0 &&
-			    bpf_probe_read_user(s->frag, frag, (u8 *)c->base + off) == 0) {
+			    bpf_probe_read_user(s->frag, frag, (u8 *)c->base + off) != 0) {
+				h2_next_seq(c->conn_id, c->dir);
+			} else if (frag > 0) {
 				u8 completes = (fs->remaining - frag) == 0;
 				__builtin_memset(&s->rec, 0, sizeof(s->rec));
 				s->rec.conn_id = c->conn_id;
@@ -214,28 +241,13 @@ static long h2_frames_cb(u32 idx, void *vctx)
 		   ((u32)fh[7] << 8) | (u32)fh[8]) & 0x7fffffff;
 	h2_oncpu_frame(c->conn_id, c->dir, type, flags, sid);
 
-	u8 pad_bytes = 0;
-	if (type == HTTP2_HEADERS) {
-		if ((flags & HTTP2_FLAG_PADDED) && off < c->avail) {
-			u8 pb = 0;
-			if (bpf_probe_read_user(&pb, 1, (u8 *)c->base + off) == 0) {
-				off += 1;
-				flen = flen >= 1 ? flen - 1 : 0;
-				u32 pad = pb <= flen ? pb : flen;
-				flen -= pad;
-				pad_bytes = (u8)pad;
-			}
-		}
-		if (flags & HTTP2_FLAG_PRIORITY) {
-			off += 5;
-			flen = flen >= 5 ? flen - 5 : 0;
-		}
-	}
 	fs->type = type;
 	fs->flags = flags;
 	fs->stream_id = sid;
 	fs->remaining = flen;
-	fs->pad = pad_bytes;
+	fs->pad = 0;
+	fs->pad_len_pending = (type == HTTP2_HEADERS && (flags & HTTP2_FLAG_PADDED)) ? 1 : 0;
+	fs->pre_skip = (type == HTTP2_HEADERS && (flags & HTTP2_FLAG_PRIORITY)) ? 5 : 0;
 	s->off = off;
 	return 0;
 }

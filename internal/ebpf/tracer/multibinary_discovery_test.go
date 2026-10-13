@@ -102,7 +102,7 @@ func TestPidsForContainer_CapsDistinctBinaries(t *testing.T) {
 	}
 }
 
-func TestSetContainerTargets_ReattachesWhenPIDSetChanges(t *testing.T) {
+func TestSetContainerTargets_AttachesOnlyNewPIDsAndKeepsExistingProbes(t *testing.T) {
 	var lastPIDs []uint32
 	attachCalls := 0
 	tr := &Tracer{probeGroups: map[probes.ProbeGroup][]link.Link{}}
@@ -129,21 +129,30 @@ func TestSetContainerTargets_ReattachesWhenPIDSetChanges(t *testing.T) {
 	if err := tr.SetContainerTargets([]ContainerProbeTarget{{ID: "containeraaaa", PIDs: []uint32{2, 1}}}); err != nil {
 		t.Fatalf("SetContainerTargets: %v", err)
 	}
-	if attachCalls != 2 {
-		t.Fatalf("attach calls = %d, want 2 (PID-set change must re-attach)", attachCalls)
+	if attachCalls != 2 || len(lastPIDs) != 1 || lastPIDs[0] != 2 {
+		t.Fatalf("second attach: calls=%d pids=%v, want one more call for the new PID [2] only", attachCalls, lastPIDs)
 	}
-	if len(lastPIDs) != 2 || lastPIDs[0] != 1 || lastPIDs[1] != 2 {
-		t.Fatalf("second attach pids = %v, want sorted [1 2]", lastPIDs)
+	if old.closes.Load() != 0 {
+		t.Fatalf("existing link closed %d times; a new process must not tear down probes that are still valid", old.closes.Load())
 	}
-	if old.closes.Load() != 1 {
-		t.Fatalf("stale link closes = %d, want 1 (old attachment must be detached)", old.closes.Load())
+	if got := len(tr.containerUprobes["containeraaaa"].links[probes.GroupTLS]); got != 2 {
+		t.Fatalf("container holds %d TLS links, want 2", got)
 	}
 
-	// Same set again (any order): no re-attach.
+	if err := tr.SetContainerTargets([]ContainerProbeTarget{{ID: "containeraaaa", PIDs: []uint32{2}}}); err != nil {
+		t.Fatalf("SetContainerTargets: %v", err)
+	}
 	if err := tr.SetContainerTargets([]ContainerProbeTarget{{ID: "containeraaaa", PIDs: []uint32{1, 2}}}); err != nil {
 		t.Fatalf("SetContainerTargets: %v", err)
 	}
-	if attachCalls != 2 {
-		t.Fatalf("attach calls = %d after unchanged set, want 2 (no churn)", attachCalls)
+	if attachCalls != 2 || old.closes.Load() != 0 {
+		t.Fatalf("calls=%d closes=%d after PIDs left and returned, want no attach and no detach", attachCalls, old.closes.Load())
+	}
+
+	if err := tr.SetContainerTargets([]ContainerProbeTarget{{ID: "containerbbbb", PIDs: []uint32{7}}}); err != nil {
+		t.Fatalf("SetContainerTargets: %v", err)
+	}
+	if old.closes.Load() != 1 {
+		t.Fatalf("link of a container that left the target set closed %d times, want 1", old.closes.Load())
 	}
 }

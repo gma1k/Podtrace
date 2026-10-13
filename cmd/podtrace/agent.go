@@ -190,6 +190,18 @@ func (a *ebpfBackendAdapter) SetEnabledCategories(categories []string) error {
 	return g.SetEnabledCategories(categories)
 }
 
+// InheritedCgroupParent exposes the tracer's record of container cgroups the
+// kernel started tracing because they were created under a targeted pod.
+func (a *ebpfBackendAdapter) InheritedCgroupParent(id uint64) (uint64, bool) {
+	r, ok := a.tr.(interface {
+		InheritedCgroupParent(uint64) (uint64, bool)
+	})
+	if !ok {
+		return 0, false
+	}
+	return r.InheritedCgroupParent(id)
+}
+
 func noopBackendFactory() (tracer.TracerBackend, error) {
 	return agent.NewNoopBackend(), nil
 }

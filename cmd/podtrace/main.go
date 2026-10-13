@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -550,6 +551,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	defer func() { _ = tracer.Stop() }()
 	if diagnoseDuration != "" {
 		countFastFilesystemOps(tracer)
+		countProcessCPU(tracer)
 	}
 
 	cgroupPaths, containerIDs := targetAttachSets(targetInfos)
@@ -559,6 +561,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	if err := setTracerContainerIDs(tracer, containerIDs); err != nil {
 		return fmt.Errorf("failed to set container IDs: %w", err)
 	}
+	sourceIndex.followRestartedContainers(tracer)
 	if targetRegistry != nil {
 		go func() {
 			for {
@@ -1037,9 +1040,11 @@ func targetAttachSets(infos []*kubernetes.PodInfo) (cgroupPaths, containerIDs []
 }
 
 type sourcePodIndex struct {
-	mu    sync.RWMutex
-	byCG  map[uint64]*kubernetes.PodInfo
-	byNSP map[string]*kubernetes.PodInfo
+	mu       sync.RWMutex
+	byCG     map[uint64]*kubernetes.PodInfo
+	byNSP    map[string]*kubernetes.PodInfo
+	byParent map[uint64]*kubernetes.PodInfo
+	parentOf func(uint64) (uint64, bool)
 }
 
 func newSourcePodIndex(targets []*kubernetes.PodInfo) *sourcePodIndex {
@@ -1054,6 +1059,7 @@ func newSourcePodIndex(targets []*kubernetes.PodInfo) *sourcePodIndex {
 func (s *sourcePodIndex) Replace(targets []*kubernetes.PodInfo) {
 	nextByCG := make(map[uint64]*kubernetes.PodInfo, len(targets))
 	nextByNSP := make(map[string]*kubernetes.PodInfo, len(targets))
+	nextByParent := make(map[uint64]*kubernetes.PodInfo, len(targets))
 	for _, t := range targets {
 		if t == nil {
 			continue
@@ -1073,11 +1079,33 @@ func (s *sourcePodIndex) Replace(targets []*kubernetes.PodInfo) {
 			cc.ContainerID = c.ID
 			cc.CgroupPath = c.CgroupPath
 			nextByCG[cgid] = &cc
+			if pid, err := cgroupIDFromPath(filepath.Dir(c.CgroupPath)); err == nil && pid != 0 {
+				pod := *t
+				pod.ContainerName, pod.ContainerID, pod.CgroupPath = "", "", ""
+				nextByParent[pid] = &pod
+			}
 		}
 	}
 	s.mu.Lock()
 	s.byCG = nextByCG
 	s.byNSP = nextByNSP
+	s.byParent = nextByParent
+	s.mu.Unlock()
+}
+
+type inheritedCgroupResolver interface {
+	InheritedCgroupParent(id uint64) (uint64, bool)
+}
+
+// followRestartedContainers lets the index attribute a restarted container
+// to its pod from its first event, before the pod watch reports it.
+func (s *sourcePodIndex) followRestartedContainers(t any) {
+	r, ok := t.(inheritedCgroupResolver)
+	if !ok || s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.parentOf = r.InheritedCgroupParent
 	s.mu.Unlock()
 }
 
@@ -1089,6 +1117,11 @@ func (s *sourcePodIndex) Resolve(event *events.Event) *kubernetes.PodInfo {
 	defer s.mu.RUnlock()
 	if p, ok := s.byCG[event.CgroupID]; ok {
 		return p
+	}
+	if s.parentOf != nil {
+		if parent, ok := s.parentOf(event.CgroupID); ok {
+			return s.byParent[parent]
+		}
 	}
 	return nil
 }
@@ -1187,8 +1220,44 @@ func takeFastFilesystemOps(agg *diagnose.Diagnostician) {
 	agg.AddFastFilesystemOps(rows)
 }
 
+var processCPU func() (map[uint32]uint64, error)
+
+type processCPUCounter interface {
+	CountProcessCPU() error
+	DrainProcessCPU() (map[uint32]uint64, error)
+}
+
+func countProcessCPU(t any) {
+	c, ok := t.(processCPUCounter)
+	if !ok {
+		return
+	}
+	if err := c.CountProcessCPU(); err != nil {
+		logger.Warn("Per-process CPU time will come from /proc only; processes that exit before the report get none", zap.Error(err))
+		return
+	}
+	processCPU = c.DrainProcessCPU
+}
+
+// takeProcessCPU drains the kernel's per-process CPU time into the
+// diagnostician, once: a later report would otherwise lose what it drained.
+func takeProcessCPU(agg *diagnose.Diagnostician) {
+	drain := processCPU
+	if drain == nil {
+		return
+	}
+	processCPU = nil
+	times, err := drain()
+	if err != nil {
+		logger.Warn("Could not read the kernel's per-process CPU time; the report falls back to /proc", zap.Error(err))
+		return
+	}
+	agg.AddProcessCPU(times)
+}
+
 func generateDiagnoseReport(agg *diagnose.Diagnostician) string {
 	takeFastFilesystemOps(agg)
+	takeProcessCPU(agg)
 	return diagnosereport.GenerateTriggerSection(sessionTrigger, agg) + diagnosisByPod(agg) +
 		diagnosereport.GenerateCriticalPathSection(agg.CriticalPath(), eventFilter)
 }
@@ -1253,6 +1322,7 @@ func diagnosisByPod(agg *diagnose.Diagnostician) string {
 			b.podName, b.namespace, errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
 		child.SetTimeWindow(agg.StartTime(), agg.EndTime())
 		child.AddFastFilesystemOps(agg.FastFilesystemRows())
+		child.AddProcessCPU(agg.ProcessCPU())
 		for i, e := range b.events {
 			child.AddEventWithContext(e, b.contexts[i])
 		}

@@ -162,6 +162,7 @@ func attachSSLByOffset(coll *ebpf.Collection, exePath string, off sslOffsets) []
 		}
 	}
 	attach("uprobe_SSL_write", off.write, false)
+	attach("uretprobe_SSL_write", off.write, true)
 	attach("uprobe_SSL_read", off.read, false)
 	attach("uretprobe_SSL_read", off.read, true)
 	return links

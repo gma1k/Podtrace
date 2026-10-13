@@ -88,9 +88,15 @@ var probeGroupMap = map[string]ProbeGroup{
 
 	// TLS plaintext HTTP capture
 	"uprobe_SSL_write":             GroupTLS,
+	"uretprobe_SSL_write":          GroupTLS,
 	"uprobe_SSL_read":              GroupTLS,
 	"uretprobe_SSL_read":           GroupTLS,
+	"uprobe_SSL_write_ex":          GroupTLS,
+	"uretprobe_SSL_write_ex":       GroupTLS,
+	"uprobe_SSL_read_ex":           GroupTLS,
+	"uretprobe_SSL_read_ex":        GroupTLS,
 	"uprobe_gnutls_record_send":    GroupTLS,
+	"uretprobe_gnutls_record_send": GroupTLS,
 	"uprobe_gnutls_record_recv":    GroupTLS,
 	"uretprobe_gnutls_record_recv": GroupTLS,
 

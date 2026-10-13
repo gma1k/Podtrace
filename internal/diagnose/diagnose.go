@@ -52,6 +52,7 @@ type Diagnostician struct {
 	errorCorrelator    *correlator.ErrorCorrelator
 	criticalPath       *criticalpath.Collector
 	fsKernelRows       []kernelagg.Row
+	processCPUNS       map[uint32]uint64
 	sourcePod          string
 	sourceNamespace    string
 }
@@ -163,6 +164,36 @@ func (d *Diagnostician) AddFastFilesystemOps(rows []kernelagg.Row) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.fsKernelRows = append(d.fsKernelRows, rows...)
+}
+
+// AddProcessCPU keeps the kernel's on-CPU nanoseconds per process ID.
+func (d *Diagnostician) AddProcessCPU(times map[uint32]uint64) {
+	if len(times) == 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.processCPUNS == nil {
+		d.processCPUNS = make(map[uint32]uint64, len(times))
+	}
+	for pid, ns := range times {
+		d.processCPUNS[pid] += ns
+	}
+}
+
+// ProcessCPU returns a copy of what AddProcessCPU kept, so a per-pod
+// diagnostician can be given it.
+func (d *Diagnostician) ProcessCPU() map[uint32]uint64 {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if len(d.processCPUNS) == 0 {
+		return nil
+	}
+	out := make(map[uint32]uint64, len(d.processCPUNS))
+	for pid, ns := range d.processCPUNS {
+		out[pid] = ns
+	}
+	return out
 }
 
 // FastFilesystemRows returns the rows AddFastFilesystemOps kept, so a per-pod
@@ -344,7 +375,7 @@ func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
 	result += report.GenerateMemorySection(d, duration)
 	result += report.GenerateResourceSection(d)
 	result += report.GeneratePoolSection(d, duration)
-	result += profiling.GenerateCPUUsageReport(allEvents, duration)
+	result += profiling.GenerateProcessCPUReport(allEvents, duration, d.ProcessCPU())
 	result += stacktrace.GenerateStackTraceSectionWithContext(d, ctx)
 	result += report.GenerateSyscallSection(d, duration)
 	result += report.GenerateApplicationTracing(d, duration)

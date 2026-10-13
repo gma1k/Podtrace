@@ -242,8 +242,8 @@ struct {
 } dns_drops SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, u64);
 	__type(value, char[MAX_STRING_LEN]);
 } socket_conns SEC(".maps");
@@ -270,8 +270,8 @@ struct {
 } db_queries SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, char[MAX_STRING_LEN]);
 } tcp_target SEC(".maps");
@@ -328,6 +328,20 @@ struct {
 	__type(key, struct quic_flow_key);
 	__type(value, u8);
 } quic_seen SEC(".maps");
+
+struct encrypted_dns_flow {
+	u64 cgroup_id;
+	u8  daddr6[16];
+	u16 dport;
+	u16 sport;
+	u32 _pad;
+};
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
+	__type(key, struct encrypted_dns_flow);
+	__type(value, u8);
+} encrypted_dns_seen SEC(".maps");
 
 #define QUIC_PKT_CAP 1500
 struct quic_initial_record {
@@ -401,6 +415,20 @@ struct {
 } target_cgroup_ids SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, u8);
+} target_parent_cgroup_ids SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
+	__type(key, u64);
+	__type(value, u64);
+} inherited_cgroup_ids SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
 	__type(key, u32);
@@ -432,6 +460,20 @@ struct {
 } cgroup_cpu_window SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, u32);
+} proc_cpu_enabled SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 16384);
+	__type(key, u32);
+	__type(value, u64);
+} proc_cpu_ns SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 8192);
 	__type(key, u32);
@@ -446,8 +488,8 @@ struct connect_addr {
 };
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, struct connect_addr);
 } connect_addrs SEC(".maps");
@@ -545,8 +587,8 @@ struct {
 } fastcgi_reqs SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, u64);
 	__type(value, u64);
 } recvmsg_args SEC(".maps");
@@ -563,22 +605,22 @@ struct {
 } fastcgi_pending SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, char[MAX_STRING_LEN]);
 } redis_cmds SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, char[MAX_STRING_LEN]);
 } memcached_ops SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, u64);
 	__type(value, char[MAX_STRING_LEN]);
 } grpc_methods SEC(".maps");
@@ -598,6 +640,7 @@ struct {
 struct ssl_read_state {
 	u64 buf;
 	u64 conn;
+	u64 out_len;
 };
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -620,6 +663,13 @@ struct {
 	__type(key, u64);
 	__type(value, struct ssl_read_state);
 } ssl_read_args SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 1024);
+	__type(key, u64);
+	__type(value, struct ssl_read_state);
+} ssl_write_args SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -943,6 +993,8 @@ struct h2_frame_state {
 	u8  pad;
 	u8  hdr_have;
 	u8  hdr_partial[9];
+	u8  pad_len_pending;
+	u8  pre_skip;
 };
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -959,15 +1011,15 @@ struct {
 } kafka_topic_names SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 256);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, char[MAX_STRING_LEN]);
 } kafka_topic_tmp SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1024);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
 	__type(key, struct pair_key);
 	__type(value, u64);
 } proto_bytes SEC(".maps");

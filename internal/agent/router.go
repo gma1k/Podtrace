@@ -25,8 +25,18 @@ type Router struct {
 	stats    *perCRStats
 	enricher *PodEnricher
 	inflight *sync.WaitGroup
+	parentOf func(uint64) (uint64, bool)
 
 	onRulesChanged func(hasRules bool)
+}
+
+// FollowRestartedContainers lets the router hand a CR the events of a
+// container cgroup created under one of its pods after the rule was built,
+// so a container that restarts and dies within a reconcile is not lost.
+func (r *Router) FollowRestartedContainers(parentOf func(uint64) (uint64, bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.parentOf = parentOf
 }
 
 // OnRulesChanged registers a hook invoked when the rule set is published.
@@ -143,6 +153,7 @@ func (r *Router) Export(ctx context.Context, batch []*events.Event) error {
 	r.mu.RLock()
 	rules := r.rules
 	enricher := r.enricher
+	parentOf := r.parentOf
 	wg := r.inflight
 	wg.Add(1)
 	r.mu.RUnlock()
@@ -169,7 +180,7 @@ func (r *Router) Export(ctx context.Context, batch []*events.Event) error {
 			if rules[i].Err != nil || rules[i].Exporter == nil {
 				continue
 			}
-			if !matchRule(&rules[i], ev) {
+			if !matchRule(&rules[i], ev, parentOf) {
 				continue
 			}
 			filtered[i] = append(filtered[i], ev)
@@ -213,9 +224,18 @@ func (r *Router) Close(ctx context.Context) error {
 
 // matchRule decides whether an event is forwarded to a given CR's
 // exporter.
-func matchRule(rule *CRRule, ev *events.Event) bool {
+func matchRule(rule *CRRule, ev *events.Event, parentOf func(uint64) (uint64, bool)) bool {
 	if _, ok := rule.CgroupIDs[ev.CgroupID]; !ok {
-		return false
+		if parentOf == nil {
+			return false
+		}
+		parent, inherited := parentOf(ev.CgroupID)
+		if !inherited {
+			return false
+		}
+		if _, ok := rule.CgroupIDs[parent]; !ok {
+			return false
+		}
 	}
 	if len(rule.Filters) == 0 {
 		return true

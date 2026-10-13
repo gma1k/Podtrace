@@ -193,6 +193,12 @@ The `Bytes` field is overloaded depending on event type:
 `Error` is the negated errno value reported by the kernel function. For
 example, `EAGAIN` (errno 11) appears as `-11`. `0` means success.
 
+`EVENT_LOCK_CONTENTION` follows the same convention for both of its sources:
+the `pthread_mutex_lock` return is negated to match a `futex` return. A
+positive value is the number of waiters a `FUTEX_WAKE` woke. The ways a wait
+normally ends, `-EAGAIN`, `-ETIMEDOUT`, `-EINTR` and the kernel-internal
+`-ERESTART*` codes (512-516), are not counted as errors.
+
 ### DNS event field encoding
 
 `EVENT_DNS` (response) and `EVENT_DNS_QUERY` (egress query) events produced by

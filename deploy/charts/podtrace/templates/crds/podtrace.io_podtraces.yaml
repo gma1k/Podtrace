@@ -13,7 +13,7 @@ spec:
   group: podtrace.io
   names:
     categories:
-    - podtrace
+    - podtrace-all
     kind: PodTrace
     listKind: PodTraceList
     plural: podtraces

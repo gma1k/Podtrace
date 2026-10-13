@@ -13,7 +13,7 @@ static __always_inline void cpu_sample_accumulate(void *ctx, u64 on_cpu_ns, u64 
 {
 	u64 cgid = bpf_get_current_cgroup_id();
 
-	if (!bpf_map_lookup_elem(&target_cgroup_ids, &cgid))
+	if (!cgroup_targeted(cgid))
 		return;
 
 	struct cpu_window *w = bpf_map_lookup_elem(&cgroup_cpu_window, &cgid);
@@ -47,6 +47,29 @@ static __always_inline void cpu_sample_accumulate(void *ctx, u64 on_cpu_ns, u64 
 
 	w->window_start_ns = now;
 	w->runtime_ns = 0;
+}
+
+static __always_inline void proc_cpu_accumulate(u64 on_cpu_ns)
+{
+	u32 zero = 0;
+	u32 *on = bpf_map_lookup_elem(&proc_cpu_enabled, &zero);
+	if (!on || !*on)
+		return;
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return;
+	u32 tgid = agent_ns_tgid();
+	if (!tgid)
+		return;
+	u64 *total = bpf_map_lookup_elem(&proc_cpu_ns, &tgid);
+	if (total) {
+		__sync_fetch_and_add(total, on_cpu_ns);
+		return;
+	}
+	if (bpf_map_update_elem(&proc_cpu_ns, &tgid, &on_cpu_ns, BPF_NOEXIST) != 0) {
+		total = bpf_map_lookup_elem(&proc_cpu_ns, &tgid);
+		if (total)
+			__sync_fetch_and_add(total, on_cpu_ns);
+	}
 }
 
 struct sched_switch_args {
@@ -101,10 +124,11 @@ int tracepoint_sched_switch(void *ctx) {
 			u64 was_preempted = pending->preempted;
 			bpf_map_delete_elem(&sched_pending_blocked, &prev_pid);
 
-			struct event *e = get_event_buf();
+			u32 tgid = agent_ns_tgid();
+			struct event *e = tgid ? get_event_buf() : NULL;
 			if (e) {
 				e->timestamp = now;
-				e->pid = agent_ns_tgid();
+				e->pid = tgid;
 				e->type = EVENT_SCHED_SWITCH;
 				e->latency_ns = blocked;
 				e->error = 0;
@@ -124,6 +148,7 @@ int tracepoint_sched_switch(void *ctx) {
 			bpf_map_delete_elem(&sched_in_ts, &prev_pid);
 			if (on_cpu > 0) {
 				cpu_sample_accumulate(ctx, on_cpu, now);
+				proc_cpu_accumulate(on_cpu);
 			}
 		}
 
@@ -139,6 +164,8 @@ int tracepoint_sched_switch(void *ctx) {
 
 SEC("kprobe/do_futex")
 int kprobe_do_futex(struct pt_regs *ctx) {
+	if (!cgroup_allows(bpf_get_current_cgroup_id()))
+		return 0;
 	struct pair_key key = make_pair_key(PAIR_FUTEX);
 	u64 ts = bpf_ktime_get_ns();
 	bpf_map_update_elem(&start_times, &key, &ts, BPF_ANY);
@@ -273,7 +300,8 @@ int uretprobe_pthread_mutex_lock(struct pt_regs *ctx) {
 		bpf_map_delete_elem(&start_times, &key);
 		return 0;
 	}
-	long ret = PT_REGS_RC(ctx);
+	int prc = (int)PT_REGS_RC(ctx);
+	long ret = prc > 0 ? -prc : prc;
 	struct event *e = get_event_buf();
 	if (!e) {
 		bpf_map_delete_elem(&lock_targets, &key);

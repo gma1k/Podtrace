@@ -102,7 +102,7 @@ static __always_inline void emit_pool_stats(struct pt_regs *ctx, u64 now)
 SEC("uprobe/go_db_conn")
 int uprobe_go_db_conn(struct pt_regs *ctx)
 {
-	u64 key = GO_ACQUIRE_GOROUTINE(ctx);
+	u64 key = process_scoped_id(GO_ACQUIRE_GOROUTINE(ctx));
 	u64 now = bpf_ktime_get_ns();
 
 	if (key == 0)
@@ -117,7 +117,7 @@ int uprobe_go_db_conn(struct pt_regs *ctx)
 SEC("uprobe/go_db_conn_ret")
 int uprobe_go_db_conn_ret(struct pt_regs *ctx)
 {
-	u64 key = GO_ACQUIRE_GOROUTINE(ctx);
+	u64 key = process_scoped_id(GO_ACQUIRE_GOROUTINE(ctx));
 	if (key == 0)
 		return 0;
 

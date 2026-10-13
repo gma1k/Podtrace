@@ -68,8 +68,11 @@ int uretprobe_rd_kafka_produce(struct pt_regs *ctx)
 	struct pair_key key = make_pair_key(PAIR_KAFKA_PRODUCE);
 
 	u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
-	if (!start_ts)
+	if (!start_ts) {
+		bpf_map_delete_elem(&kafka_topic_tmp, &key);
+		bpf_map_delete_elem(&proto_bytes, &key);
 		return 0;
+	}
 
 	u64 latency = calc_latency(*start_ts);
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gma1k/podtrace/internal/events"
+	"github.com/gma1k/podtrace/internal/sanitize"
 )
 
 type ErrorChain struct {
@@ -186,8 +187,60 @@ var dnsSuggestions = map[string]string{
 	events.DNSAnswerOther:    "The server answered with an error rcode - check its logs",
 }
 
-// errorCodeText names an error the way its event reports it: a DNS lookup by
-// its answer, anything else by its code.
+const maxBreakdownRows = 10
+
+const maxExampleTargetLen = 80
+
+// errorBreakdown says which events the error total counts: grouped by
+// operation and error, most frequent first, each with an example target.
+func errorBreakdown(errs []*ErrorEvent) string {
+	type group struct {
+		operation, code, example string
+		count                    int
+	}
+	byKey := make(map[string]*group)
+	for _, e := range errs {
+		code := errorCodeText(e)
+		key := e.Operation + "\x00" + code
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{operation: e.Operation, code: code}
+			byKey[key] = g
+		}
+		g.count++
+		if g.example == "" && e.Target != "" {
+			g.example = e.Target
+		}
+	}
+	groups := make([]*group, 0, len(byKey))
+	for _, g := range byKey {
+		groups = append(groups, g)
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].count != groups[j].count {
+			return groups[i].count > groups[j].count
+		}
+		if groups[i].operation != groups[j].operation {
+			return groups[i].operation < groups[j].operation
+		}
+		return groups[i].code < groups[j].code
+	})
+
+	out := "  Errors by operation:\n"
+	for i, g := range groups {
+		if i == maxBreakdownRows {
+			out += fmt.Sprintf("    - ... %d more kinds\n", len(groups)-maxBreakdownRows)
+			break
+		}
+		line := fmt.Sprintf("    - %s (%s): %d", g.operation, g.code, g.count)
+		if g.example != "" {
+			line += ", e.g. " + events.TruncateString(sanitize.Terminal(g.example), maxExampleTargetLen)
+		}
+		out += line + "\n"
+	}
+	return out
+}
+
 func errorCodeText(e *ErrorEvent) string {
 	if e.Event != nil && e.Event.Type == events.EventDNS {
 		return "answer: " + e.Event.DNSAnswer()
@@ -279,6 +332,7 @@ func (ec *ErrorCorrelator) GetErrorSummary() string {
 
 	report := "Error Correlation & Root Cause Analysis:\n"
 	report += fmt.Sprintf("  Total errors: %d\n", len(ec.errors))
+	report += errorBreakdown(ec.errors)
 	report += fmt.Sprintf("  Error chains: %d\n", len(ec.chains))
 
 	if len(ec.chains) > 0 {
@@ -292,7 +346,7 @@ func (ec *ErrorCorrelator) GetErrorSummary() string {
 			chain := ec.chains[i]
 			report += fmt.Sprintf("    Chain %d (Severity: %s):\n", i+1, chain.Severity)
 			report += fmt.Sprintf("      Root cause: %s error on %s (%s)\n",
-				chain.RootCause.Operation, chain.RootCause.Target, errorCodeText(chain.RootCause))
+				chain.RootCause.Operation, sanitize.Terminal(chain.RootCause.Target), errorCodeText(chain.RootCause))
 			report += fmt.Sprintf("      Chain length: %d errors\n", len(chain.Chain))
 			report += fmt.Sprintf("      Time window: %s\n", chain.Chain[len(chain.Chain)-1].Timestamp.Sub(chain.RootCause.Timestamp))
 

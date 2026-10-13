@@ -94,3 +94,18 @@ static inline void emit_resource_alert(u64 cgroup_id, u32 resource_type, u32 uti
         bpf_map_delete_elem(&cgroup_alerts, &alert_key);
     }
 }
+
+SEC("raw_tracepoint/cgroup_mkdir")
+int raw_tracepoint_cgroup_mkdir(struct bpf_raw_tracepoint_args *ctx)
+{
+	struct cgroup *cgrp = (struct cgroup *)ctx->args[0];
+	if (!cgrp)
+		return 0;
+	u64 parent = BPF_CORE_READ(cgrp, self.parent, cgroup, kn, id);
+	if (!parent || !bpf_map_lookup_elem(&target_parent_cgroup_ids, &parent))
+		return 0;
+	u64 id = BPF_CORE_READ(cgrp, kn, id);
+	if (id)
+		bpf_map_update_elem(&inherited_cgroup_ids, &id, &parent, BPF_ANY);
+	return 0;
+}

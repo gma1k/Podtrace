@@ -226,7 +226,7 @@ type PodTraceScheduleStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=ptsch,categories=podtrace
+// +kubebuilder:resource:shortName=ptsch,categories=podtrace-all
 // +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.spec.schedule`
 // +kubebuilder:printcolumn:name="Suspend",type=boolean,JSONPath=`.spec.suspend`
 // +kubebuilder:printcolumn:name="Active",type=string,JSONPath=`.status.active[*].name`,priority=1

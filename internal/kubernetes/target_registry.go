@@ -199,23 +199,34 @@ func (tr *TargetRegistry) Snapshot() []*PodInfo {
 	return clonePodInfos(tr.targets)
 }
 
+// rebuildFromStore loads every cached pod without publishing: a snapshot
+// emitted after the first of several pods would tell the tracer the others
+// are gone, and it would detach them until the next snapshot. The caller
+// publishes once, when the set is complete.
 func (tr *TargetRegistry) rebuildFromStore(ctx context.Context) {
 	for _, inf := range tr.podInfs {
 		for _, obj := range inf.GetStore().List() {
 			if pod, ok := obj.(*corev1.Pod); ok && pod != nil {
-				tr.handlePodUpsert(ctx, pod)
+				tr.upsertPod(ctx, pod)
 			}
 		}
 	}
 }
 
 func (tr *TargetRegistry) handlePodUpsert(ctx context.Context, pod *corev1.Pod) {
+	if tr.upsertPod(ctx, pod) {
+		tr.emitSnapshot()
+	}
+}
+
+// upsertPod applies one pod to the target set and reports whether the set
+// changed in a way that must be published.
+func (tr *TargetRegistry) upsertPod(ctx context.Context, pod *corev1.Pod) bool {
 	if !tr.matchesSelection(pod) {
 		tr.mu.Lock()
 		delete(tr.targets, pod.UID)
 		tr.mu.Unlock()
-		tr.emitSnapshot()
-		return
+		return true
 	}
 
 	info, err := resolvePodInfoFromObject(ctx, pod, tr.selection.ContainerName)
@@ -237,9 +248,8 @@ func (tr *TargetRegistry) handlePodUpsert(ctx context.Context, pod *corev1.Pod) 
 				zap.String("namespace", pod.Namespace),
 				zap.String("pod", pod.Name),
 				zap.String("stale_container_id", stale.ContainerID))
-			tr.emitSnapshot()
 		}
-		return
+		return dropped
 	}
 
 	tr.mu.Lock()
@@ -247,12 +257,12 @@ func (tr *TargetRegistry) handlePodUpsert(ctx context.Context, pod *corev1.Pod) 
 		if _, exists := tr.targets[pod.UID]; !exists {
 			tr.mu.Unlock()
 			logger.Warn("Target registry reached max target limit", zap.Int("max_targets", tr.maxTargets))
-			return
+			return false
 		}
 	}
 	tr.targets[pod.UID] = info
 	tr.mu.Unlock()
-	tr.emitSnapshot()
+	return true
 }
 
 // podHasContainerID reports whether any of the pod's current container

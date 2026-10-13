@@ -473,7 +473,7 @@ type TracerConfigStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,shortName=tc,categories=podtrace
+// +kubebuilder:resource:scope=Cluster,shortName=tc,categories=podtrace-all
 // +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=`.status.desiredAgents`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyAgents`
 // +kubebuilder:printcolumn:name="Sessions",type=integer,JSONPath=`.status.activeSessions`

@@ -160,6 +160,7 @@ func Run(ctx context.Context, opts Options) error {
 	probes.SetAttachObserver(&attachMetricsObserver{metrics: metrics})
 
 	backend, backendErr := buildBackend(opts, logger)
+	followRestartedContainers(backend, router, enricher)
 	if backendErr != nil {
 		reason := tracer.ClassifyBackendError(backendErr)
 		logger.Error(backendErr, "tracer backend unavailable — running in degraded noop mode",
@@ -547,6 +548,19 @@ func reapWorkloadMetrics(ctx context.Context, sink *workloadmetrics.Sink, logger
 			}
 		}
 	}
+}
+
+// followRestartedContainers gives the router and the enricher the backend's
+// record of container cgroups created under targeted pods, when it keeps one.
+func followRestartedContainers(backend tracer.TracerBackend, router *Router, enricher *PodEnricher) {
+	r, ok := backend.(interface {
+		InheritedCgroupParent(uint64) (uint64, bool)
+	})
+	if !ok {
+		return
+	}
+	router.FollowRestartedContainers(r.InheritedCgroupParent)
+	enricher.FollowRestartedContainers(r.InheritedCgroupParent)
 }
 
 func enricherLookup(e *PodEnricher) func(uint64) (events.K8sMetadata, bool) {

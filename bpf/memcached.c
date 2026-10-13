@@ -35,8 +35,11 @@ static __always_inline int mc_emit(struct pt_regs *ctx, u32 pid, u32 tid, int re
 {
 	struct pair_key key = make_pair_key(PAIR_MEMCACHED);
 	u64 *start_ts = bpf_map_lookup_elem(&start_times, &key);
-	if (!start_ts)
+	if (!start_ts) {
+		bpf_map_delete_elem(&memcached_ops, &key);
+		bpf_map_delete_elem(&proto_bytes, &key);
 		return 0;
+	}
 
 	u64 latency = calc_latency(*start_ts);
 

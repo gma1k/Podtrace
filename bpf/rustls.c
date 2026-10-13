@@ -32,8 +32,16 @@ static __always_inline u64 rustls_conn_key(u32 dir)
 	struct tcp_peer *p = lookup_tcp_peer(prefer);
 	if (!p)
 		return 0;
-	return ((u64)p->saddr << 32) ^ (u64)p->daddr ^
-	       ((u64)p->sport << 16) ^ (u64)p->dport;
+	u64 a6[4];
+	__builtin_memcpy(&a6[0], p->saddr6, 16);
+	__builtin_memcpy(&a6[2], p->daddr6, 16);
+	u64 h = mix64(((u64)p->saddr << 32) | p->daddr);
+	h = mix64(h ^ (((u64)p->sport << 16) | p->dport));
+	h = mix64(h ^ a6[0]);
+	h = mix64(h ^ a6[1]);
+	h = mix64(h ^ a6[2]);
+	h = mix64(h ^ a6[3]);
+	return process_scoped_id(h);
 }
 
 static __always_inline void rustls_dispatch(void *ctx, void *base, u64 len,

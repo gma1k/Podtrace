@@ -164,7 +164,7 @@ type PodTraceSessionStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=pts,categories=podtrace
+// +kubebuilder:resource:shortName=pts,categories=podtrace-all
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
 // +kubebuilder:printcolumn:name="Duration",type=string,JSONPath=`.spec.duration`
 // +kubebuilder:printcolumn:name="Exporter",type=string,JSONPath=`.spec.exporterRef.name`

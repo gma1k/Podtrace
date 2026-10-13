@@ -15,6 +15,7 @@ import (
 type PodEnricher struct {
 	mu       sync.RWMutex
 	byCgroup map[uint64]events.K8sMetadata
+	parentOf func(uint64) (uint64, bool)
 
 	hits          atomic.Int64
 	misses        atomic.Int64
@@ -37,6 +38,12 @@ func (e *PodEnricher) Lookup(cgroupID uint64) (events.K8sMetadata, bool) {
 	}
 	e.mu.RLock()
 	meta, ok := e.byCgroup[cgroupID]
+	parentOf := e.parentOf
+	if !ok && parentOf != nil {
+		if parent, inherited := parentOf(cgroupID); inherited {
+			meta, ok = e.byCgroup[parent]
+		}
+	}
 	e.mu.RUnlock()
 	if ok {
 		e.hits.Add(1)
@@ -44,6 +51,18 @@ func (e *PodEnricher) Lookup(cgroupID uint64) (events.K8sMetadata, bool) {
 		e.misses.Add(1)
 	}
 	return meta, ok
+}
+
+// FollowRestartedContainers lets Lookup attribute a container cgroup the
+// kernel started tracing because it was created under a targeted pod, before
+// the next reconcile lists it.
+func (e *PodEnricher) FollowRestartedContainers(parentOf func(uint64) (uint64, bool)) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.parentOf = parentOf
+	e.mu.Unlock()
 }
 
 // PodFor returns the name of a pod of the given workload that this node is

@@ -681,8 +681,12 @@ func formatOOMKills(oomKillEvents []*events.Event) string {
 		totalMem += e.Bytes
 	}
 	if len(oomKillEvents) > 0 {
-		result += fmt.Sprintf("  Total memory killed: %s\n", analyzer.FormatBytes(totalMem))
-		result += fmt.Sprintf("  Average memory per kill: %s\n", analyzer.FormatBytes(totalMem/uint64(len(oomKillEvents))))
+		if totalMem > 0 {
+			result += fmt.Sprintf("  Total memory killed: %s\n", analyzer.FormatBytes(totalMem))
+			result += fmt.Sprintf("  Average memory per kill: %s\n", analyzer.FormatBytes(totalMem/uint64(len(oomKillEvents))))
+		} else {
+			result += "  Memory at kill: not reported by this kernel\n"
+		}
 		result += "  Killed processes:\n"
 		for i, e := range oomKillEvents {
 			if i >= config.MaxOOMKillsDisplay {
@@ -692,7 +696,11 @@ func formatOOMKills(oomKillEvents []*events.Event) string {
 			if procName == "" {
 				procName = fmt.Sprintf("PID %d", e.PID)
 			}
-			result += fmt.Sprintf("    - %s (%s)\n", sanitize.Terminal(procName), analyzer.FormatBytes(e.Bytes))
+			if e.Bytes > 0 {
+				result += fmt.Sprintf("    - %s (%s)\n", sanitize.Terminal(procName), analyzer.FormatBytes(e.Bytes))
+			} else {
+				result += fmt.Sprintf("    - %s\n", sanitize.Terminal(procName))
+			}
 		}
 	}
 	return result
