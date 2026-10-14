@@ -67,7 +67,7 @@ func AttachQuicheRustProbes(coll *ebpf.Collection, pid uint32) (links []link.Lin
 
 	vaddrs := findSymbolsContaining(f, maxQuicheRustAttachments, quicheRustSendRequestPattern...)
 	if len(vaddrs) == 0 {
-		if dbg, src := openDebugInfo(f, exePath, pid); dbg != nil {
+		if dbg, src := openDebugInfo(f, pid); dbg != nil {
 			defer func() { _ = dbg.Close() }()
 			vaddrs = findSymbolsContaining(dbg, maxQuicheRustAttachments, quicheRustSendRequestPattern...)
 			if len(vaddrs) > 0 {
@@ -84,6 +84,7 @@ func AttachQuicheRustProbes(coll *ebpf.Collection, pid uint32) (links []link.Lin
 	if err != nil {
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 	for _, vaddr := range vaddrs {
 		off, ok := vaddrToFileOffset(f, vaddr)
 		if !ok {

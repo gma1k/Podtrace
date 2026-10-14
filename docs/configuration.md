@@ -70,7 +70,7 @@ Other rules:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `PODTRACE_BPF_OBJECT` | `internal/ebpf/embedded/podtrace.<arch>.bpf.o` | Overrides the embedded object |
+| `PODTRACE_BPF_OBJECT` | unset (the embedded object) | Loads this object instead of the embedded one. Ignored with an error when podtrace runs with file capabilities or setuid; run as root to override |
 | `PODTRACE_BTF_FILE` | unset | Explicit BTF path when the kernel exposes none |
 | `PODTRACE_RING_BUFFER_SIZE_KB` | `2048` | Raise if you see dropped events |
 | `PODTRACE_BPF_HASH_MAP_SIZE` | `4096` | Max entries in the per-program hash maps |

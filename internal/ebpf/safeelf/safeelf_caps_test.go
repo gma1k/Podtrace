@@ -161,3 +161,20 @@ func firstPresentSymbolSection(f *elf.File) string {
 	}
 	return ""
 }
+
+func TestASymbolTableOverTheCapIsRejected(t *testing.T) {
+	huge := &elf.File{Sections: []*elf.Section{
+		{SectionHeader: elf.SectionHeader{Name: ".dynsym", Size: 1024}},
+		{SectionHeader: elf.SectionHeader{Name: ".symtab", Size: MaxSymbolTableSize + 1}},
+	}}
+	if SymbolTablesWithinCap(huge) {
+		t.Error("a .symtab over MaxSymbolTableSize passed; cilium would expand it to several times its size")
+	}
+	if SymbolSectionWithinCap(huge, ".symtab") {
+		t.Error("SymbolSectionWithinCap passed a .symtab over MaxSymbolTableSize")
+	}
+	small := &elf.File{Sections: []*elf.Section{{SectionHeader: elf.SectionHeader{Name: ".symtab", Size: 1024}}}}
+	if !SymbolTablesWithinCap(small) || !SymbolTablesWithinCap(&elf.File{}) {
+		t.Error("a small or absent symbol table was rejected")
+	}
+}

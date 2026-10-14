@@ -1,7 +1,9 @@
 package probes
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sync"
@@ -37,8 +39,25 @@ type usdtProbeValue struct {
 	Args     [usdt.MaxArgs]usdtArgValue
 }
 
-// usdtCookieSeq hands out globally-unique uprobe attach cookies.
 var usdtCookieSeq atomic.Uint64
+
+// usdtCookie names one probe site. It is derived from the file and the probe
+// address, so every container attaching the same probe in the same binary
+// arrives at the same uprobe site and shares it.
+func usdtCookie(exe *executable, addr uint64) uint64 {
+	if !exe.shared {
+		return usdtCookieSeq.Add(1) | 1<<63
+	}
+	h := fnv.New64a()
+	var buf [32]byte
+	binary.LittleEndian.PutUint64(buf[0:], exe.id.ino)
+	binary.LittleEndian.PutUint64(buf[8:], uint64(exe.id.size))     // #nosec G115 -- hashed, not interpreted.
+	binary.LittleEndian.PutUint64(buf[16:], uint64(exe.id.mtimeNs)) // #nosec G115 -- hashed, not interpreted.
+	binary.LittleEndian.PutUint64(buf[24:], addr)
+	_, _ = h.Write(buf[:])
+	_, _ = h.Write([]byte(exe.id.buildID))
+	return h.Sum64() &^ (1 << 63)
+}
 
 const maxUSDTProbesPerBinary = 256
 
@@ -53,7 +72,7 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 		return links
 	}
 	prog := coll.Programs["uprobe_usdt"]
-	pmap := coll.Maps["usdt_probes"]
+	pmap := usdtSpecMapOf(coll)
 	if prog == nil || pmap == nil {
 		return links
 	}
@@ -74,6 +93,7 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 	if err != nil {
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 
 	semSupported := uprobeRefCtrOffsetSupported()
 	for i := range found {
@@ -88,7 +108,7 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 			continue
 		}
 
-		cookie := usdtCookieSeq.Add(1)
+		cookie := usdtCookie(exe, addr)
 		val := usdtProbeValue{}
 		copyCString(val.Provider[:], p.Provider)
 		copyCString(val.Name[:], p.Name)
@@ -105,9 +125,9 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 				Disp:   p.Args[j].Disp,
 			}
 		}
-		if err := pmap.Update(cookie, &val, ebpf.UpdateAny); err != nil {
-			logger.Debug("usdt map update failed", zap.Uint32("pid", pid), zap.Error(err))
-			continue
+		hooks := siteHooks{
+			setup:    func() error { return usdtSpecs.hold(pmap, cookie, &val) },
+			teardown: func() { usdtSpecs.release(pmap, cookie) },
 		}
 
 		opts := &link.UprobeOptions{Address: addr, Cookie: cookie}
@@ -117,13 +137,12 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 			}
 		}
 
-		l, err := exe.Uprobe("", prog, opts)
+		l, err := exe.uprobeWithHooks(prog, opts, hooks)
 		if err != nil && opts.RefCtrOffset != 0 {
 			opts.RefCtrOffset = 0
-			l, err = exe.Uprobe("", prog, opts)
+			l, err = exe.uprobeWithHooks(prog, opts, hooks)
 		}
 		if err != nil {
-			_ = pmap.Delete(cookie)
 			logger.Debug("usdt uprobe not attached",
 				zap.Uint32("pid", pid), zap.String("probe", p.Provider+":"+p.Name), zap.Error(err))
 			continue
@@ -134,6 +153,53 @@ func AttachUSDTProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 			zap.Uint64("offset", addr), zap.Bool("semaphore", opts.RefCtrOffset != 0))
 	}
 	return links
+}
+
+// usdtSpecTable counts the uprobe sites using each usdt_probes entry, so an
+// entry is deleted with the last site that reads it and never while one
+// still does. Two sites share a cookie when the semaphore attach is retried
+// without one.
+type usdtSpecMap interface {
+	Update(key, value any, flags ebpf.MapUpdateFlags) error
+	Delete(key any) error
+}
+
+type usdtSpecTable struct {
+	mu    sync.Mutex
+	users map[uint64]int
+}
+
+var usdtSpecs = &usdtSpecTable{users: map[uint64]int{}}
+
+// usdtSpecMapOf returns the collection's usdt_probes map, or nil.
+var usdtSpecMapOf = func(coll *ebpf.Collection) usdtSpecMap {
+	if m := coll.Maps["usdt_probes"]; m != nil {
+		return m
+	}
+	return nil
+}
+
+func (t *usdtSpecTable) hold(pmap usdtSpecMap, cookie uint64, val *usdtProbeValue) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.users[cookie] == 0 {
+		if err := pmap.Update(cookie, val, ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("usdt map update: %w", err)
+		}
+	}
+	t.users[cookie]++
+	return nil
+}
+
+func (t *usdtSpecTable) release(pmap usdtSpecMap, cookie uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.users[cookie]--
+	if t.users[cookie] > 0 {
+		return
+	}
+	delete(t.users, cookie)
+	_ = pmap.Delete(cookie)
 }
 
 // copyCString copies s into dst as a NUL-terminated C string, reserving the

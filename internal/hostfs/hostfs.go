@@ -56,21 +56,23 @@ func Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path) // #nosec G304,G703 -- intentional cross-namespace stat; validated absolute path with no ".." segments. See package docs.
 }
 
-// IsRegularFile is a convenience helper: Stat followed by a non-dir
-// check, returning false on any error.
+// IsRegularFile reports whether path names a regular file, following
+// symlinks. FIFOs, sockets and device nodes are not regular: opening one to
+// parse it can block forever.
 func IsRegularFile(path string) bool {
 	info, err := Stat(path)
-	return err == nil && !info.IsDir()
+	return err == nil && info.Mode().IsRegular()
 }
 
-// WalkRegular invokes fn for every regular (non-directory) file under
-// root. Symlinks are followed via os.Stat.
+// WalkRegular invokes fn for every regular file under root. Symlinks are
+// not followed: filepath.Walk reports them by their own mode, so they are
+// skipped along with FIFOs, sockets and devices.
 func WalkRegular(root string, fn func(path string, info os.FileInfo) error) error {
 	if err := validate(root); err != nil {
 		return err
 	}
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error { // #nosec G304,G703 -- root is validated absolute path; per-entry "info" is kernel-provided.
-		if err != nil || info == nil || info.IsDir() {
+		if err != nil || info == nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		return fn(path, info)

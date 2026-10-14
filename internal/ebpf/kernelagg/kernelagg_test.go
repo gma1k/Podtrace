@@ -50,82 +50,128 @@ func TestSumPerCPUFoldsEveryCPUsCopy(t *testing.T) {
 	}
 }
 
-type fakeIter struct {
-	rows    []Row
+type fakeMap struct {
+	rows    map[Key]Value
+	order   []Key
 	pos     int
 	err     error
-	deleted []Key
-	delErr  error
+	taken   []Key
+	takeErr error
+	onTake  func(k Key)
 }
 
-func (f *fakeIter) next(key, value any) bool {
-	if f.pos >= len(f.rows) {
+func newFakeMap(rows ...Row) *fakeMap {
+	f := &fakeMap{rows: map[Key]Value{}}
+	for _, r := range rows {
+		f.rows[r.Key] = r.Value
+		f.order = append(f.order, r.Key)
+	}
+	return f
+}
+
+func (f *fakeMap) next(key, value any) bool {
+	if f.pos >= len(f.order) {
 		return false
 	}
-	r := f.rows[f.pos]
+	k := f.order[f.pos]
 	f.pos++
-	*(key.(*Key)) = r.Key
-	*(value.(*[]Value)) = []Value{r.Value}
+	*(key.(*Key)) = k
+	*(value.(*[]Value)) = []Value{f.rows[k]}
 	return true
 }
 
-func (f *fakeIter) errFn() error { return f.err }
+func (f *fakeMap) errFn() error { return f.err }
 
-func (f *fakeIter) del(k *Key) error {
-	f.deleted = append(f.deleted, *k)
-	return f.delErr
+func (f *fakeMap) take(k *Key) (Value, error) {
+	f.taken = append(f.taken, *k)
+	if f.takeErr != nil {
+		return Value{}, f.takeErr
+	}
+	if f.onTake != nil {
+		f.onTake(*k)
+	}
+	v := f.rows[*k]
+	delete(f.rows, *k)
+	return v, nil
 }
 
 func TestDrainReturnsDeltasAndClearsEveryKey(t *testing.T) {
-	f := &fakeIter{rows: []Row{
-		{Key: Key{CgroupID: 1, Bucket: 10}, Value: Value{Count: 2, SumNS: 500}},
-		{Key: Key{CgroupID: 2, Bucket: BucketNone}, Value: Value{Bytes: 90}},
-	}}
+	f := newFakeMap(
+		Row{Key: Key{CgroupID: 1, Bucket: 10}, Value: Value{Count: 2, SumNS: 500}},
+		Row{Key: Key{CgroupID: 2, Bucket: BucketNone}, Value: Value{Bytes: 90}},
+	)
 
-	rows, err := drainRows(f.next, f.errFn, f.del)
+	rows, err := drainRows(f.next, f.errFn, f.take)
 	if err != nil {
 		t.Fatalf("drainRows: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("returned %d rows, want 2", len(rows))
 	}
-	if len(f.deleted) != 2 {
-		t.Errorf("deleted %d keys, want 2. A row left behind is counted again next drain, "+
-			"double-reporting the interval", len(f.deleted))
+	if len(f.rows) != 0 {
+		t.Errorf("%d keys left in the map, want 0. A row left behind is counted again next drain, "+
+			"double-reporting the interval", len(f.rows))
+	}
+}
+
+func TestAnIncrementDuringTheDrainIsReportedNotDeleted(t *testing.T) {
+	first := Key{CgroupID: 1}
+	second := Key{CgroupID: 2}
+	f := newFakeMap(
+		Row{Key: first, Value: Value{Count: 1}},
+		Row{Key: second, Value: Value{Count: 1}},
+	)
+	f.onTake = func(k Key) {
+		if k == second {
+			v := f.rows[first]
+			v.Count += 5
+			f.rows[first] = v
+		}
+	}
+
+	rows, err := drainRows(f.next, f.errFn, f.take)
+	if err != nil {
+		t.Fatalf("drainRows: %v", err)
+	}
+	var reported uint64
+	for _, r := range rows {
+		reported += r.Value.Count
+	}
+	left := f.rows[first].Count
+	if reported+left != 7 {
+		t.Errorf("reported %d and left %d of 7 increments; an increment that lands while the drain runs "+
+			"must be reported now or stay for the next drain, never deleted unseen", reported, left)
 	}
 }
 
 func TestAnEmptyRowIsClearedButNotReported(t *testing.T) {
-	f := &fakeIter{rows: []Row{{Key: Key{CgroupID: 7}, Value: Value{}}}}
+	f := newFakeMap(Row{Key: Key{CgroupID: 7}, Value: Value{}})
 
-	rows, err := drainRows(f.next, f.errFn, f.del)
+	rows, err := drainRows(f.next, f.errFn, f.take)
 	if err != nil {
 		t.Fatalf("drainRows: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Errorf("returned %d rows for a zero delta, want 0", len(rows))
 	}
-	if len(f.deleted) != 1 {
+	if len(f.taken) != 1 {
 		t.Errorf("an empty row must still be cleared, or it accumulates in a bounded map")
 	}
 }
 
-func TestDrainSurfacesIterationAndDeleteFailures(t *testing.T) {
-	f := &fakeIter{err: errors.New("iterate exploded")}
-	if _, err := drainRows(f.next, f.errFn, f.del); err == nil {
+func TestDrainSurfacesIterationAndTakeFailures(t *testing.T) {
+	f := newFakeMap()
+	f.err = errors.New("iterate exploded")
+	if _, err := drainRows(f.next, f.errFn, f.take); err == nil {
 		t.Error("an iteration failure was swallowed; the drain would look like an idle interval")
 	}
 
-	f2 := &fakeIter{
-		rows:   []Row{{Key: Key{CgroupID: 1}, Value: Value{Count: 1}}},
-		delErr: errors.New("delete exploded"),
-	}
-	rows, err := drainRows(f2.next, f2.errFn, f2.del)
-	if err == nil {
-		t.Error("a delete failure was swallowed; those rows are counted again next drain")
-	}
-	if len(rows) != 1 {
-		t.Errorf("rows read before the delete failure must still be returned, got %d", len(rows))
+	f2 := newFakeMap(
+		Row{Key: Key{CgroupID: 1}, Value: Value{Count: 1}},
+	)
+	f2.takeErr = errors.New("take exploded")
+	if _, err := drainRows(f2.next, f2.errFn, f2.take); err == nil {
+		t.Error("a take failure was swallowed; those rows are counted again next drain")
 	}
 }
 

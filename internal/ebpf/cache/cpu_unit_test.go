@@ -39,7 +39,7 @@ func TestGetCPUTime_Cache(t *testing.T) {
 	const pid uint32 = 1234
 	const want uint64 = 5_000_000_000
 	cpuTimeMu.Lock()
-	cpuTimes[pid] = ProcessCPUTime{TotalNS: want}
+	cpuTimes[pid] = cpuTimeEntry{ProcessCPUTime: ProcessCPUTime{TotalNS: want}}
 	cpuTimeMu.Unlock()
 
 	if got := GetCPUTime(pid); got.TotalNS != want {
@@ -70,7 +70,7 @@ func TestResetCPUTimes(t *testing.T) {
 
 	const pid uint32 = 9876
 	cpuTimeMu.Lock()
-	cpuTimes[pid] = ProcessCPUTime{TotalNS: 42}
+	cpuTimes[pid] = cpuTimeEntry{ProcessCPUTime: ProcessCPUTime{TotalNS: 42}}
 	cpuTimeMu.Unlock()
 
 	if got := GetCPUTime(pid); got.TotalNS != 42 {

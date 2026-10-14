@@ -6,7 +6,7 @@ import (
 
 func TestH3OffsetsFromDWARFRealBinary(t *testing.T) {
 	bin := goFixtureBinary(t)
-	off, ok := h3OffsetsFromDWARF(bin)
+	off, ok := h3OffsetsFromDWARF(bin, 0)
 	if !ok {
 		t.Fatal("expected DWARF offset resolution to succeed on the fixture binary")
 	}
@@ -18,7 +18,7 @@ func TestH3OffsetsFromDWARFRealBinary(t *testing.T) {
 
 func TestResolveH3FieldOffsetsPrefersDWARF(t *testing.T) {
 	bin := goFixtureBinary(t)
-	off, source := resolveH3FieldOffsets(bin)
+	off, source := resolveH3FieldOffsets(bin, 0)
 	if source != "dwarf" {
 		t.Fatalf("source = %q, want dwarf when the binary carries usable DWARF", source)
 	}

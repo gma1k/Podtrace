@@ -5,14 +5,14 @@ import (
 )
 
 func TestOpenDWARFMissingFile(t *testing.T) {
-	if _, _, ok := openDWARF("/no/such/binary/here"); ok {
+	if _, _, ok := openDWARF("/no/such/binary/here", 0); ok {
 		t.Error("expected openDWARF to fail for a missing file")
 	}
 }
 
 func TestOpenDWARFFixture(t *testing.T) {
 	bin := goFixtureBinary(t)
-	d, cleanup, ok := openDWARF(bin)
+	d, cleanup, ok := openDWARF(bin, 0)
 	if !ok {
 		t.Fatal("expected openDWARF to succeed on a DWARF-bearing Go binary")
 	}
@@ -141,13 +141,13 @@ func TestBuildH3PeerPathNoQuicTypes(t *testing.T) {
 
 func TestResolveH3PeerPathsNoQuicTypes(t *testing.T) {
 	bin := goFixtureBinary(t)
-	if _, ok := resolveH3PeerPaths(bin, ""); ok {
+	if _, ok := resolveH3PeerPaths(bin, 0, ""); ok {
 		t.Error("resolveH3PeerPaths must fail on a binary without quic-go types")
 	}
 }
 
 func TestResolveH3PeerPathsMissingFile(t *testing.T) {
-	if _, ok := resolveH3PeerPaths("/no/such/binary", "some.Root"); ok {
+	if _, ok := resolveH3PeerPaths("/no/such/binary", 0, "some.Root"); ok {
 		t.Error("resolveH3PeerPaths must fail when the binary is missing")
 	}
 }

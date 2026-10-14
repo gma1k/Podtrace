@@ -43,7 +43,7 @@ func TestResolveH3FieldOffsets_FallsBackWhenNoDWARF(t *testing.T) {
 	if err := os.WriteFile(p, []byte("no dwarf, no build info"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	off, source := resolveH3FieldOffsets(p)
+	off, source := resolveH3FieldOffsets(p, 0)
 	if source != "default" {
 		t.Fatalf("source = %q, want \"default\" for a non-Go, DWARF-less file", source)
 	}

@@ -36,7 +36,7 @@ func main(){ r,_:=http.NewRequest("GET","http://x/y",nil); u,_:=url.Parse("http:
 		t.Skipf("could not build helper binary: %v\n%s", err, out)
 	}
 
-	off, source := resolveH3FieldOffsets(bin)
+	off, source := resolveH3FieldOffsets(bin, 0)
 	if source != "dwarf" {
 		t.Fatalf("expected dwarf source, got %q", source)
 	}
@@ -47,7 +47,7 @@ func main(){ r,_:=http.NewRequest("GET","http://x/y",nil); u,_:=url.Parse("http:
 }
 
 func TestH3OffsetsFromDWARF_MissingFileFallsBack(t *testing.T) {
-	if _, ok := h3OffsetsFromDWARF("/no/such/binary"); ok {
+	if _, ok := h3OffsetsFromDWARF("/no/such/binary", 0); ok {
 		t.Fatal("expected ok=false for a missing binary")
 	}
 }

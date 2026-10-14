@@ -57,16 +57,15 @@ var sendConnImplTypes = []string{"github.com/quic-go/quic-go.sconn"}
 
 // resolveH3PeerPaths builds the client and server peer walks for a target
 // binary.
-func resolveH3PeerPaths(exePath, clientRootType string) (h3PeerPaths, bool) {
-	d, closeFn, ok := openDWARF(exePath)
+func resolveH3PeerPaths(exePath string, pid uint32, clientRootType string) (paths h3PeerPaths, resolved bool) {
+	defer recoverParse("resolveH3PeerPaths")
+	d, closeFn, ok := openDWARF(exePath, pid)
 	if !ok {
 		return h3PeerPaths{}, false
 	}
 	defer closeFn()
 
 	idx := indexDWARFStructs(d)
-	var paths h3PeerPaths
-	resolved := false
 
 	if clientRootType != "" {
 		clientPrefix := []string{"conn"}
@@ -87,7 +86,7 @@ func resolveH3PeerPaths(exePath, clientRootType string) (h3PeerPaths, bool) {
 
 // openDWARF opens the binary's DWARF, falling back to a build-id /
 // .gnu_debuglink debug file.
-func openDWARF(exePath string) (data *dwarf.Data, cleanup func(), ok bool) {
+func openDWARF(exePath string, pid uint32) (data *dwarf.Data, cleanup func(), ok bool) {
 	defer recoverParse("openDWARF")
 	target, err := openELFCapped(exePath)
 	if err != nil {
@@ -98,7 +97,7 @@ func openDWARF(exePath string) (data *dwarf.Data, cleanup func(), ok bool) {
 			return d, func() { _ = target.Close() }, true
 		}
 	}
-	if dbg, _ := openDebugInfo(target, exePath, 0); dbg != nil && dbg != target {
+	if dbg, _ := openDebugInfo(target, pid); dbg != nil && dbg != target {
 		if dwarfWithinCap(dbg) {
 			if d, err := dbg.DWARF(); err == nil {
 				return d, func() { _ = dbg.Close(); _ = target.Close() }, true
@@ -288,9 +287,15 @@ func hasMember(st *dwarf.StructType, name string, typeCheck func(dwarf.Type) boo
 	return f != nil && (typeCheck == nil || typeCheck(f.Type))
 }
 
-// stripType removes typedef and qualifier wrappers.
+// maxTypeWrappers bounds how many typedef and qualifier wrappers stripType
+// peels. debug/dwarf caches a typedef before resolving its target, so a
+// typedef that names itself, or a cycle of them, never bottoms out.
+const maxTypeWrappers = 16
+
+// stripType removes typedef and qualifier wrappers, returning nil when they
+// do not end within maxTypeWrappers.
 func stripType(t dwarf.Type) dwarf.Type {
-	for {
+	for range maxTypeWrappers {
 		switch v := t.(type) {
 		case *dwarf.TypedefType:
 			t = v.Type
@@ -300,6 +305,7 @@ func stripType(t dwarf.Type) dwarf.Type {
 			return t
 		}
 	}
+	return nil
 }
 
 // isGoInterfaceType reports whether a member type is a Go interface (iface or

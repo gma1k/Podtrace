@@ -81,7 +81,7 @@ func goFixtureBinary(t *testing.T) string {
 func fixtureDWARF(t *testing.T) (*dwarf.Data, func(), map[string]dwarf.Offset) {
 	t.Helper()
 	bin := goFixtureBinary(t)
-	d, cleanup, ok := openDWARF(bin)
+	d, cleanup, ok := openDWARF(bin, 0)
 	if !ok {
 		t.Skip("fixture binary carries no readable DWARF")
 	}

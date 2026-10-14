@@ -66,6 +66,7 @@ func AttachGoRequestProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 			zap.String("path", exePath), zap.Error(err))
 		return nil
 	}
+	defer func() { _ = exe.Close() }()
 	var links []link.Link
 	for _, h := range goRequestHandlers {
 		links = append(links, attachGoEntryReturnProbes(coll, exe, exePath, pid, h.symbol, h.entryProg, h.retProg)...)

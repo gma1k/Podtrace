@@ -14,6 +14,7 @@ import (
 	"sort"
 
 	"github.com/cilium/ebpf"
+	"golang.org/x/sys/unix"
 )
 
 // Schema is the Prometheus native-histogram schema the kernel records in.
@@ -105,45 +106,88 @@ func SetMode(m *ebpf.Map, mode Mode) error {
 }
 
 // Drain reads every row and removes it, returning the summed deltas.
+//
+// Each row is read and removed in one step. Reading every row first and
+// deleting them all afterwards loses whatever the probes add to a row in
+// between, an undercount that grows with the number of series.
 func Drain(m *ebpf.Map) ([]Row, error) {
 	if m == nil {
 		return nil, errors.New("kernelagg: metrics map is nil")
 	}
 	iter := m.Iterate()
-	return drainRows(iter.Next, iter.Err, func(k *Key) error { return m.Delete(k) })
+	t := &mapTaker{m: m}
+	return drainRows(iter.Next, iter.Err, t.take)
+}
+
+// rowMap is the part of *ebpf.Map a drain uses.
+type rowMap interface {
+	LookupAndDelete(key, valueOut any) error
+	Lookup(key, valueOut any) error
+	Delete(key any) error
+}
+
+// mapTaker removes one row at a time, atomically where the kernel can.
+type mapTaker struct {
+	m        rowMap
+	separate bool
+}
+
+func (t *mapTaker) take(k *Key) (Value, error) {
+	var perCPU []Value
+	if !t.separate {
+		err := t.m.LookupAndDelete(k, &perCPU)
+		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
+			return SumPerCPU(perCPU), nil
+		}
+		if !errors.Is(err, ebpf.ErrNotSupported) && !errors.Is(err, unix.EINVAL) {
+			return Value{}, err
+		}
+		t.separate = true
+	}
+	if err := t.m.Lookup(k, &perCPU); err != nil {
+		if errors.Is(err, ebpf.ErrKeyNotExist) {
+			return Value{}, nil
+		}
+		return Value{}, err
+	}
+	if err := t.m.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return Value{}, err
+	}
+	return SumPerCPU(perCPU), nil
 }
 
 // drainRows holds the drain logic, separated from the map I/O so it can be
 // exercised without a BPF map, creating one needs privileges a unit test
-// does not have.
+// does not have. Keys are collected first, then each is taken: the read and
+// the removal of a row happen together.
 func drainRows(
 	next func(key, value any) bool,
 	iterErr func() error,
-	del func(*Key) error,
+	take func(*Key) (Value, error),
 ) ([]Row, error) {
 	var (
-		key     Key
-		perCPU  []Value
-		rows    []Row
-		drained []Key
+		key    Key
+		perCPU []Value
+		keys   []Key
+		rows   []Row
 	)
 
 	for next(&key, &perCPU) {
-		total := SumPerCPU(perCPU)
-		drained = append(drained, key)
-		if total.Count == 0 && total.Bytes == 0 {
-			continue
-		}
-		rows = append(rows, Row{Key: key, Value: total})
+		keys = append(keys, key)
 	}
 	if err := iterErr(); err != nil {
 		return nil, fmt.Errorf("kernelagg: iterate: %w", err)
 	}
 
-	for i := range drained {
-		if err := del(&drained[i]); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			return rows, fmt.Errorf("kernelagg: delete: %w", err)
+	for i := range keys {
+		total, err := take(&keys[i])
+		if err != nil {
+			return rows, fmt.Errorf("kernelagg: take: %w", err)
 		}
+		if total.Count == 0 && total.Bytes == 0 {
+			continue
+		}
+		rows = append(rows, Row{Key: keys[i], Value: total})
 	}
 	return rows, nil
 }

@@ -2,13 +2,13 @@ package probes
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"go.uber.org/zap"
 
+	"github.com/gma1k/podtrace/internal/hostfs"
 	"github.com/gma1k/podtrace/internal/logger"
 )
 
@@ -51,8 +51,7 @@ func AttachRedisProbesWithPID(coll *ebpf.Collection, containerID string, pid uin
 	paths := findDBLibsWithPID(containerID, pid, libNames)
 
 	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(path) {
 			continue
 		}
 		if !af.Claim("redis", path) {
@@ -62,6 +61,7 @@ func AttachRedisProbesWithPID(coll *ebpf.Collection, containerID string, pid uin
 		if err != nil {
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		pairs := []struct{ uprobe, uretprobe, symbol string }{
 			{"uprobe_redisCommand", "uretprobe_redisCommand", "redisCommand"},
 			{"uprobe_redisCommandArgv", "uretprobe_redisCommandArgv", "redisCommandArgv"},
@@ -90,8 +90,7 @@ func AttachMemcachedProbesWithPID(coll *ebpf.Collection, containerID string, pid
 	paths := findDBLibsWithPID(containerID, pid, libNames)
 
 	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(path) {
 			continue
 		}
 		if !af.Claim("memcached", path) {
@@ -101,6 +100,7 @@ func AttachMemcachedProbesWithPID(coll *ebpf.Collection, containerID string, pid
 		if err != nil {
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		pairs := []struct{ uprobe, uretprobe, symbol string }{
 			{"uprobe_memcached_get", "uretprobe_memcached_get", "memcached_get"},
 			{"uprobe_memcached_set", "uretprobe_memcached_set", "memcached_set"},
@@ -130,8 +130,7 @@ func AttachKafkaProbesWithPID(coll *ebpf.Collection, containerID string, pid uin
 	paths := findDBLibsWithPID(containerID, pid, libNames)
 
 	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(path) {
 			continue
 		}
 		if !af.Claim("kafka", path) {
@@ -141,6 +140,7 @@ func AttachKafkaProbesWithPID(coll *ebpf.Collection, containerID string, pid uin
 		if err != nil {
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		pairs := []struct{ uprobe, uretprobe, symbol string }{
 			{"uprobe_rd_kafka_topic_new", "uretprobe_rd_kafka_topic_new", "rd_kafka_topic_new"},
 			{"uprobe_rd_kafka_produce", "uretprobe_rd_kafka_produce", "rd_kafka_produce"},
@@ -158,39 +158,53 @@ func AttachKafkaProbesWithPID(coll *ebpf.Collection, containerID string, pid uin
 	return links
 }
 
+// attachKprobes attaches the entry kprobe named entry on sym, and, when ret
+// is not empty, the return probe named ret before it. An entry whose return
+// probe could not attach is skipped: it would stash state nothing clears.
+func attachKprobes(coll *ebpf.Collection, what, sym, entry, ret string) []link.Link {
+	var links []link.Link
+	if ret != "" {
+		prog := coll.Programs[ret]
+		if prog == nil {
+			logger.Debug(what+" program not present in collection", zap.String("prog", ret))
+			return nil
+		}
+		l, err := attachReturn(coll, ret, func() (link.Link, error) { return kprobeAttach(sym, prog, true) })
+		if err != nil {
+			logger.Debug(what+" probe unavailable", zap.String("prog", ret), zap.Error(err))
+			return nil
+		}
+		links = append(links, l)
+		logger.Debug(what+" probe attached", zap.String("prog", ret))
+	}
+	prog := coll.Programs[entry]
+	if prog == nil {
+		logger.Debug(what+" program not present in collection", zap.String("prog", entry))
+		return closeAll(links)
+	}
+	l, err := kprobeAttach(sym, prog, false)
+	if err != nil {
+		logger.Debug(what+" probe unavailable", zap.String("prog", entry), zap.Error(err))
+		return closeAll(links)
+	}
+	logger.Debug(what+" probe attached", zap.String("prog", entry))
+	return append(links, l)
+}
+
+// closeAll closes links and returns nothing in their place.
+func closeAll(links []link.Link) []link.Link {
+	for _, l := range links {
+		_ = l.Close()
+	}
+	return nil
+}
+
 // AttachFastCGIProbes attaches kprobes on unix_stream_sendmsg/recvmsg for
 // FastCGI / PHP-FPM request lifecycle tracing (BTF-only; no-ops without BTF).
 func AttachFastCGIProbes(coll *ebpf.Collection) []link.Link {
 	var links []link.Link
-	kprobeMap := map[string]struct {
-		sym      string
-		retprobe bool
-	}{
-		"kprobe_unix_stream_recvmsg":    {"unix_stream_recvmsg", false},
-		"kretprobe_unix_stream_recvmsg": {"unix_stream_recvmsg", true},
-		"kprobe_unix_stream_sendmsg":    {"unix_stream_sendmsg", false},
-	}
-
-	for progName, kp := range kprobeMap {
-		prog := coll.Programs[progName]
-		if prog == nil {
-			logger.Debug("FastCGI program not present in collection", zap.String("prog", progName))
-			continue
-		}
-		var l link.Link
-		var err error
-		if kp.retprobe {
-			l, err = attachReturn(coll, progName, func() (link.Link, error) { return link.Kretprobe(kp.sym, prog, nil) })
-		} else {
-			l, err = link.Kprobe(kp.sym, prog, nil)
-		}
-		if err == nil {
-			links = append(links, l)
-			logger.Debug("FastCGI probe attached", zap.String("prog", progName))
-		} else {
-			logger.Debug("FastCGI probe unavailable", zap.String("prog", progName), zap.Error(err))
-		}
-	}
+	links = append(links, attachKprobes(coll, "FastCGI", "unix_stream_recvmsg", "kprobe_unix_stream_recvmsg", "kretprobe_unix_stream_recvmsg")...)
+	links = append(links, attachKprobes(coll, "FastCGI", "unix_stream_sendmsg", "kprobe_unix_stream_sendmsg", "")...)
 	return links
 }
 
@@ -217,28 +231,8 @@ func AttachGRPCProbes(coll *ebpf.Collection) []link.Link {
 // tcp_recvmsg (status line).
 func AttachHTTPProbes(coll *ebpf.Collection) []link.Link {
 	var links []link.Link
-	attach := func(progName, sym string, ret bool) {
-		prog := coll.Programs[progName]
-		if prog == nil {
-			return
-		}
-		var l link.Link
-		var err error
-		if ret {
-			l, err = attachReturn(coll, progName, func() (link.Link, error) { return link.Kretprobe(sym, prog, nil) })
-		} else {
-			l, err = link.Kprobe(sym, prog, nil)
-		}
-		if err == nil {
-			links = append(links, l)
-			logger.Debug("HTTP/1.x probe attached", zap.String("prog", progName))
-		} else {
-			logger.Debug("HTTP/1.x probe unavailable", zap.String("prog", progName), zap.Error(err))
-		}
-	}
-	attach("kprobe_http_tcp_sendmsg", "tcp_sendmsg", false)
-	attach("kprobe_http_tcp_recvmsg", "tcp_recvmsg", false)
-	attach("kretprobe_http_tcp_recvmsg", "tcp_recvmsg", true)
+	links = append(links, attachKprobes(coll, "HTTP/1.x", "tcp_sendmsg", "kprobe_http_tcp_sendmsg", "")...)
+	links = append(links, attachKprobes(coll, "HTTP/1.x", "tcp_recvmsg", "kprobe_http_tcp_recvmsg", "kretprobe_http_tcp_recvmsg")...)
 	return links
 }
 
@@ -247,29 +241,8 @@ func AttachHTTPProbes(coll *ebpf.Collection) []link.Link {
 // tcp_recvmsg (response HEADERS).
 func AttachH2Probes(coll *ebpf.Collection) []link.Link {
 	var links []link.Link
-	attach := func(progName, sym string, ret bool) {
-		prog := coll.Programs[progName]
-		if prog == nil {
-			return
-		}
-		var l link.Link
-		var err error
-		if ret {
-			l, err = attachReturn(coll, progName, func() (link.Link, error) { return link.Kretprobe(sym, prog, nil) })
-		} else {
-			l, err = link.Kprobe(sym, prog, nil)
-		}
-		if err == nil {
-			links = append(links, l)
-			logger.Debug("HTTP/2 probe attached", zap.String("prog", progName))
-		} else {
-			logger.Debug("HTTP/2 probe unavailable", zap.String("prog", progName), zap.Error(err))
-		}
-	}
-	attach("kprobe_h2_tcp_sendmsg", "tcp_sendmsg", false)
-	attach("kretprobe_h2_tcp_sendmsg", "tcp_sendmsg", true)
-	attach("kprobe_h2_tcp_recvmsg", "tcp_recvmsg", false)
-	attach("kretprobe_h2_tcp_recvmsg", "tcp_recvmsg", true)
-	attach("kprobe_h2_tcp_close", "tcp_close", false)
+	links = append(links, attachKprobes(coll, "HTTP/2", "tcp_sendmsg", "kprobe_h2_tcp_sendmsg", "kretprobe_h2_tcp_sendmsg")...)
+	links = append(links, attachKprobes(coll, "HTTP/2", "tcp_recvmsg", "kprobe_h2_tcp_recvmsg", "kretprobe_h2_tcp_recvmsg")...)
+	links = append(links, attachKprobes(coll, "HTTP/2", "tcp_close", "kprobe_h2_tcp_close", "")...)
 	return links
 }

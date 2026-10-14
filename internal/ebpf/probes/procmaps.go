@@ -3,6 +3,7 @@ package probes
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -63,6 +64,7 @@ func sameHostFile(a, b string) bool {
 // deduplicated by inode so the several segments a shared library is mapped
 // through yield one attach target.
 func mappedFilesMatching(pid uint32, patterns []string) []string {
+	started, timed := processStartTimeOf(pid)
 	data, err := procfs.ReadFile(fmt.Sprintf("%d/maps", pid))
 	if err != nil {
 		return nil
@@ -89,7 +91,40 @@ func mappedFilesMatching(pid uint32, patterns []string) []string {
 		seen[key] = struct{}{}
 		paths = append(paths, resolved)
 	}
+	if timed && !sameProcess(pid, started) {
+		return nil
+	}
 	return paths
+}
+
+var processStartTimeOf = processStartTime
+
+// processStartTime reads pid's start time, field 22 of /proc/<pid>/stat,
+// which tells a process apart from a later one that reuses its pid.
+func processStartTime(pid uint32) (uint64, bool) {
+	data, err := procfs.ReadFile(fmt.Sprintf("%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	s := string(data)
+	rp := strings.LastIndex(s, ")")
+	if rp < 0 {
+		return 0, false
+	}
+	fields := strings.Fields(s[rp+1:])
+	if len(fields) < 20 {
+		return 0, false
+	}
+	started, err := strconv.ParseUint(fields[19], 10, 64)
+	return started, err == nil
+}
+
+// sameProcess reports whether pid still names the process that started at
+// started. Paths resolved through /proc/<pid> after the target exited and
+// its pid was reused would name files in an unrelated process's rootfs.
+func sameProcess(pid uint32, started uint64) bool {
+	now, ok := processStartTimeOf(pid)
+	return ok && now == started
 }
 
 func containsAnyPattern(s string, patterns []string) bool {

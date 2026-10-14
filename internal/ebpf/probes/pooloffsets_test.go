@@ -115,7 +115,7 @@ func runtimePoolOffsets(t *testing.T) poolFieldOffsets {
 func TestPoolOffsetsMatchTheRuntimeStructLayout(t *testing.T) {
 	plain, _ := poolFixtures(t)
 
-	got, ok := poolOffsetsFromDWARF(plain)
+	got, ok := poolOffsetsFromDWARF(plain, 0)
 	if !ok {
 		t.Fatal("no offsets resolved from a fixture built with DWARF")
 	}
@@ -133,7 +133,7 @@ func TestPoolOffsetsMatchTheRuntimeStructLayout(t *testing.T) {
 func TestResolvePoolFieldOffsetsUsesTheBinarysOwnDWARF(t *testing.T) {
 	plain, _ := poolFixtures(t)
 
-	got, ok := resolvePoolFieldOffsets(plain)
+	got, ok := resolvePoolFieldOffsets(plain, 0)
 	if !ok {
 		t.Fatal("no offsets resolved from a fixture built with DWARF")
 	}
@@ -145,7 +145,7 @@ func TestResolvePoolFieldOffsetsUsesTheBinarysOwnDWARF(t *testing.T) {
 func TestPoolOffsetsAreAbsentFromAStrippedBinary(t *testing.T) {
 	_, stripped := poolFixtures(t)
 
-	if got, ok := poolOffsetsFromDWARF(stripped); ok {
+	if got, ok := poolOffsetsFromDWARF(stripped, 0); ok {
 		t.Fatalf("offsets = %+v resolved from a binary built with -ldflags=-w", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestPoolOffsetsAreAbsentFromAStrippedBinary(t *testing.T) {
 func TestResolvePoolFieldOffsetsRefusesToGuessWithoutDWARF(t *testing.T) {
 	_, stripped := poolFixtures(t)
 
-	got, ok := resolvePoolFieldOffsets(stripped)
+	got, ok := resolvePoolFieldOffsets(stripped, 0)
 	if ok {
 		t.Fatalf("resolvePoolFieldOffsets = %+v, ok on a stripped binary.\n\nThere is "+
 			"deliberately no version-table fallback here: a wrong integer offset yields a "+
@@ -169,7 +169,7 @@ func TestResolvePoolFieldOffsetsRefusesToGuessWithoutDWARF(t *testing.T) {
 func TestPoolOffsetsSkipABinaryThatNeverPools(t *testing.T) {
 	bin := goFixtureBinary(t)
 
-	if got, ok := poolOffsetsFromDWARF(bin); ok {
+	if got, ok := poolOffsetsFromDWARF(bin, 0); ok {
 		t.Fatalf("offsets = %+v from a binary that does not import database/sql", got)
 	}
 }
@@ -179,8 +179,8 @@ func TestResolvePoolFieldOffsetsToleratesAnUnreadablePath(t *testing.T) {
 		filepath.Join(t.TempDir(), "absent"),
 		t.TempDir(),
 	} {
-		if _, ok := resolvePoolFieldOffsets(path); ok {
-			t.Errorf("resolvePoolFieldOffsets(%q) reported offsets", path)
+		if _, ok := resolvePoolFieldOffsets(path, 0); ok {
+			t.Errorf("resolvePoolFieldOffsets(%q, 0) reported offsets", path)
 		}
 	}
 }
@@ -191,7 +191,7 @@ func TestPoolOffsetsRejectANonELFFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if _, ok := poolOffsetsFromDWARF(path); ok {
+	if _, ok := poolOffsetsFromDWARF(path, 0); ok {
 		t.Error("offsets resolved from a shell script")
 	}
 }

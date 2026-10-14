@@ -1381,32 +1381,6 @@ func TestTracer_Start_WithCgroupPath_NoLimitsMap(t *testing.T) {
 	}
 }
 
-func TestTracer_Start_PathCacheCleanup(t *testing.T) {
-	tracer := &Tracer{
-		filter:     filter.NewCgroupFilter(),
-		collection: nil,
-		reader:     nil,
-		pathCache:  cache.NewPathCache(),
-	}
-
-	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Start panicked as expected: %v", r)
-		}
-		cancel()
-	}()
-
-	err := tracer.Start(ctx, eventChan)
-	if err == nil {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func TestTracer_Start_WithResourceMonitorError(t *testing.T) {
 	tmpDir := t.TempDir()
 	cgroupPath := filepath.Join(tmpDir, "test-cgroup")
@@ -1447,19 +1421,6 @@ func TestTracer_Stop_WithResourceMonitor(t *testing.T) {
 	}
 }
 
-func TestTracer_Stop_WithPathCache(t *testing.T) {
-	tracer := &Tracer{
-		filter:    filter.NewCgroupFilter(),
-		links:     []link.Link{},
-		pathCache: cache.NewPathCache(),
-	}
-
-	err := tracer.Stop()
-	if err != nil {
-		t.Errorf("Stop should not return error, got %v", err)
-	}
-}
-
 func TestTracer_Stop_CompleteCleanup(t *testing.T) {
 	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
 	tracer := &Tracer{
@@ -1468,7 +1429,6 @@ func TestTracer_Stop_CompleteCleanup(t *testing.T) {
 		reader:           nil,
 		collection:       nil,
 		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
-		pathCache:        cache.NewPathCache(),
 		resourceMgr:      newResourceMonitorManager(),
 	}
 
@@ -1508,7 +1468,6 @@ func TestTracer_Start_EventProcessing_NoStackMap(t *testing.T) {
 		collection:       nil,
 		reader:           nil,
 		processNameCache: cache.NewLRUCache(config.CacheMaxSize, time.Second),
-		pathCache:        cache.NewPathCache(),
 	}
 
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
@@ -1535,7 +1494,6 @@ func TestTracer_Start_EventProcessing_WithTargetCache(t *testing.T) {
 		collection:       nil,
 		reader:           nil,
 		processNameCache: cache.NewLRUCache(config.CacheMaxSize, time.Second),
-		pathCache:        cache.NewPathCache(),
 	}
 
 	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
@@ -1564,7 +1522,6 @@ func TestTracer_Stop_WithAllComponents(t *testing.T) {
 		reader:           nil,
 		collection:       nil,
 		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
-		pathCache:        cache.NewPathCache(),
 		resourceMgr:      newResourceMonitorManager(),
 	}
 
@@ -1579,22 +1536,6 @@ func TestTracer_Stop_WithNilProcessCache(t *testing.T) {
 		filter:           filter.NewCgroupFilter(),
 		links:            []link.Link{},
 		processNameCache: nil,
-		pathCache:        cache.NewPathCache(),
-	}
-
-	err := tracer.Stop()
-	if err != nil {
-		t.Errorf("Stop should not return error, got %v", err)
-	}
-}
-
-func TestTracer_Stop_WithNilPathCache(t *testing.T) {
-	ttl := time.Duration(config.CacheTTLSeconds) * time.Second
-	tracer := &Tracer{
-		filter:           filter.NewCgroupFilter(),
-		links:            []link.Link{},
-		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
-		pathCache:        nil,
 	}
 
 	err := tracer.Stop()
@@ -1609,7 +1550,6 @@ func TestTracer_Stop_WithNilResourceMonitor(t *testing.T) {
 		filter:           filter.NewCgroupFilter(),
 		links:            []link.Link{},
 		processNameCache: cache.NewLRUCache(config.CacheMaxSize, ttl),
-		pathCache:        cache.NewPathCache(),
 		resourceMgr:      newResourceMonitorManager(),
 	}
 
@@ -1716,32 +1656,6 @@ func TestTracer_Start_WithoutCgroupPath(t *testing.T) {
 	err := tracer.Start(ctx, eventChan)
 	if err == nil {
 		time.Sleep(10 * time.Millisecond)
-		cancel()
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func TestTracer_Start_PathCacheCleanupGoroutine(t *testing.T) {
-	tracer := &Tracer{
-		filter:     filter.NewCgroupFilter(),
-		collection: nil,
-		reader:     nil,
-		pathCache:  cache.NewPathCache(),
-	}
-
-	eventChan := make(chan *events.Event, config.EventChannelBufferSize)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	defer func() {
-		cancel()
-		if r := recover(); r != nil {
-			t.Logf("Start panicked as expected: %v", r)
-		}
-	}()
-
-	err := tracer.Start(ctx, eventChan)
-	if err == nil {
-		time.Sleep(35 * time.Second)
 		cancel()
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -2258,10 +2172,8 @@ func TestStop_WithCaches(t *testing.T) {
 	tr := &Tracer{
 		filter:           filter.NewCgroupFilter(),
 		processNameCache: cache.NewLRUCache(16, time.Minute),
-		pathCache:        cache.NewPathCache(),
 	}
 	tr.processNameCache.Set(uint32(1), "init")
-	tr.pathCache.Set("k", "v")
 
 	if err := tr.Stop(); err != nil {
 		t.Errorf("unexpected error from Stop: %v", err)

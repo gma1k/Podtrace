@@ -30,8 +30,8 @@ type poolFieldOffsets struct {
 //
 // Go keeps DWARF by default, so this covers any binary not built with
 // -ldflags=-w, on any Go version, without a table to maintain.
-func resolvePoolFieldOffsets(exePath string) (poolFieldOffsets, bool) {
-	off, ok := poolOffsetsFromDWARF(exePath)
+func resolvePoolFieldOffsets(exePath string, pid uint32) (poolFieldOffsets, bool) {
+	off, ok := poolOffsetsFromDWARF(exePath, pid)
 	if !ok {
 		logger.Debug("Pool utilization: no DWARF in target binary, utilization not reported",
 			zap.String("path", exePath))
@@ -42,7 +42,7 @@ func resolvePoolFieldOffsets(exePath string) (poolFieldOffsets, bool) {
 
 // poolOffsetsFromDWARF reads database/sql.DB's field offsets from the
 // binary's DWARF, or from a separate build-id debug-info file.
-func poolOffsetsFromDWARF(exePath string) (result poolFieldOffsets, ok bool) {
+func poolOffsetsFromDWARF(exePath string, pid uint32) (result poolFieldOffsets, ok bool) {
 	defer recoverParse("poolOffsetsFromDWARF")
 
 	target, err := openELFCapped(exePath)
@@ -58,7 +58,7 @@ func poolOffsetsFromDWARF(exePath string) (result poolFieldOffsets, ok bool) {
 		err = fmt.Errorf("dwarf sections exceed cap")
 	}
 	if err != nil {
-		if dbg, _ := openDebugInfo(target, exePath, 0); dbg != nil && dbg != target {
+		if dbg, _ := openDebugInfo(target, pid); dbg != nil && dbg != target {
 			defer func() { _ = dbg.Close() }()
 			if dwarfWithinCap(dbg) {
 				d, err = dbg.DWARF()

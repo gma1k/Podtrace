@@ -236,8 +236,8 @@ func ExtractCgroupPathFromProc(cgroupContent string) string {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		if len(parts) >= 3 {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 {
 			controllers := parts[1]
 			if controllers == "cpu" || controllers == "cpu,cpuacct" || strings.Contains(controllers, "cpu") {
 				return parts[2]
@@ -249,8 +249,8 @@ func ExtractCgroupPathFromProc(cgroupContent string) string {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		if len(parts) >= 3 {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 {
 			return parts[2]
 		}
 	}

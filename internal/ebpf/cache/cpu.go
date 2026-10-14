@@ -2,9 +2,11 @@ package cache
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gma1k/podtrace/internal/procfs"
 )
@@ -18,17 +20,37 @@ type ProcessCPUTime struct {
 
 const maxCPUTimeEntries = 16384
 
+// cpuSampleInterval is how often one pid's /proc stat is re-read. Every event
+// lands here, and on a busy node most come from a few hot processes; their
+// CPU totals do not need a fresh read per event.
+const cpuSampleInterval = time.Second
+
+type cpuTimeEntry struct {
+	ProcessCPUTime
+	sampledAt time.Time
+}
+
 var (
 	cpuTimeMu    sync.RWMutex
-	cpuTimes            = map[uint32]ProcessCPUTime{}
+	cpuTimes            = map[uint32]cpuTimeEntry{}
 	clockTicks   uint64 = 100
 	clockTicksOK bool
+	cpuNow       = time.Now
 )
 
-// SnapshotCPUTime reads /proc/<pid>/stat once and stores the result in the
-// per-PID cache. Safe to call multiple times per PID — later calls overwrite
-// with the most recent sample so accumulated CPU is captured.
+// SnapshotCPUTime reads /proc/<pid>/stat and stores the result in the
+// per-PID cache, at most once per cpuSampleInterval for each pid. Later
+// samples overwrite the earlier total so accumulated CPU is captured; the
+// first one stays as the baseline.
 func SnapshotCPUTime(pid uint32) {
+	now := cpuNow()
+	cpuTimeMu.RLock()
+	prev, seen := cpuTimes[pid]
+	cpuTimeMu.RUnlock()
+	if seen && now.Sub(prev.sampledAt) < cpuSampleInterval {
+		return
+	}
+
 	data, err := procfs.ReadFile(fmt.Sprintf("%d/stat", pid))
 	if err != nil {
 		return
@@ -50,14 +72,34 @@ func SnapshotCPUTime(pid uint32) {
 	totalNS := (utime + stime) * (1_000_000_000 / ct)
 
 	cpuTimeMu.Lock()
-	if len(cpuTimes) >= maxCPUTimeEntries {
-		if _, exists := cpuTimes[pid]; !exists {
-			cpuTimes = make(map[uint32]ProcessCPUTime, maxCPUTimeEntries)
-		}
+	prev, seen = cpuTimes[pid]
+	if !seen && len(cpuTimes) >= maxCPUTimeEntries {
+		evictStalestCPUTimes()
 	}
-	prev, seen := cpuTimes[pid]
-	cpuTimes[pid] = mergeCPUSample(prev, seen, totalNS)
+	cpuTimes[pid] = cpuTimeEntry{ProcessCPUTime: mergeCPUSample(prev.ProcessCPUTime, seen, totalNS), sampledAt: now}
 	cpuTimeMu.Unlock()
+}
+
+// evictStalestCPUTimes frees room in a full cache by dropping the eighth of
+// its entries sampled longest ago, rather than every baseline at once.
+// Callers hold cpuTimeMu.
+func evictStalestCPUTimes() {
+	type aged struct {
+		pid uint32
+		at  time.Time
+	}
+	all := make([]aged, 0, len(cpuTimes))
+	for pid, e := range cpuTimes {
+		all = append(all, aged{pid, e.sampledAt})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	drop := len(all) / 8
+	if drop == 0 {
+		drop = 1
+	}
+	for _, a := range all[:drop] {
+		delete(cpuTimes, a.pid)
+	}
 }
 
 // mergeCPUSample folds a new cumulative CPU sample into the cached snapshot.
@@ -75,13 +117,13 @@ func GetCPUTime(pid uint32) ProcessCPUTime {
 	cpuTimeMu.RLock()
 	t := cpuTimes[pid]
 	cpuTimeMu.RUnlock()
-	return t
+	return t.ProcessCPUTime
 }
 
 // ResetCPUTimes clears the cache. Tests use it; production code does not.
 func ResetCPUTimes() {
 	cpuTimeMu.Lock()
-	cpuTimes = map[uint32]ProcessCPUTime{}
+	cpuTimes = map[uint32]cpuTimeEntry{}
 	cpuTimeMu.Unlock()
 }
 

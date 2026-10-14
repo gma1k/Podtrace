@@ -122,7 +122,6 @@ type Tracer struct {
 	processNameCache              *cache.LRUCache
 	attributionTable              *attribution.Table
 	attributionCorrelatorDisabled bool
-	pathCache                     *cache.PathCache
 	resourceMgr                   *resourceMonitorManager
 	lastDNSDrops                  uint64
 	dropReport                    atomic.Pointer[dropReportFn]
@@ -947,7 +946,6 @@ func NewTracer(tracerOpts ...Option) (*Tracer, error) {
 		processNameCache:              processCache,
 		attributionTable:              attribution.New(0, 0),
 		attributionCorrelatorDisabled: os.Getenv("PODTRACE_DISABLE_ATTRIBUTION_CORRELATOR") == "1",
-		pathCache:                     cache.NewPathCache(),
 		resourceMgr:                   newResourceMonitorManager(),
 	}
 	t.useUserspaceCgroupFilter.Store(true)
@@ -1562,9 +1560,6 @@ func (t *Tracer) Start(ctx context.Context, eventChan chan<- *events.Event) erro
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if t.pathCache != nil {
-					t.pathCache.CleanupExpired()
-				}
 				t.pollBPFMapUtilization()
 			}
 		}
@@ -2628,10 +2623,6 @@ func (t *Tracer) stop() {
 
 	if t.processNameCache != nil {
 		t.processNameCache.Close()
-	}
-
-	if t.pathCache != nil {
-		t.pathCache.Clear()
 	}
 
 	if t.resourceMgr != nil {

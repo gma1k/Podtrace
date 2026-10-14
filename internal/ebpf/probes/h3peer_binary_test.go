@@ -5,15 +5,12 @@ import (
 	"testing"
 )
 
-// TestResolveH3PeerPathsRealBinary validates the DWARF peer-path resolver
-// against a real quic-go binary. Skipped unless PODTRACE_TEST_QUICGO_BIN
-// points at a Go binary built with github.com/quic-go/quic-go/http3.
 func TestResolveH3PeerPathsRealBinary(t *testing.T) {
 	bin := os.Getenv("PODTRACE_TEST_QUICGO_BIN")
 	if bin == "" {
 		t.Skip("PODTRACE_TEST_QUICGO_BIN not set")
 	}
-	paths, ok := resolveH3PeerPaths(bin, "github.com/quic-go/quic-go/http3.ClientConn")
+	paths, ok := resolveH3PeerPaths(bin, 0, "github.com/quic-go/quic-go/http3.ClientConn")
 	if !ok {
 		t.Fatal("resolveH3PeerPaths failed")
 	}
@@ -29,9 +26,6 @@ func TestResolveH3PeerPathsRealBinary(t *testing.T) {
 		paths.Server.NSteps, paths.Server.IPOff, paths.Server.PortOff, paths.Server.Steps)
 }
 
-// TestGoFuncReturnOffsetsRealBinaries validates entry+return-site resolution
-// against real quic-go binaries for both supported architectures. Skipped
-// unless the env vars point at Go binaries built with quic-go/http3.
 func TestGoFuncReturnOffsetsRealBinaries(t *testing.T) {
 	symbols := []string{
 		"github.com/quic-go/quic-go/http3.(*ClientConn).RoundTrip",

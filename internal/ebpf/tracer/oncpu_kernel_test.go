@@ -1,4 +1,4 @@
-//go:build bpf_loadtest
+//go:build bpf_loadtest && linux
 
 package tracer
 

@@ -2,7 +2,6 @@ package probes
 
 import (
 	"debug/elf"
-	"debug/gosym"
 	"encoding/binary"
 
 	"golang.org/x/arch/x86/x86asm"
@@ -12,42 +11,15 @@ import (
 // (e.g. "crypto/tls.(*Conn).Write") from the binary's .gopclntab.
 func goSymbolFileOffset(exePath, symbol string) (offset uint64, ok bool) {
 	defer recoverParse("goSymbolFileOffset")
-	f, err := openELFCapped(exePath)
-	if err != nil {
+	bin, ok := loadGoBinary(exePath)
+	if !ok {
 		return 0, false
 	}
-	defer func() { _ = f.Close() }()
-
-	pcln := f.Section(".gopclntab")
-	text := f.Section(".text")
-	if pcln == nil || text == nil {
-		return 0, false
-	}
-	pclnData, err := sectionDataCapped(pcln)
-	if err != nil {
-		return 0, false
-	}
-
-	symtabData, _ := sectionDataCapped(f.Section(".gosymtab"))
-
-	tbl, err := gosym.NewTable(symtabData, gosym.NewLineTable(pclnData, text.Addr))
-	if err != nil {
-		return 0, false
-	}
-	fn := tbl.LookupFunc(symbol)
+	fn := bin.table.LookupFunc(symbol)
 	if fn == nil {
 		return 0, false
 	}
-
-	for _, prog := range f.Progs {
-		if prog.Type != elf.PT_LOAD {
-			continue
-		}
-		if fn.Entry >= prog.Vaddr && fn.Entry < prog.Vaddr+prog.Memsz {
-			return fn.Entry - prog.Vaddr + prog.Off, true
-		}
-	}
-	return 0, false
+	return bin.fileOffset(fn.Entry)
 }
 
 // executableExportsSSL reports whether the ELF at path exposes the OpenSSL
@@ -94,65 +66,44 @@ func vaddrToFileOffset(f *elf.File, vaddr uint64) (uint64, bool) {
 	return 0, false
 }
 
+// maxGoFunctionSize bounds the machine code read for one function's return
+// scan.
+const maxGoFunctionSize = 1 << 20
+
 // goFuncReturnOffsets resolves the entry file offset of a Go function and the
 // file offsets of every RET instruction within it, by scanning the function's
 // machine code.
 func goFuncReturnOffsets(exePath, symbol string) (entryOff uint64, retOffs []uint64, ok bool) {
 	defer recoverParse("goFuncReturnOffsets")
-	f, err := openELFCapped(exePath)
-	if err != nil {
+	bin, ok := loadGoBinary(exePath)
+	if !ok || (bin.machine != elf.EM_X86_64 && bin.machine != elf.EM_AARCH64) {
 		return 0, nil, false
 	}
-	defer func() { _ = f.Close() }()
-
-	if f.Machine != elf.EM_X86_64 && f.Machine != elf.EM_AARCH64 {
+	fn := bin.table.LookupFunc(symbol)
+	if fn == nil || fn.End <= fn.Entry || fn.End-fn.Entry > maxGoFunctionSize {
 		return 0, nil, false
 	}
-
-	pcln := f.Section(".gopclntab")
-	text := f.Section(".text")
-	if pcln == nil || text == nil {
+	entryOff, ok = bin.fileOffset(fn.Entry)
+	if !ok {
 		return 0, nil, false
 	}
-	pclnData, err := sectionDataCapped(pcln)
-	if err != nil {
-		return 0, nil, false
-	}
-	symtabData, _ := sectionDataCapped(f.Section(".gosymtab"))
-	tbl, err := gosym.NewTable(symtabData, gosym.NewLineTable(pclnData, text.Addr))
-	if err != nil {
-		return 0, nil, false
-	}
-	fn := tbl.LookupFunc(symbol)
-	if fn == nil || fn.End <= fn.Entry {
-		return 0, nil, false
-	}
-
-	entryOff, ok = vaddrToFileOffset(f, fn.Entry)
+	code, ok := bin.readText(exePath, fn.Entry, fn.End)
 	if !ok {
 		return 0, nil, false
 	}
 
-	textData, err := sectionDataCapped(text)
-	if err != nil || fn.Entry < text.Addr {
-		return 0, nil, false
-	}
-	start := fn.Entry - text.Addr
-	end := fn.End - text.Addr
-	if end > uint64(len(textData)) {
-		return 0, nil, false
-	}
-	code := textData[start:end]
-
 	var retPositions []uint64
-	switch f.Machine {
+	switch bin.machine {
 	case elf.EM_X86_64:
-		retPositions = x86ReturnPositions(code)
+		retPositions, ok = x86ReturnPositions(code)
+		if !ok {
+			return 0, nil, false
+		}
 	case elf.EM_AARCH64:
 		retPositions = arm64ReturnPositions(code)
 	}
 	for _, pos := range retPositions {
-		if off, ok2 := vaddrToFileOffset(f, fn.Entry+pos); ok2 {
+		if off, ok2 := bin.fileOffset(fn.Entry + pos); ok2 {
 			retOffs = append(retOffs, off)
 		}
 	}
@@ -160,20 +111,22 @@ func goFuncReturnOffsets(exePath, symbol string) (entryOff uint64, retOffs []uin
 }
 
 // x86ReturnPositions decodes x86-64 code and returns the byte position of
-// every RET instruction.
-func x86ReturnPositions(code []byte) []uint64 {
+// every RET instruction. An instruction the decoder cannot read fails the
+// whole scan: the RETs after it would be missed, leaving entry probes whose
+// state no return ever clears.
+func x86ReturnPositions(code []byte) ([]uint64, bool) {
 	var out []uint64
 	for pos := 0; pos < len(code); {
 		inst, derr := x86asm.Decode(code[pos:], 64)
 		if derr != nil || inst.Len == 0 {
-			break
+			return nil, false
 		}
 		if inst.Op == x86asm.RET {
 			out = append(out, uint64(pos))
 		}
 		pos += inst.Len
 	}
-	return out
+	return out, true
 }
 
 // arm64RetInstruction is the sole encoding Go emits for a function return on

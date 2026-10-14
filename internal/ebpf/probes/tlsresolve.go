@@ -5,7 +5,9 @@ import (
 	"debug/elf"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -35,7 +37,7 @@ func resolveSSLOffsets(exePath string, pid uint32) (off sslOffsets, ok bool) {
 	}
 	defer func() { _ = target.Close() }()
 
-	dbg, source := openDebugInfo(target, exePath, pid)
+	dbg, source := openDebugInfo(target, pid)
 	if dbg == nil {
 		return sslOffsets{}, false
 	}
@@ -78,11 +80,15 @@ func symbolVaddr(f *elf.File, name string) (uint64, bool) {
 	return 0, false
 }
 
-// openDebugInfo finds and opens a separate debug file for the target binary
-// within the target's rootfs, returning the opened ELF and a source label, or
-// (nil, "") if none is found.
-func openDebugInfo(target *elf.File, exePath string, pid uint32) (*elf.File, string) {
-	root := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+// openDebugInfo finds and opens a separate debug file for pid's executable
+// within pid's own rootfs, returning the opened ELF and a source label, or
+// (nil, "") if none is found. Every candidate is resolved inside that root,
+// the executable's directory as the target itself sees it.
+func openDebugInfo(target *elf.File, pid uint32) (*elf.File, string) {
+	if pid == 0 {
+		return nil, ""
+	}
+	root := procRoot(pid)
 
 	if buildID := elfBuildID(target); len(buildID) > 2 {
 		rel := filepath.Join("usr/lib/debug/.build-id", buildID[:2], buildID[2:]+".debug")
@@ -91,19 +97,36 @@ func openDebugInfo(target *elf.File, exePath string, pid uint32) (*elf.File, str
 		}
 	}
 	if name := debugLink(target); safeDebugName(name) {
-		dir := filepath.Dir(exePath)
-		candidates := []struct{ root, rel string }{
-			{dir, name},
-			{dir, filepath.Join(".debug", name)},
-			{root, filepath.Join("usr/lib/debug", name)},
+		var candidates []string
+		if dir := executableDirInTarget(pid); dir != "" {
+			candidates = append(candidates,
+				filepath.Join(dir, name),
+				filepath.Join(dir, ".debug", name),
+				filepath.Join("usr/lib/debug", dir, name),
+			)
 		}
-		for _, c := range candidates {
-			if f, err := openELFWithinRoot(c.root, c.rel); err == nil {
+		candidates = append(candidates, filepath.Join("usr/lib/debug", name))
+		for _, rel := range candidates {
+			if f, err := openELFWithinRoot(root, rel); err == nil {
 				return f, "debug-link"
 			}
 		}
 	}
 	return nil, ""
+}
+
+// executableDirInTarget returns the directory of pid's executable as the
+// target sees it in its own mount namespace, or "" when it cannot be read.
+func executableDirInTarget(pid uint32) string {
+	target, err := os.Readlink(filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "exe"))
+	if err != nil {
+		return ""
+	}
+	target = strings.TrimSuffix(target, " (deleted)")
+	if !filepath.IsAbs(target) {
+		return ""
+	}
+	return filepath.Dir(target)
 }
 
 // elfBuildID parses the GNU build-id (.note.gnu.build-id) into a lowercase hex
@@ -142,6 +165,7 @@ func attachSSLByOffset(coll *ebpf.Collection, exePath string, off sslOffsets) []
 	if err != nil {
 		return nil
 	}
+	defer func() { _ = exe.Close() }()
 	var links []link.Link
 	attach := func(progName string, addr uint64, ret bool) {
 		prog := coll.Programs[progName]

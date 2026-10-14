@@ -1,7 +1,9 @@
 package probes
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,6 +455,7 @@ func AttachDNSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 	if libcPath != "" {
 		uprobe, err := openExecutable(libcPath)
 		if err == nil {
+			defer func() { _ = uprobe.Close() }()
 			for _, fn := range libcResolvers {
 				links = append(links, attachLibcResolver(coll, uprobe, fn)...)
 			}
@@ -516,6 +519,7 @@ func AttachSyncProbesWithPID(coll *ebpf.Collection, containerID string, pid uint
 		logger.Info("Lock tracking unavailable", zap.Error(err))
 		return links
 	}
+	defer func() { _ = uprobe.Close() }()
 	if prog := coll.Programs["uprobe_pthread_mutex_lock"]; prog != nil {
 		l, err := uprobe.Uprobe("pthread_mutex_lock", prog, nil)
 		if err == nil {
@@ -544,8 +548,7 @@ func AttachDBProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32
 
 	libpqPaths := findDBLibsWithPID(containerID, pid, []string{"libpq.so.5", "libpq.so"})
 	for _, path := range libpqPaths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(path) {
 			continue
 		}
 		if !af.Claim("db", path) {
@@ -555,6 +558,7 @@ func AttachDBProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32
 		if err != nil {
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		if prog := coll.Programs["uprobe_PQexec"]; prog != nil {
 			l, err := exe.Uprobe("PQexec", prog, nil)
 			if err == nil {
@@ -571,8 +575,7 @@ func AttachDBProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32
 
 	mysqlPaths := findDBLibsWithPID(containerID, pid, []string{"libmysqlclient.so.21", "libmysqlclient.so"})
 	for _, path := range mysqlPaths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(path) {
 			continue
 		}
 		if !af.Claim("db", path) {
@@ -582,6 +585,7 @@ func AttachDBProbesWithPID(coll *ebpf.Collection, containerID string, pid uint32
 		if err != nil {
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		if prog := coll.Programs["uprobe_mysql_real_query"]; prog != nil {
 			l, err := exe.Uprobe("mysql_real_query", prog, nil)
 			if err == nil {
@@ -704,8 +708,7 @@ func AttachPoolProbesWithPID(coll *ebpf.Collection, containerID string, pid uint
 
 		for _, path := range dbPaths {
 			logger.Debug("Attaching pool probes", zap.String("database", dbConfig.name), zap.String("path", path))
-			info, err := os.Stat(path)
-			if err != nil || info.IsDir() {
+			if !hostfs.IsRegularFile(path) {
 				continue
 			}
 			if !af.Claim("pool/"+dbConfig.name, path) {
@@ -716,6 +719,7 @@ func AttachPoolProbesWithPID(coll *ebpf.Collection, containerID string, pid uint
 				logger.Debug("Failed to open executable for pool probes", zap.String("database", dbConfig.name), zap.String("path", path), zap.Error(err))
 				continue
 			}
+			defer func() { _ = exe.Close() }()
 
 			// Every acquire symbol is attached, not just the first that
 			// resolves. These are sibling *public* entry points, not a
@@ -830,7 +834,11 @@ func FindLibcPathWithPID(containerID string, pid uint32) string {
 		}
 	}
 	if containerID != "" {
-		if path := findLibcInContainer(containerID); path != "" {
+		lookup := findLibcInContainer
+		if pid > 0 {
+			lookup = findLibcInContainerRootfs
+		}
+		if path := lookup(containerID); path != "" {
 			return path
 		}
 	}
@@ -856,7 +864,7 @@ func findLibcViaLdconfig() string {
 			for i, part := range parts {
 				if part == "=>" && i+1 < len(parts) {
 					path := strings.TrimSpace(parts[i+1])
-					if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					if hostfs.IsRegularFile(path) {
 						return path
 					}
 				}
@@ -911,26 +919,16 @@ func findLibcViaProcessMaps(pid uint32) string {
 }
 
 func findLibcInProcess(pid uint32) string {
-	procRootPaths := getArchitecturePaths()
-	for _, basePath := range procRootPaths {
-		path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", basePath)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
+	return findLibcInRoot(procRoot(pid))
 }
 
-// fileInProcRoot resolves a path reported by a traced process against that
-// process's own rootfs.
-func fileInProcRoot(pid uint32, containerPath string) string {
-	if containerPath == "" || strings.HasPrefix(containerPath, "[") {
-		return ""
-	}
-	procRoot := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
-	hostPath := filepath.Join(procRoot, strings.TrimPrefix(containerPath, "/"))
-	if hostfs.IsRegularFile(hostPath) {
-		return hostPath
+// findLibcInRoot returns the first libc at a well-known path inside a
+// container rootfs.
+func findLibcInRoot(root string) string {
+	for _, basePath := range getArchitecturePaths() {
+		if path := fileWithinRoot(root, basePath); path != "" {
+			return path
+		}
 	}
 	return ""
 }
@@ -1005,19 +1003,17 @@ func findGoBinaryInProcess(pid uint32) string {
 		target = filepath.Join(cwd, target)
 	}
 
-	procRootPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
-	hostPath := filepath.Join(procRootPath, strings.TrimPrefix(target, "/"))
-
-	if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+	if hostPath := fileInProcRoot(pid, target); hostPath != "" {
 		logger.Debug("Found binary via container root", zap.Uint32("pid", pid), zap.String("container_path", target), zap.String("host_path", hostPath))
 		return hostPath
 	}
 
-	logger.Debug("Binary not found under the target's own rootfs", zap.Uint32("pid", pid), zap.String("target", target), zap.String("host_path", hostPath))
+	logger.Debug("Binary not found under the target's own rootfs", zap.Uint32("pid", pid), zap.String("target", target))
 	return ""
 }
 
 func findGoBinaryViaProcessMaps(pid uint32) string {
+	started, timed := processStartTimeOf(pid)
 	data, err := procfs.ReadFile(fmt.Sprintf("%d/maps", pid))
 	if err != nil {
 		logger.Debug("Failed to read process maps", zap.Uint32("pid", pid), zap.Error(err))
@@ -1032,6 +1028,9 @@ func findGoBinaryViaProcessMaps(pid uint32) string {
 			continue
 		}
 		if resolved := resolveMappedFile(pid, e); resolved != "" {
+			if timed && !sameProcess(pid, started) {
+				return ""
+			}
 			logger.Debug("Found binary via process maps", zap.Uint32("pid", pid), zap.String("container_path", e.Path), zap.String("host_path", resolved))
 			return resolved
 		}
@@ -1040,7 +1039,7 @@ func findGoBinaryViaProcessMaps(pid uint32) string {
 }
 
 func findGoBinaryInContainer(containerID string, pid uint32) string {
-	procRootPath := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+	procRootPath := procRoot(pid)
 
 	if cmdlineData, err := procfs.ReadFile(fmt.Sprintf("%d/cmdline", pid)); err == nil {
 		cmdline := string(cmdlineData)
@@ -1049,8 +1048,7 @@ func findGoBinaryInContainer(containerID string, pid uint32) string {
 			if len(parts) > 0 && parts[0] != "" {
 				binaryPath := parts[0]
 				if filepath.IsAbs(binaryPath) {
-					hostPath := filepath.Join(procRootPath, strings.TrimPrefix(binaryPath, "/"))
-					if hostfs.IsRegularFile(hostPath) {
+					if hostPath := fileWithinRoot(procRootPath, binaryPath); hostPath != "" {
 						logger.Debug("Found binary via cmdline", zap.Uint32("pid", pid), zap.String("cmdline_path", binaryPath), zap.String("host_path", hostPath))
 						return hostPath
 					}
@@ -1071,8 +1069,7 @@ func findGoBinaryInContainer(containerID string, pid uint32) string {
 				filepath.Join("/app", "app"),
 			}
 			for _, relPath := range commonPaths {
-				hostPath := filepath.Join(procRootPath, strings.TrimPrefix(relPath, "/"))
-				if hostfs.IsRegularFile(hostPath) {
+				if hostPath := fileWithinRoot(procRootPath, relPath); hostPath != "" {
 					logger.Debug("Found binary via comm name", zap.Uint32("pid", pid), zap.String("comm", commName), zap.String("path", hostPath))
 					return hostPath
 				}
@@ -1083,8 +1080,7 @@ func findGoBinaryInContainer(containerID string, pid uint32) string {
 	commonPaths := config.GetCommonBinarySearchPaths()
 
 	for _, relPath := range commonPaths {
-		hostPath := filepath.Join(procRootPath, strings.TrimPrefix(relPath, "/"))
-		if info, err := os.Stat(hostPath); err == nil && !info.IsDir() {
+		if hostPath := fileWithinRoot(procRootPath, relPath); hostPath != "" {
 			logger.Debug("Found binary via container root common paths", zap.Uint32("pid", pid), zap.String("path", hostPath))
 			return hostPath
 		}
@@ -1115,8 +1111,7 @@ func findGoBinaryInContainer(containerID string, pid uint32) string {
 	for _, rootfs := range rootfsPaths {
 		if _, err := os.Stat(rootfs); err == nil {
 			for _, relPath := range commonPathsForRootfs {
-				path := filepath.Join(rootfs, strings.TrimPrefix(relPath, "/"))
-				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				if path := fileWithinRoot(rootfs, relPath); path != "" {
 					logger.Debug("Found binary via container rootfs", zap.String("rootfs", rootfs), zap.String("path", path))
 					return path
 				}
@@ -1135,50 +1130,49 @@ func findLibcInContainer(containerID string) string {
 		if path := findLibcViaProcessMaps(pid); path != "" {
 			return path
 		}
-
-		procRootPaths := getArchitecturePaths()
-		for _, basePath := range procRootPaths {
-			path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", basePath)
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				return path
-			}
+		if path := findLibcInProcess(pid); path != "" {
+			return path
 		}
 	}
+	return findLibcInContainerRootfs(containerID)
+}
 
-	rootfsPaths := []string{}
+// findLibcInContainerRootfs looks for libc in the container's rootfs as the
+// runtime lays it out on the host, without a process to resolve through.
+func findLibcInContainerRootfs(containerID string) string {
+	for _, rootfs := range containerRootfsPaths(containerID) {
+		if path := findLibcInRoot(rootfs); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// containerRootfsPaths lists the host directories that may hold
+// containerID's rootfs under Docker or containerd.
+func containerRootfsPaths(containerID string) []string {
+	var rootfsPaths []string
 	if dockerRootfs, err := config.GetDockerContainerRootfs(containerID); err == nil {
 		rootfsPaths = append(rootfsPaths, dockerRootfs)
 	}
-
-	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
+	for _, pattern := range []string{config.GetContainerdOverlayPattern(), config.GetContainerdNativePattern()} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
 		for _, match := range matches {
 			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
 				rootfsPaths = append(rootfsPaths, match)
 			}
 		}
 	}
-
-	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
-		for _, match := range matches {
-			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
-				rootfsPaths = append(rootfsPaths, match)
-			}
-		}
-	}
-
+	var present []string
 	for _, rootfs := range rootfsPaths {
 		if _, err := os.Stat(rootfs); err == nil {
-			libcPaths := getArchitecturePaths()
-			for _, libcPath := range libcPaths {
-				path := filepath.Join(rootfs, libcPath)
-				if info, err := os.Stat(path); err == nil && !info.IsDir() {
-					return path
-				}
-			}
+			present = append(present, rootfs)
 		}
 	}
-
-	return ""
+	return present
 }
 
 func getArchitecturePaths() []string {
@@ -1216,7 +1210,7 @@ func findLibcViaCommonPaths() string {
 	paths := getArchitecturePaths()
 	for _, relPath := range paths {
 		path := filepath.Join("/", relPath)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if hostfs.IsRegularFile(path) {
 			return path
 		}
 	}
@@ -1239,7 +1233,7 @@ func findDBLibsViaLdconfig(libNames []string) []string {
 				for i, part := range parts {
 					if part == "=>" && i+1 < len(parts) {
 						path := strings.TrimSpace(parts[i+1])
-						if info, err := os.Stat(path); err == nil && !info.IsDir() {
+						if hostfs.IsRegularFile(path) {
 							paths = append(paths, path)
 						}
 					}
@@ -1309,56 +1303,36 @@ func findDBLibsInContainer(containerID string, libNames []string) []string {
 		return nil
 	}
 	var paths []string
-
 	if pid := findContainerProcess(containerID); pid > 0 {
-		if foundPaths := findDBLibsViaProcessMaps(pid, libNames); len(foundPaths) > 0 {
-			paths = append(paths, foundPaths...)
-		}
-
-		archPaths := getArchitectureDBPaths(libNames)
-		for _, basePath := range archPaths {
-			path := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", strings.TrimPrefix(basePath, "/"))
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				paths = append(paths, path)
-			}
-		}
+		paths = append(paths, findDBLibsViaProcessMaps(pid, libNames)...)
+		paths = append(paths, findDBLibsInRoot(procRoot(pid), libNames)...)
 	}
-
-	rootfsPaths := []string{}
-	if dockerRootfs, err := config.GetDockerContainerRootfs(containerID); err == nil {
-		rootfsPaths = append(rootfsPaths, dockerRootfs)
-	}
-
-	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
-		for _, match := range matches {
-			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
-				rootfsPaths = append(rootfsPaths, match)
-			}
-		}
-	}
-
-	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
-		for _, match := range matches {
-			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
-				rootfsPaths = append(rootfsPaths, match)
-			}
-		}
-	}
-
-	for _, rootfs := range rootfsPaths {
-		if _, err := os.Stat(rootfs); err == nil {
-			archPaths := getArchitectureDBPaths(libNames)
-			for _, basePath := range archPaths {
-				path := filepath.Join(rootfs, strings.TrimPrefix(basePath, "/"))
-				if info, err := os.Stat(path); err == nil && !info.IsDir() {
-					paths = append(paths, path)
-				}
-			}
-		}
-	}
+	paths = append(paths, findDBLibsInContainerRootfs(containerID, libNames)...)
 
 	// No fallback to config.GetDefaultProcRootPath() (/proc/1/root): the node's
 	// own libraries are not the traced container's. See hostWideLibrarySearch.
+	return paths
+}
+
+// findDBLibsInContainerRootfs looks for the client libraries in the
+// container's rootfs as the runtime lays it out on the host.
+func findDBLibsInContainerRootfs(containerID string, libNames []string) []string {
+	var paths []string
+	for _, rootfs := range containerRootfsPaths(containerID) {
+		paths = append(paths, findDBLibsInRoot(rootfs, libNames)...)
+	}
+	return paths
+}
+
+// findDBLibsInRoot returns the client libraries present at the well-known
+// library paths inside a container rootfs.
+func findDBLibsInRoot(root string, libNames []string) []string {
+	var paths []string
+	for _, basePath := range getArchitectureDBPaths(libNames) {
+		if path := fileWithinRoot(root, basePath); path != "" {
+			paths = append(paths, path)
+		}
+	}
 	return paths
 }
 
@@ -1366,25 +1340,18 @@ func findDBLibsWithPID(containerID string, pid uint32, libNames []string) []stri
 	if pid > 0 {
 		var out []string
 		seen := make(map[string]bool)
-
-		for _, p := range findDBLibsViaProcessMaps(pid, libNames) {
+		found := append(findDBLibsViaProcessMaps(pid, libNames), findDBLibsInRoot(procRoot(pid), libNames)...)
+		for _, p := range found {
 			if !seen[p] {
 				out = append(out, p)
 				seen[p] = true
 			}
 		}
-
-		archPaths := getArchitectureDBPaths(libNames)
-		for _, basePath := range archPaths {
-			p := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root", strings.TrimPrefix(basePath, "/"))
-			if info, err := os.Stat(p); err == nil && !info.IsDir() && !seen[p] {
-				out = append(out, p)
-				seen[p] = true
-			}
-		}
-
 		if len(out) > 0 {
 			return out
+		}
+		if containerID != "" {
+			return findDBLibsInContainerRootfs(containerID, libNames)
 		}
 	}
 
@@ -1434,7 +1401,7 @@ func findDBLibs(containerID string, libNames []string) []string {
 	commonPaths := getArchitectureDBPaths(libNames)
 	for _, path := range commonPaths {
 		if !seen[path] {
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if hostfs.IsRegularFile(path) {
 				paths = append(paths, path)
 				seen[path] = true
 			}
@@ -1477,66 +1444,19 @@ func findTLSLibsInContainer(containerID string, libPatterns []string) []string {
 		return nil
 	}
 	var paths []string
-
 	if pid := findContainerProcess(containerID); pid > 0 {
-		if foundPaths := findTLSLibsViaProcessMaps(pid, libPatterns); len(foundPaths) > 0 {
-			paths = append(paths, foundPaths...)
-		}
+		paths = append(paths, findTLSLibsViaProcessMaps(pid, libPatterns)...)
 	}
+	return append(paths, findTLSLibsInContainerRootfs(containerID, libPatterns)...)
+}
 
-	rootfsPaths := []string{}
-	if dockerRootfs, err := config.GetDockerContainerRootfs(containerID); err == nil {
-		rootfsPaths = append(rootfsPaths, dockerRootfs)
+// findTLSLibsInContainerRootfs scans the library directories of the
+// container's rootfs as the runtime lays it out on the host.
+func findTLSLibsInContainerRootfs(containerID string, libPatterns []string) []string {
+	var paths []string
+	for _, rootfs := range containerRootfsPaths(containerID) {
+		paths = append(paths, scanLibDirsWithinRoot(rootfs, libPatterns)...)
 	}
-
-	if matches, err := filepath.Glob(config.GetContainerdOverlayPattern()); err == nil {
-		for _, match := range matches {
-			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
-				rootfsPaths = append(rootfsPaths, match)
-			}
-		}
-	}
-
-	if matches, err := filepath.Glob(config.GetContainerdNativePattern()); err == nil {
-		for _, match := range matches {
-			if strings.Contains(match, containerID) || filepath.Base(filepath.Dir(match)) == containerID {
-				rootfsPaths = append(rootfsPaths, match)
-			}
-		}
-	}
-
-	libPatternsLower := make([]string, len(libPatterns))
-	for i, p := range libPatterns {
-		libPatternsLower[i] = strings.ToLower(p)
-	}
-
-	for _, rootfs := range rootfsPaths {
-		if _, err := os.Stat(rootfs); err == nil {
-			archPaths := getArchitectureDBPaths(libPatterns)
-			for _, basePath := range archPaths {
-				path := filepath.Join(rootfs, strings.TrimPrefix(basePath, "/"))
-				if info, err := os.Stat(path); err == nil && !info.IsDir() {
-					paths = append(paths, path)
-				}
-			}
-			if err := filepath.Walk(rootfs, func(path string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				baseName := strings.ToLower(filepath.Base(path))
-				for _, pattern := range libPatternsLower {
-					if strings.Contains(baseName, pattern) {
-						paths = append(paths, path)
-						return nil
-					}
-				}
-				return nil
-			}); err != nil {
-				continue
-			}
-		}
-	}
-
 	return paths
 }
 
@@ -1548,6 +1468,10 @@ func findTLSLibsInContainerWithPID(containerID string, pid uint32, libPatterns [
 		if foundPaths := findTLSLibsViaProcRootScan(pid, libPatterns); len(foundPaths) > 0 {
 			return foundPaths
 		}
+		if containerID == "" {
+			return nil
+		}
+		return findTLSLibsInContainerRootfs(containerID, libPatterns)
 	}
 	return findTLSLibsInContainer(containerID, libPatterns)
 }
@@ -1556,7 +1480,20 @@ func findTLSLibsInContainerWithPID(containerID string, pid uint32, libPatterns [
 // looking for shared-library files whose name matches one of libPatterns,
 // independent of whether the resolved process has them mapped.
 func findTLSLibsViaProcRootScan(pid uint32, libPatterns []string) []string {
-	root := filepath.Join(config.ProcBasePath, fmt.Sprintf("%d", pid), "root")
+	paths := scanLibDirsWithinRoot(procRoot(pid), libPatterns)
+	logger.Debug("TLS rootfs scan complete", zap.Uint32("pid", pid), zap.Int("found", len(paths)))
+	return paths
+}
+
+// maxLibDirEntries bounds how many entries one library directory scan reads,
+// so a rootfs shaped to be huge cannot stall the attach path.
+const maxLibDirEntries = 4096
+
+// scanLibDirsWithinRoot lists the shared libraries in a rootfs's standard
+// library directories whose name matches one of libPatterns. Directories and
+// files are both resolved inside root, so a symlinked directory cannot
+// redirect the scan into the agent's own filesystem.
+func scanLibDirsWithinRoot(root string, libPatterns []string) []string {
 	dirs := append(config.GetDefaultLibSearchPaths(),
 		"/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu",
 		"/usr/lib/aarch64-linux-gnu", "/lib/aarch64-linux-gnu",
@@ -1568,8 +1505,12 @@ func findTLSLibsViaProcRootScan(pid uint32, libPatterns []string) []string {
 	var paths []string
 	seen := make(map[string]bool)
 	for _, d := range dirs {
-		dirPath := filepath.Join(root, strings.TrimPrefix(d, "/"))
-		entries, err := os.ReadDir(dirPath)
+		resolvedDir, ok := resolveWithinRoot(root, d)
+		if !ok {
+			continue
+		}
+		dirPath := filepath.Join(root, resolvedDir)
+		entries, err := readDirLimited(dirPath, maxLibDirEntries)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				logger.Debug("TLS rootfs scan: readdir failed", zap.String("dir", dirPath), zap.Error(err))
@@ -1581,29 +1522,32 @@ func findTLSLibsViaProcRootScan(pid uint32, libPatterns []string) []string {
 				continue
 			}
 			nameLower := strings.ToLower(e.Name())
-			if !strings.Contains(nameLower, ".so") {
+			if !strings.Contains(nameLower, ".so") || !containsAnyPattern(nameLower, patternsLower) {
 				continue
 			}
-			matched := false
-			for _, pat := range patternsLower {
-				if strings.Contains(nameLower, pat) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-			full := filepath.Join(dirPath, e.Name())
-			if seen[full] {
+			full := fileWithinRoot(root, filepath.Join(resolvedDir, e.Name()))
+			if full == "" || seen[full] {
 				continue
 			}
 			seen[full] = true
 			paths = append(paths, full)
 		}
 	}
-	logger.Debug("TLS rootfs scan complete", zap.Uint32("pid", pid), zap.String("root", root), zap.Int("found", len(paths)))
 	return paths
+}
+
+// readDirLimited reads at most limit entries of dir.
+func readDirLimited(dir string, limit int) ([]os.DirEntry, error) {
+	f, err := os.Open(dir) // #nosec G304 -- dir is a rootfs library directory already resolved inside the target's root.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	entries, err := f.ReadDir(limit)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func findTLSLibsViaLdconfig(libPatterns []string) []string {
@@ -1628,7 +1572,7 @@ func findTLSLibsViaLdconfig(libPatterns []string) []string {
 				for i, part := range parts {
 					if part == "=>" && i+1 < len(parts) {
 						path := strings.TrimSpace(parts[i+1])
-						if info, err := os.Stat(path); err == nil && !info.IsDir() {
+						if hostfs.IsRegularFile(path) {
 							paths = append(paths, path)
 						}
 					}
@@ -1702,7 +1646,7 @@ func findTLSLibs(containerID string) []string {
 	archPaths := getArchitectureTLSPaths(libPatterns)
 	for _, path := range archPaths {
 		if !seen[path] {
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if hostfs.IsRegularFile(path) {
 				paths = append(paths, path)
 				seen[path] = true
 			}
@@ -1723,7 +1667,7 @@ func findTLSLibs(containerID string) []string {
 			continue
 		}
 		err := filepath.Walk(libPath, func(walkPath string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+			if err != nil || !info.Mode().IsRegular() {
 				return nil
 			}
 			baseName := strings.ToLower(filepath.Base(walkPath))
@@ -1809,7 +1753,7 @@ func findTLSLibsWithPID(containerID string, pid uint32) []string {
 	archPaths := getArchitectureTLSPaths(libPatterns)
 	for _, path := range archPaths {
 		if !seen[path] {
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if hostfs.IsRegularFile(path) {
 				paths = append(paths, path)
 				seen[path] = true
 			}
@@ -1845,7 +1789,7 @@ func getArchitectureTLSPaths(libPatterns []string) []string {
 				if _, err := os.Stat(basePath); err == nil {
 					for _, pattern := range libPatterns {
 						err := filepath.Walk(basePath, func(walkPath string, info os.FileInfo, err error) error {
-							if err != nil || info.IsDir() {
+							if err != nil || !info.Mode().IsRegular() {
 								return nil
 							}
 							baseName := strings.ToLower(filepath.Base(walkPath))
@@ -1874,7 +1818,7 @@ func getArchitectureTLSPaths(libPatterns []string) []string {
 		if _, err := os.Stat(basePath); err == nil {
 			for _, pattern := range libPatterns {
 				err := filepath.Walk(basePath, func(walkPath string, info os.FileInfo, err error) error {
-					if err != nil || info.IsDir() {
+					if err != nil || !info.Mode().IsRegular() {
 						return nil
 					}
 					baseName := strings.ToLower(filepath.Base(walkPath))
@@ -1921,8 +1865,7 @@ func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 		zap.Strings("libs", tlsLibPaths), zap.String("containerID", containerID), zap.Uint32("pid", pid))
 
 	for _, libPath := range tlsLibPaths {
-		info, err := os.Stat(libPath)
-		if err != nil || info.IsDir() {
+		if !hostfs.IsRegularFile(libPath) {
 			continue
 		}
 		if !af.Claim("tls", libPath) {
@@ -1933,6 +1876,7 @@ func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 			logger.Debug("TLS probe: cannot open library", zap.String("lib", libPath), zap.Error(err))
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 
 		for symbol, progNames := range tlsSymbols {
 			if len(progNames) < 2 {
@@ -1941,6 +1885,16 @@ func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 			uprobeProg := coll.Programs[progNames[0]]
 			uretprobeProg := coll.Programs[progNames[1]]
 
+			if uretprobeProg != nil {
+				l, err := exe.Uretprobe(symbol, uretprobeProg, nil)
+				if err != nil {
+					if !strings.Contains(err.Error(), "not found") {
+						logger.Debug("TLS uretprobe attach failed", zap.String("symbol", symbol), zap.String("lib", libPath), zap.Error(err))
+					}
+					continue
+				}
+				links = append(links, l)
+			}
 			if uprobeProg != nil {
 				l, err := exe.Uprobe(symbol, uprobeProg, nil)
 				if err == nil {
@@ -1948,14 +1902,6 @@ func AttachTLSProbesWithPID(coll *ebpf.Collection, containerID string, pid uint3
 					logger.Debug("TLS uprobe attached", zap.String("symbol", symbol), zap.String("lib", libPath))
 				} else if !strings.Contains(err.Error(), "not found") {
 					logger.Debug("TLS uprobe attach failed", zap.String("symbol", symbol), zap.String("lib", libPath), zap.Error(err))
-				}
-			}
-			if uretprobeProg != nil {
-				l, err := exe.Uretprobe(symbol, uretprobeProg, nil)
-				if err == nil {
-					links = append(links, l)
-				} else if !strings.Contains(err.Error(), "not found") {
-					logger.Debug("TLS uretprobe attach failed", zap.String("symbol", symbol), zap.String("lib", libPath), zap.Error(err))
 				}
 			}
 		}
@@ -1996,6 +1942,7 @@ func AttachGoTLSProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 			zap.String("path", exePath), zap.Error(err))
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 	links = append(links, attachGoHandshakeProbes(coll, exe, exePath, pid)...)
 	const sym = "crypto/tls.(*Conn).Write"
 	l, err := exe.Uprobe(sym, prog, nil)
@@ -2045,23 +1992,7 @@ func attachGoHandshakeProbes(coll *ebpf.Collection, exe uprobeTarget, exePath st
 				zap.String("symbol", sym), zap.Uint32("pid", pid))
 			continue
 		}
-		var rets []link.Link
-		for _, ro := range retOffs {
-			if rl, err := exe.Uprobe("", retProg, &link.UprobeOptions{Address: ro}); err == nil {
-				rets = append(rets, rl)
-			}
-		}
-		if len(rets) == 0 {
-			continue
-		}
-		el, err := exe.Uprobe("", entryProg, &link.UprobeOptions{Address: entryOff})
-		if err != nil {
-			for _, l := range rets {
-				_ = l.Close()
-			}
-			continue
-		}
-		links = append(append(links, rets...), el)
+		links = append(links, attachEntryAfterReturns(exe, entryProg, retProg, entryOff, retOffs)...)
 	}
 	if len(links) > 0 {
 		logger.Debug("Go TLS handshake uprobes attached", zap.Uint32("pid", pid), zap.Int("links", len(links)))
@@ -2082,6 +2013,7 @@ func AttachGoGRPCProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 	if err != nil {
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 	targets := []struct{ prog, sym string }{
 		{"uprobe_grpc_go_write_header", "google.golang.org/grpc/internal/transport.(*loopyWriter).writeHeader"},
 		{"uprobe_grpc_go_server_headers", "google.golang.org/grpc/internal/transport.(*http2Server).operateHeaders"},
@@ -2112,7 +2044,7 @@ func AttachGoGRPCProbes(coll *ebpf.Collection, pid uint32) []link.Link {
 // attachGoTLSReadProbes attaches the entry + return-address uprobes on
 // crypto/tls.(*Conn).Read so the decrypted response/inbound plaintext is
 // captured on return.
-func attachGoTLSReadProbes(coll *ebpf.Collection, exe *executable, exePath string, pid uint32) []link.Link {
+func attachGoTLSReadProbes(coll *ebpf.Collection, exe uprobeTarget, exePath string, pid uint32) []link.Link {
 	var links []link.Link
 	entryProg := coll.Programs["uprobe_go_tls_read"]
 	retProg := coll.Programs["uprobe_go_tls_read_ret"]
@@ -2120,29 +2052,19 @@ func attachGoTLSReadProbes(coll *ebpf.Collection, exe *executable, exePath strin
 		return links
 	}
 	const sym = "crypto/tls.(*Conn).Read"
-	entryOff, retOffs, ok := goFuncReturnOffsets(exePath, sym)
+	entryOff, retOffs, ok := goFuncReturns(exePath, sym)
 	if !ok {
 		logger.Debug("Go TLS Read probe: no return sites resolved (unsupported arch or symbol missing)",
 			zap.Uint32("pid", pid))
 		return links
 	}
-	el, err := exe.Uprobe("", entryProg, &link.UprobeOptions{Address: entryOff})
-	if err != nil {
-		logger.Debug("Go TLS Read entry uprobe not attached", zap.Error(err))
-		return links
-	}
-	links = append(links, el)
-	attached := 0
-	for _, ro := range retOffs {
-		rl, err := exe.Uprobe("", retProg, &link.UprobeOptions{Address: ro})
-		if err != nil {
-			continue
-		}
-		links = append(links, rl)
-		attached++
+	links = attachEntryAfterReturns(exe, entryProg, retProg, entryOff, retOffs)
+	if len(links) == 0 {
+		logger.Debug("Go TLS Read uprobes not attached", zap.Uint32("pid", pid))
+		return nil
 	}
 	logger.Debug("Go TLS Read uprobes attached",
-		zap.Uint32("pid", pid), zap.Int("ret_sites", attached))
+		zap.Uint32("pid", pid), zap.Int("ret_sites", len(links)-1))
 	return links
 }
 
@@ -2153,7 +2075,7 @@ func publishPoolOffsets(coll *ebpf.Collection, exePath string, pid uint32) {
 	if m == nil || pid == 0 {
 		return
 	}
-	off, ok := resolvePoolFieldOffsets(exePath)
+	off, ok := resolvePoolFieldOffsets(exePath, pid)
 	if !ok {
 		return
 	}
@@ -2196,6 +2118,7 @@ func attachGoAcquireProbes(coll *ebpf.Collection, exePath string, pid uint32) []
 			zap.String("path", exePath), zap.Error(err))
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 
 	el, err := exe.Uprobe("", entryProg, &link.UprobeOptions{Address: entryOff})
 	if err != nil {
@@ -2248,9 +2171,10 @@ func AttachGoHTTP3Probes(coll *ebpf.Collection, pid uint32) []link.Link {
 			zap.String("path", exePath), zap.Error(err))
 		return links
 	}
+	defer func() { _ = exe.Close() }()
 
 	if m := coll.Maps["h3_offsets"]; m != nil {
-		off, src := resolveH3FieldOffsets(exePath)
+		off, src := resolveH3FieldOffsets(exePath, pid)
 		tgid := pid
 		if err := m.Update(&tgid, &off, ebpf.UpdateAny); err != nil {
 			logger.Debug("HTTP/3 offsets: map update failed", zap.Uint32("pid", pid), zap.Error(err))
@@ -2280,7 +2204,7 @@ func AttachGoHTTP3Probes(coll *ebpf.Collection, pid uint32) []link.Link {
 	}
 
 	if m := coll.Maps["h3_peer_paths_map"]; m != nil {
-		if paths, ok := resolveH3PeerPaths(exePath, clientRootType); ok {
+		if paths, ok := resolveH3PeerPaths(exePath, pid, clientRootType); ok {
 			tgid := pid
 			if err := m.Update(&tgid, &paths, ebpf.UpdateAny); err != nil {
 				logger.Debug("HTTP/3 peer paths: map update failed",
@@ -2387,12 +2311,6 @@ func attachCLibraryH3Probes(coll *ebpf.Collection, pid uint32, af *AttachedFiles
 			seen[p] = true
 		}
 	}
-	for _, p := range findTLSLibsViaProcessMaps(pid, libPatterns) {
-		if !seen[p] {
-			libPaths = append(libPaths, p)
-			seen[p] = true
-		}
-	}
 	for _, p := range findTLSLibsViaProcRootScan(pid, libPatterns) {
 		if !seen[p] {
 			libPaths = append(libPaths, p)
@@ -2410,6 +2328,7 @@ func attachCLibraryH3Probes(coll *ebpf.Collection, pid uint32, af *AttachedFiles
 				zap.String("adapter", adapter), zap.String("lib", libPath), zap.Error(err))
 			continue
 		}
+		defer func() { _ = exe.Close() }()
 		attached := 0
 		for symbol, progNames := range symbolProgs {
 			if prog := coll.Programs[progNames[0]]; prog != nil {
@@ -2456,7 +2375,7 @@ func attachGoUprobeBySymbol(exe *executable, exePath, sym string, prog *ebpf.Pro
 
 // attachGoEntryReturnProbes attaches an entry uprobe on a Go function plus a
 // uprobe at each of its return sites.
-func attachGoEntryReturnProbes(coll *ebpf.Collection, exe *executable, exePath string, pid uint32,
+func attachGoEntryReturnProbes(coll *ebpf.Collection, exe uprobeTarget, exePath string, pid uint32,
 	sym, entryProgName, retProgName string) []link.Link {
 	var links []link.Link
 	entryProg := coll.Programs[entryProgName]
@@ -2464,26 +2383,44 @@ func attachGoEntryReturnProbes(coll *ebpf.Collection, exe *executable, exePath s
 	if entryProg == nil || retProg == nil {
 		return links
 	}
-	entryOff, retOffs, ok := goFuncReturnOffsets(exePath, sym)
+	entryOff, retOffs, ok := goFuncReturns(exePath, sym)
 	if !ok {
 		logger.Debug("Go entry+return probes: no return sites resolved (symbol missing or unsupported arch)",
 			zap.String("symbol", sym), zap.Uint32("pid", pid))
 		return links
 	}
-	el, err := exe.Uprobe("", entryProg, &link.UprobeOptions{Address: entryOff})
-	if err != nil {
-		logger.Debug("Go entry uprobe not attached", zap.String("symbol", sym), zap.Error(err))
-		return links
-	}
-	links = append(links, el)
-	for _, ro := range retOffs {
-		if rl, err := exe.Uprobe("", retProg, &link.UprobeOptions{Address: ro}); err == nil {
-			links = append(links, rl)
-		}
+	links = attachEntryAfterReturns(exe, entryProg, retProg, entryOff, retOffs)
+	if len(links) == 0 {
+		logger.Debug("Go entry+return uprobes not attached", zap.String("symbol", sym), zap.Uint32("pid", pid))
+		return nil
 	}
 	logger.Debug("Go entry+return uprobes attached",
 		zap.String("symbol", sym), zap.Uint32("pid", pid), zap.Int("ret_sites", len(links)-1))
 	return links
+}
+
+// attachEntryAfterReturns attaches a uprobe at every return site first and
+// the entry uprobe only once at least one of them is in place, so an entry
+// never stashes state that no return will clear. It returns the return links
+// followed by the entry, or nothing.
+func attachEntryAfterReturns(exe uprobeTarget, entryProg, retProg *ebpf.Program, entryOff uint64, retOffs []uint64) []link.Link {
+	var rets []link.Link
+	for _, ro := range retOffs {
+		if rl, err := exe.Uprobe("", retProg, &link.UprobeOptions{Address: ro}); err == nil {
+			rets = append(rets, rl)
+		}
+	}
+	if len(rets) == 0 {
+		return nil
+	}
+	el, err := exe.Uprobe("", entryProg, &link.UprobeOptions{Address: entryOff})
+	if err != nil {
+		for _, l := range rets {
+			_ = l.Close()
+		}
+		return nil
+	}
+	return append(rets, el)
 }
 
 // attachGoReturnProbes attaches a uprobe at each return site of a Go function
