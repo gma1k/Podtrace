@@ -104,11 +104,12 @@ type Tracer struct {
 	h2Reader                      *ringbuf.Reader
 	h2Decoder                     *h2decode.Decoder
 	grpcCoverage                  *grpcDecodeCoverage
-	h3Reader                      *ringbuf.Reader
+	h3Reader                      recordReader
 	h3Decoder                     *h3decode.Decoder
 	h3ChunkReader                 *ringbuf.Reader
 	h3Assembler                   *h3stream.Assembler
 	h3SectionStash                *h3stream.SectionStash
+	l7DropSnapshot                l7DecoderDropSnapshot
 	h3ParkedMu                    sync.Mutex
 	h3Parked                      []h3ParkedTxn
 	quicReader                    *ringbuf.Reader
@@ -635,7 +636,9 @@ func (t *Tracer) reconcileCgroupLinks(links *map[string][]link.Link, want map[st
 			closeLinks(ls)
 			continue
 		}
-		(*links)[p] = ls
+		if len(ls) > 0 {
+			(*links)[p] = ls
+		}
 		t.probeGroupsMu.Unlock()
 	}
 }
@@ -659,10 +662,14 @@ func (t *Tracer) storeCgroupIDs(m map[uint64]struct{}) {
 	t.targetCgroupIDs.Store(&m)
 }
 
-// roundUpPow2 rounds n up to the nearest power of two, minimum 4096.
+// roundUpPow2 rounds n up to the nearest power of two, minimum 4096 and
+// maximum 1<<31, the largest power of two a uint32 holds.
 func roundUpPow2(n uint32) uint32 {
 	if n < 4096 {
 		return 4096
+	}
+	if n > 1<<31 {
+		return 1 << 31
 	}
 	n--
 	n |= n >> 1
@@ -933,7 +940,7 @@ func NewTracer(tracerOpts ...Option) (*Tracer, error) {
 		h2Reader:                      h2rd,
 		h2Decoder:                     h2dec,
 		grpcCoverage:                  newGRPCDecodeCoverage(),
-		h3Reader:                      h3rd,
+		h3Reader:                      asRecordReader(h3rd),
 		h3Decoder:                     h3decode.NewDecoder(captureHeaders),
 		h3ChunkReader:                 h3chunkrd,
 		h3Assembler:                   h3asm,
@@ -2187,13 +2194,7 @@ func (t *Tracer) runH3DecodeReader(ctx context.Context, eventChan chan<- *events
 			if !ok {
 				return
 			}
-			if h3Logged := h3TxnLogCount.Add(1); h3Logged <= 20 {
-				logger.Debug("h3 txn decoded",
-					zap.String("method", txn.Method), zap.String("path", txn.Path),
-					zap.Uint16("status", txn.Status), zap.Bool("client", txn.IsClient),
-					zap.Uint8("flags", txn.Flags), zap.String("peer_ip", txn.PeerIP),
-					zap.Uint16("peer_port", txn.PeerPort), zap.Int("headers", len(txn.Headers)))
-			}
+			logDecodedH3Txn(txn)
 			if t.h3EnrichOrPark(txn) {
 				return
 			}
@@ -2205,6 +2206,33 @@ func (t *Tracer) runH3DecodeReader(ctx context.Context, eventChan chan<- *events
 }
 
 var h3TxnLogCount atomic.Int64
+
+type recordReader interface {
+	Read() (ringbuf.Record, error)
+	Close() error
+}
+
+// asRecordReader keeps a missing reader nil: a nil *ringbuf.Reader stored in
+// the interface would compare non-nil and be read from.
+func asRecordReader(r *ringbuf.Reader) recordReader {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
+// logDecodedH3Txn logs the first decoded transactions. The path is logged by
+// length only: it is raw and unredacted here, and query strings carry tokens.
+func logDecodedH3Txn(txn *h3decode.Txn) {
+	if h3TxnLogCount.Add(1) > 20 {
+		return
+	}
+	logger.Debug("h3 txn decoded",
+		zap.String("method", txn.Method), zap.Int("path_len", len(txn.Path)),
+		zap.Uint16("status", txn.Status), zap.Bool("client", txn.IsClient),
+		zap.Uint8("flags", txn.Flags), zap.String("peer_ip", txn.PeerIP),
+		zap.Uint16("peer_port", txn.PeerPort), zap.Int("headers", len(txn.Headers)))
+}
 
 // Inbound-section enrichment tuning: how long decoded sections wait for
 // their transaction, how many are held, how long a transaction is parked
@@ -2307,6 +2335,7 @@ func (t *Tracer) runH3ParkedFlusher(ctx context.Context, eventChan chan<- *event
 	for {
 		select {
 		case <-ctx.Done():
+			t.dropParkedH3()
 			return
 		case <-ticker.C:
 		}
@@ -2335,6 +2364,16 @@ func (t *Tracer) runH3ParkedFlusher(ctx context.Context, eventChan chan<- *event
 	}
 }
 
+// dropParkedH3 discards the transactions still parked when the tracer stops
+// and counts them: the pipeline is shutting down, so they cannot be sent.
+func (t *Tracer) dropParkedH3() {
+	t.h3ParkedMu.Lock()
+	n := len(t.h3Parked)
+	t.h3Parked = nil
+	t.h3ParkedMu.Unlock()
+	metricsexporter.RecordL7DecoderDrops("h3", "shutdown", uint64(n))
+}
+
 var selfPIDNamespace = "/proc/self/ns/pid"
 
 func pidNamespaceStat(procBase string) (string, syscall.Stat_t, error) {
@@ -2356,9 +2395,7 @@ type pidNamespaceInfo struct {
 
 // populatePidNamespace records this process's pid namespace so BPF programs
 // can translate tgids into the namespace the agent keys its per-pid maps
-// with. On nested nodes (kind, container-in-container runtimes) the
-// init-namespace tgid from bpf_get_current_pid_tgid() differs from the pid
-// the agent sees.
+// with.
 func populatePidNamespace(coll *ebpf.Collection) string {
 	const warning = "pid namespace not recorded; per-pid maps miss on a nested node"
 
@@ -2685,7 +2722,35 @@ func (t *Tracer) getProcessNameQuick(pid uint32) string {
 	return sanitized
 }
 
+type l7DecoderDropSnapshot struct {
+	h2         h2decode.Stats
+	h3Sections uint64
+}
+
+// publishL7DecoderStats exports what the userspace L7 decoders discarded and
+// how much traffic-controlled state they hold.
+func (t *Tracer) publishL7DecoderStats() {
+	last := &t.l7DropSnapshot
+	if t.h2Decoder != nil {
+		s := t.h2Decoder.Stats()
+		metricsexporter.RecordL7DecoderDrops("h2", "decode_error", s.DecodeErrors-last.h2.DecodeErrors)
+		metricsexporter.RecordL7DecoderDrops("h2", "gap_skipped", s.GapsSkipped-last.h2.GapsSkipped)
+		metricsexporter.RecordL7DecoderDrops("h2", "connection_evicted", s.Evictions-last.h2.Evictions)
+		metricsexporter.RecordL7DecoderDrops("h2", "late_record", s.LateRecords-last.h2.LateRecords)
+		metricsexporter.RecordL7DecoderDrops("h2", "sequence_restart", s.SequenceRestarts-last.h2.SequenceRestarts)
+		metricsexporter.RecordL7DecoderDrops("h2", "budget_shed", s.BudgetSheds-last.h2.BudgetSheds)
+		metricsexporter.RecordL7DecoderRetainedBytes("h2", s.RetainedBytes)
+		last.h2 = s
+	}
+	if t.h3SectionStash != nil {
+		dropped := t.h3SectionStash.Dropped()
+		metricsexporter.RecordL7DecoderDrops("h3", "section_stash_full", dropped-last.h3Sections)
+		last.h3Sections = dropped
+	}
+}
+
 func (t *Tracer) pollBPFMapUtilization() {
+	t.publishL7DecoderStats()
 	if t.collection == nil {
 		return
 	}

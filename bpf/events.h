@@ -95,6 +95,7 @@ struct event {
 #define H2_HDR_FLAG_END_HEADERS  0x1
 #define H2_HDR_FLAG_CONTINUATION 0x2
 #define H2_HDR_FLAG_CLOSE        0x4
+#define H2_HDR_FLAG_MID_FRAME    0x8
 
 struct h2_hdr_record {
 	u64 conn_id;
@@ -186,6 +187,9 @@ struct h3_txn_record {
 
 #define H3_CHUNK_DATA_MAX      512
 #define H3_STREAM_CAPTURE_MAX  4096
+#define H3_CHUNKS_PER_READ     8
+#define H3_CAPTURED_UNCAPPED   0x80000000u
+#define H3_STREAM_TYPE_ENCODER 0x02
 
 struct h3_stream_chunk {
 	u64 tgid;
@@ -194,9 +198,11 @@ struct h3_stream_chunk {
 	u32 stream_len;
 	u32 copied_len;
 	u32 offset;
-	u32 _pad;
+	u32 flags;
 	char data[H3_CHUNK_DATA_MAX];
 };
+
+#define H3_CHUNK_F_CONN_CLOSED 0x1
 
 #define DNS_SOURCE_UDP       0
 #define DNS_SOURCE_TCP       1

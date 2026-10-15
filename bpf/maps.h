@@ -948,12 +948,31 @@ struct {
 	__type(value, struct h3_stream_chunk);
 } h3_chunk_scratch SEC(".maps");
 
+struct h3_capture_key {
+	u64 tgid;
+	u64 conn;
+	u64 stream_id;
+	u64 epoch;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 4096);
-	__type(key, struct h3_adapter_stream_key);
+	__type(key, struct h3_capture_key);
 	__type(value, u32);
 } h3_stream_captured SEC(".maps");
+
+struct h3_conn_key {
+	u64 tgid;
+	u64 conn;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
+	__type(key, struct h3_conn_key);
+	__type(value, u64);
+} h3_conn_epoch SEC(".maps");
 
 struct h3_pending_tp {
 	u8   len;
@@ -995,6 +1014,7 @@ struct h2_frame_state {
 	u8  hdr_partial[9];
 	u8  pad_len_pending;
 	u8  pre_skip;
+	u8  sliced;
 };
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);

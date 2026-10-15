@@ -373,8 +373,10 @@ func TestStaleDuplicateDropped(t *testing.T) {
 	d := New()
 	enc := newBlockEncoder()
 	b0 := enc.encode(reqFields("GET", "/a")...)
+	b1 := enc.encode(reqFields("GET", "/b")...)
 	d.Ingest(rec(71, DirEgress, 0, 1, b0))
-	if evs := d.Ingest(rec(71, DirEgress, 0, 1, b0)); len(evs) != 0 {
+	d.Ingest(rec(71, DirEgress, 1, 3, b1))
+	if evs := d.Ingest(rec(71, DirEgress, 1, 3, b1)); len(evs) != 0 {
 		t.Fatalf("stale duplicate re-decoded: %d events", len(evs))
 	}
 }

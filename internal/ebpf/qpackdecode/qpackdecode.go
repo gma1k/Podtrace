@@ -25,7 +25,7 @@ type HeaderField struct {
 const (
 	entryOverhead          = 32
 	maxFieldLength         = 8192
-	maxTableCapacity       = 1 << 18
+	maxTableCapacity       = 1 << 16
 	maxEncoderRemainder    = 64 * 1024
 	maxPrefixedIntegerBits = 62
 )
@@ -62,20 +62,14 @@ type Decoder struct {
 	remainder        []byte
 }
 
+// NewDecoder returns a decoder for a direction whose decoder side advertised
+// maxTableCapacity, or 0 when that value is unknown.
 func NewDecoder(maxTableCapacity uint64) *Decoder {
 	return &Decoder{settingsCapacity: maxTableCapacity}
 }
 
 func (d *Decoder) InsertCount() uint64 {
 	return d.evicted + uint64(len(d.entries))
-}
-
-// SetMaxTableCapacity records SETTINGS_QPACK_MAX_TABLE_CAPACITY observed
-// after construction.
-func (d *Decoder) SetMaxTableCapacity(capacity uint64) {
-	if capacity > d.settingsCapacity && capacity <= maxTableCapacity {
-		d.settingsCapacity = capacity
-	}
 }
 
 // ParseEncoderStream consumes the next chunk of the peer's encoder stream.
@@ -201,7 +195,7 @@ func (d *Decoder) setCapacity(capacity uint64) error {
 	if capacity > maxTableCapacity {
 		return fmt.Errorf("qpackdecode: dynamic table capacity %d exceeds limit %d", capacity, maxTableCapacity)
 	}
-	if capacity > d.settingsCapacity {
+	if d.settingsCapacity > 0 && capacity > d.settingsCapacity {
 		return fmt.Errorf("qpackdecode: capacity %d exceeds SETTINGS maximum %d", capacity, d.settingsCapacity)
 	}
 	if capacity > d.largestCapacity {
@@ -431,7 +425,10 @@ func (d *Decoder) reconstructRequiredInsertCount(encoded uint64, bestEffort bool
 	}
 	fullRange := 2 * maxEntries
 	if encoded > fullRange {
-		return 0, false, fmt.Errorf("qpackdecode: encoded insert count %d exceeds full range %d", encoded, fullRange)
+		if d.settingsCapacity > 0 {
+			return 0, false, fmt.Errorf("qpackdecode: encoded insert count %d exceeds full range %d", encoded, fullRange)
+		}
+		encoded = (encoded-1)%fullRange + 1
 	}
 	maxValue := d.InsertCount() + maxEntries
 	maxWrapped := maxValue / fullRange * fullRange

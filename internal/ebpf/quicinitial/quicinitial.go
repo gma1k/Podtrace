@@ -3,6 +3,7 @@
 package quicinitial
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -161,11 +162,19 @@ func ExtractPackets(pkts [][]byte) (Info, error) {
 	var version uint32
 	var plains [][]byte
 	var lastErr error
+	var connection []byte
 	for _, b := range pkts {
+		dcid, ok := initialDCID(b)
+		if ok && connection != nil && !bytes.Equal(dcid, connection) {
+			continue
+		}
 		plain, v, err := decryptInitial(b)
 		if err != nil {
 			lastErr = err
 			continue
+		}
+		if connection == nil {
+			connection = dcid
 		}
 		version = v
 		plains = append(plains, plain)
@@ -208,6 +217,18 @@ func extract(b []byte) (Info, error) {
 		return Info{}, fmt.Errorf("not a parseable ClientHello (hslen %d)", len(hs))
 	}
 	return info, nil
+}
+
+// initialDCID returns a long-header packet's Destination Connection ID.
+func initialDCID(b []byte) ([]byte, bool) {
+	if len(b) < 6 {
+		return nil, false
+	}
+	dcidLen := int(b[5])
+	if 6+dcidLen > len(b) {
+		return nil, false
+	}
+	return b[6 : 6+dcidLen], true
 }
 
 // decryptInitial validates and decrypts one QUIC v1/v2 Initial packet,

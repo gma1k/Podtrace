@@ -46,6 +46,7 @@ func TestAttributeProcessName_CorrelatorFillsEmptyComm(t *testing.T) {
 }
 
 func TestAttributeProcessName_ProcFallbackForUnknownPid(t *testing.T) {
+	swapProcCgroupID(t, func(uint32) (uint64, bool) { return 7, true })
 	tracer := newAttributionTestTracer()
 	self := &events.Event{PID: uint32(os.Getpid()), CgroupID: 7, Type: events.EventDNSQuery}
 	source := tracer.attributeProcessName(self)

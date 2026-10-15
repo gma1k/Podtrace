@@ -18,6 +18,8 @@ podtrace_fs_latency_seconds_histogram{namespace,process_name,type}
 podtrace_grpc_latency_seconds{method,namespace,process_name}
 podtrace_kafka_bytes_total{namespace,operation,process_name,topic}
 podtrace_kafka_latency_seconds{namespace,operation,process_name,topic}
+podtrace_l7_decoder_drops_total{decoder,reason}
+podtrace_l7_decoder_retained_bytes{decoder}
 podtrace_latency_latest_seconds{namespace,process_name,target_pod,target_service,type}
 podtrace_latency_seconds{namespace,process_name,target_pod,target_service,type}
 podtrace_memcached_latency_seconds{namespace,operation,process_name}

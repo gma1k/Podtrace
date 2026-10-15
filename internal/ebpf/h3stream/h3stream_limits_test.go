@@ -22,7 +22,7 @@ func TestFeedEmptyDataIsNoOp(t *testing.T) {
 	}
 }
 
-func TestMaxStreamsPerConn(t *testing.T) {
+func TestMaxStreamsPerConnRetiresFinishedStreams(t *testing.T) {
 	var c collector
 	a := NewAssembler(c.collect)
 	const conn = 0x100
@@ -36,6 +36,12 @@ func TestMaxStreamsPerConn(t *testing.T) {
 	}
 	if len(cs.streams) != maxStreamsPerConn {
 		t.Fatalf("streams = %d, want cap %d", len(cs.streams), maxStreamsPerConn)
+	}
+	if len(c.sections) != maxStreamsPerConn+1 {
+		t.Fatalf("sections = %d, want %d", len(c.sections), maxStreamsPerConn+1)
+	}
+	if _, ok := cs.streams[0]; ok {
+		t.Fatal("lowest finished stream was not the one retired")
 	}
 }
 
@@ -126,21 +132,19 @@ func TestUniStreamIncompleteVarintBuffers(t *testing.T) {
 	}
 }
 
-func TestParseSettingsTruncated(t *testing.T) {
+func TestControlStreamIgnored(t *testing.T) {
 	var c collector
 	a := NewAssembler(c.collect)
 
-	ctrl1 := append([]byte{streamTypeControl}, frame(frameTypeSettings, []byte{0x40})...)
-	feed(a, 0x700, 3, 0, ctrl1)
+	control := append([]byte{0x00}, frame(0x4, []byte{0x01, 0x40})...)
+	feed(a, 0x700, 3, 0, control)
 
-	ctrl2 := append([]byte{streamTypeControl}, frame(frameTypeSettings, []byte{0x01, 0x40})...)
-	feed(a, 0x701, 3, 0, ctrl2)
-
-	for _, conn := range []uint64{0x700, 0x701} {
-		cs := a.conns[ConnKey{TGID: 42, Conn: conn}]
-		if cs == nil || !cs.settingsDone {
-			t.Fatalf("conn %#x: settings not marked done", conn)
-		}
+	cs := a.conns[ConnKey{TGID: 42, Conn: 0x700}]
+	if cs.streams[3].kind != kindIgnore {
+		t.Fatalf("control stream kind = %v, want ignored", cs.streams[3].kind)
+	}
+	if len(c.sections) != 0 {
+		t.Fatalf("control stream emitted sections: %+v", c.sections)
 	}
 }
 
@@ -225,6 +229,9 @@ func TestStashCapacityDropsWhenFull(t *testing.T) {
 	s.Put(SectionKey{Stream: 3}, Section{Status: 202})
 	if _, ok := s.Take(SectionKey{Stream: 3}); ok {
 		t.Fatal("section stored past capacity with no expired entries to evict")
+	}
+	if s.Dropped() != 1 {
+		t.Fatalf("dropped = %d, want 1", s.Dropped())
 	}
 	if _, ok := s.Take(SectionKey{Stream: 1}); !ok {
 		t.Fatal("earlier section evicted despite the newcomer being dropped")

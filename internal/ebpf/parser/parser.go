@@ -230,20 +230,7 @@ func ParseEvent(data []byte) *events.Event {
 	}
 
 	event := eventPool.Get().(*events.Event)
-	event.ProcessName = ""
-	event.Stack = nil
-	event.CgroupID = 0
-	event.NetNsID = 0
-	event.DNSServerIP = 0
-	event.DNSTransport = 0
-	event.DNSServerIP6 = [16]byte{}
-	event.PeerSrcIP = ""
-	event.HTTPMethod = ""
-	event.KernelAggregated = false
-	event.PeerDstIP = ""
-	event.PeerSrcPort = 0
-	event.PeerDstPort = 0
-	event.CorrelationID = 0
+	*event = events.Event{}
 
 	if len(data) >= expectedV9 {
 		var e rawEventV9
@@ -469,10 +456,6 @@ func PutEvent(event *events.Event) {
 	if event == nil {
 		return
 	}
-	event.Stack = nil
-	event.ProcessName = ""
-	event.Target = ""
-	event.Details = ""
-	event.NetNsID = 0
+	*event = events.Event{}
 	eventPool.Put(event)
 }

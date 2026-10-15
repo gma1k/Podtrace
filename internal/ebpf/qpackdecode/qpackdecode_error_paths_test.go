@@ -16,22 +16,6 @@ func TestBlockedErrorMessage(t *testing.T) {
 	}
 }
 
-func TestSetMaxTableCapacity(t *testing.T) {
-	d := NewDecoder(100)
-	d.SetMaxTableCapacity(200)
-	if d.settingsCapacity != 200 {
-		t.Fatalf("settingsCapacity = %d, want 200", d.settingsCapacity)
-	}
-	d.SetMaxTableCapacity(150)
-	if d.settingsCapacity != 200 {
-		t.Fatalf("shrinking update applied: settingsCapacity = %d, want 200", d.settingsCapacity)
-	}
-	d.SetMaxTableCapacity(maxTableCapacity + 1)
-	if d.settingsCapacity != 200 {
-		t.Fatalf("over-cap update applied: settingsCapacity = %d, want 200", d.settingsCapacity)
-	}
-}
-
 func TestSetCapacityErrors(t *testing.T) {
 	d := NewDecoder(0)
 	if err := d.setCapacity(maxTableCapacity + 1); err == nil {

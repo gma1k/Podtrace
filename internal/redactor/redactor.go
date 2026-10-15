@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/events"
@@ -97,6 +98,8 @@ func (r *Redactor) Redact(e *events.Event) {
 			if e.Details != "" {
 				e.Details = "[redacted]"
 			}
+		case events.EventHTTP3:
+			e.Details = redactSNI(e.Details)
 		}
 	}
 	e.Target = r.applyRules(e.Target)
@@ -218,4 +221,18 @@ func defaultRules() []Rule {
 			Validate: luhnValid,
 		},
 	}
+}
+
+// redactSNI blanks the server name of a QUIC connection event ("sni: <host>
+// alpn: <protocols>"), keeping the ALPN, which names no host.
+func redactSNI(details string) string {
+	const sniPrefix, alpnMarker = "sni: ", " alpn: "
+	if !strings.HasPrefix(details, sniPrefix) {
+		return details
+	}
+	redacted := sniPrefix + "[redacted]"
+	if i := strings.Index(details, alpnMarker); i >= 0 {
+		redacted += details[i:]
+	}
+	return redacted
 }

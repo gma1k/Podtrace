@@ -123,11 +123,8 @@ func (t *Tracer) sweepDNSTimeouts(ctx context.Context, eventChan chan<- *events.
 		if ev == nil {
 			continue
 		}
-		select {
-		case <-ctx.Done():
+		if !t.offerDNSTimeout(ctx, eventChan, ev) {
 			return
-		case eventChan <- ev:
-		default:
 		}
 	}
 	if err := iter.Err(); err != nil {
@@ -165,4 +162,18 @@ func (t *Tracer) buildDNSTimeoutEvent(key dnsFlowKey, val dnsQueryState, now, ag
 		return nil
 	}
 	return ev
+}
+
+// offerDNSTimeout hands a timeout event to the pipeline without blocking,
+// counting it as dropped when the channel is full like any other event.
+func (t *Tracer) offerDNSTimeout(ctx context.Context, eventChan chan<- *events.Event, ev *events.Event) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case eventChan <- ev:
+	default:
+		metricsexporter.RecordRingBufferDrop()
+		t.reportDrop("channel_full", 1)
+	}
+	return true
 }

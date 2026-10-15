@@ -135,6 +135,24 @@ var (
 		},
 	)
 
+	l7DecoderDropsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "podtrace_l7_decoder_drops_total",
+			Help: "Header records or decoded sections the userspace L7 decoders discarded, " +
+				"per decoder and reason.",
+		},
+		[]string{"decoder", "reason"},
+	)
+
+	l7DecoderRetainedBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "podtrace_l7_decoder_retained_bytes",
+			Help: "Bytes of traffic-controlled state an L7 decoder holds (HPACK windows, " +
+				"partial header blocks, out-of-order records).",
+		},
+		[]string{"decoder"},
+	)
+
 	filteredEventDropsCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "podtrace_filtered_event_drops_total",
@@ -418,6 +436,8 @@ func allCollectors() []prometheus.Collector {
 		ringBufferDropsCounter,
 		dnsDropsCounter,
 		filteredEventDropsCounter,
+		l7DecoderDropsCounter,
+		l7DecoderRetainedBytesGauge,
 		teeAuxDropsCounter,
 		processCacheHitsCounter,
 		processCacheMissesCounter,
@@ -760,6 +780,25 @@ func RecordRingBufferDrop() {
 // a kernel ring-buffer drop and must not inflate that metric.
 func RecordFilteredEventDrop() {
 	filteredEventDropsCounter.Inc()
+}
+
+// L7DecoderCollectors returns the L7 decoder metrics so a process serving its
+// own registry (the agent) can expose them too.
+func L7DecoderCollectors() []prometheus.Collector {
+	return []prometheus.Collector{l7DecoderDropsCounter, l7DecoderRetainedBytesGauge}
+}
+
+// RecordL7DecoderDrops counts n records or sections an L7 decoder discarded.
+func RecordL7DecoderDrops(decoder, reason string, n uint64) {
+	if n == 0 {
+		return
+	}
+	l7DecoderDropsCounter.WithLabelValues(decoder, reason).Add(float64(n))
+}
+
+// RecordL7DecoderRetainedBytes sets the traffic-controlled bytes a decoder holds.
+func RecordL7DecoderRetainedBytes(decoder string, n int) {
+	l7DecoderRetainedBytesGauge.WithLabelValues(decoder).Set(float64(n))
 }
 
 func RecordTeeAuxDrop() {

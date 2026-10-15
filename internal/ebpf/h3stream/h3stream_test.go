@@ -103,7 +103,7 @@ func TestDynamicTableAcrossStreams(t *testing.T) {
 		t.Fatalf("blocked section emitted early: %+v", c.sections)
 	}
 
-	control := append([]byte{0x00}, frame(frameTypeSettings, mustHex(t, "01 40dc"))...)
+	control := append([]byte{0x00}, frame(0x4, mustHex(t, "01 40dc"))...)
 	feed(a, conn, 3, 0, control)
 
 	encoder := append([]byte{0x02}, mustHex(t,

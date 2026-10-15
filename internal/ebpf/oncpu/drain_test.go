@@ -15,6 +15,8 @@ type fakeMaps struct {
 	requests map[uint64]Done
 	lost     map[uint32][]uint64
 
+	latest                         map[Key]uint64
+	live                           map[uint32]struct{}
 	countErr, requestErr           error
 	deleteCountErr, deleteStackErr error
 	deleteRequestErr, readLostErr  error
@@ -42,8 +44,11 @@ func (f *fakeMaps) io() drainIO {
 			return true
 		},
 		countErr: func() error { return f.countErr },
-		deleteCount: func(*Key) error {
+		takeCount: func(k *Key, count *uint64) error {
 			f.deletedCounts++
+			if v, ok := f.latest[*k]; ok {
+				*count = v
+			}
 			return f.deleteCountErr
 		},
 		lookupStack: func(id uint32, out *[stackDepth]uint64) error {
@@ -58,6 +63,7 @@ func (f *fakeMaps) io() drainIO {
 			f.deletedStacks++
 			return f.deleteStackErr
 		},
+		liveStackIDs: func() map[uint32]struct{} { return f.live },
 		nextRequest: func(key, value any) bool {
 			if ri >= len(reqIDs) {
 				return false

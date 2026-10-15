@@ -2268,6 +2268,7 @@ func AttachNghttp3Probes(coll *ebpf.Collection, pid uint32, af *AttachedFiles) [
 			"nghttp3_conn_submit_request":  {"uprobe_nghttp3_submit_request", ""},
 			"nghttp3_conn_submit_response": {"uprobe_nghttp3_submit_response", ""},
 			"nghttp3_conn_read_stream":     {"uprobe_nghttp3_read_stream", ""},
+			"nghttp3_conn_del":             {"uprobe_nghttp3_conn_del", ""},
 		})
 }
 

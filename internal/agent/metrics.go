@@ -13,6 +13,7 @@ import (
 
 	"github.com/gma1k/podtrace/internal/ebpf/oncpu"
 	"github.com/gma1k/podtrace/internal/logger"
+	"github.com/gma1k/podtrace/internal/metricsexporter"
 )
 
 // Metrics registers every Prometheus counter/gauge the agent exposes
@@ -276,6 +277,7 @@ func NewMetrics() *Metrics {
 		m.ProgramAttachFailures, m.ExporterInitFailures, m.ExportDeliveryDropped,
 		m.SpansBatched, m.SpansDelivered,
 	)
+	reg.MustRegister(metricsexporter.L7DecoderCollectors()...)
 	return m
 }
 

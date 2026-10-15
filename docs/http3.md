@@ -128,10 +128,15 @@ never expose (response status on clients, request method/path on servers),
 without touching any hidden library internals: the probe on the public
 `nghttp3_conn_read_stream` entry point ships each stream's first bytes to
 userspace, where a spec-complete QPACK decoder (RFC 9204: dynamic table,
-encoder stream, SETTINGS-anchored insert counts, blocked-section retry)
-reassembles the peer's field sections and fills them into the paired
-transaction: status codes for client requests, method/path/traceparent for
-server responses.
+encoder stream, insert counts anchored on the capacity the peer's encoder
+sets, blocked-section retry) reassembles the peer's field sections and fills
+them into the paired transaction: status codes for client requests,
+method/path/traceparent for server responses. The inbound control stream's
+SETTINGS are the peer's own decoder limits, which bound the other direction,
+so they are not used. A long-lived connection keeps decoding however many
+requests it carries (finished streams free their slot), and a probe on
+`nghttp3_conn_del` resets the state when the library frees a connection, so
+a new connection allocated at the same address starts clean.
 
 Capture is bounded on purpose: the first 512 bytes of each stream segment
 and 4 KB per stream, so bodies are never copied. A field section beyond

@@ -165,6 +165,7 @@ static long h2_frames_cb(u32 idx, void *vctx)
 			if (frag > 0 &&
 			    bpf_probe_read_user(s->frag, frag, (u8 *)c->base + off) != 0) {
 				h2_next_seq(c->conn_id, c->dir);
+				fs->sliced = 1;
 			} else if (frag > 0) {
 				u8 completes = (fs->remaining - frag) == 0;
 				__builtin_memset(&s->rec, 0, sizeof(s->rec));
@@ -179,7 +180,9 @@ static long h2_frames_cb(u32 idx, void *vctx)
 				s->rec.transport = c->transport;
 				s->rec.flags =
 					((completes && (fs->flags & HTTP2_FLAG_END_HEADERS)) ? H2_HDR_FLAG_END_HEADERS : 0) |
-					((type == HTTP2_CONTINUATION) ? H2_HDR_FLAG_CONTINUATION : 0);
+					((type == HTTP2_CONTINUATION) ? H2_HDR_FLAG_CONTINUATION : 0) |
+					(fs->sliced ? H2_HDR_FLAG_MID_FRAME : 0);
+				fs->sliced = 1;
 				fill_h2_record_peer(&s->rec, c->dir);
 				bpf_ringbuf_output(&h2_hdr_events, &s->rec,
 						   sizeof(s->rec) + frag, 0);
@@ -245,6 +248,7 @@ static long h2_frames_cb(u32 idx, void *vctx)
 	fs->flags = flags;
 	fs->stream_id = sid;
 	fs->remaining = flen;
+	fs->sliced = 0;
 	fs->pad = 0;
 	fs->pad_len_pending = (type == HTTP2_HEADERS && (flags & HTTP2_FLAG_PADDED)) ? 1 : 0;
 	fs->pre_skip = (type == HTTP2_HEADERS && (flags & HTTP2_FLAG_PRIORITY)) ? 5 : 0;

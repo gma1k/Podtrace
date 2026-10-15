@@ -36,8 +36,13 @@ type Chunk struct {
 	StreamLen uint32
 	CopiedLen uint32
 	Offset    uint32
+	Flags     uint32
 	Data      []byte
 }
+
+// ChunkFlagConnClosed mirrors H3_CHUNK_F_CONN_CLOSED: the library freed the
+// connection, so its address may be reused by the next one.
+const ChunkFlagConnClosed = 0x1
 
 const chunkHeaderSize = 40
 
@@ -53,6 +58,7 @@ func ParseChunk(raw []byte) (Chunk, bool) {
 		StreamLen: binary.LittleEndian.Uint32(raw[24:28]),
 		CopiedLen: binary.LittleEndian.Uint32(raw[28:32]),
 		Offset:    binary.LittleEndian.Uint32(raw[32:36]),
+		Flags:     binary.LittleEndian.Uint32(raw[36:40]),
 	}
 	n := int(c.CopiedLen)
 	if n > len(raw)-chunkHeaderSize {
@@ -71,7 +77,6 @@ const (
 	maxBufferedPerStream = 8192
 	maxBlockedSections   = 16
 	maxHeadersPayload    = 8192
-	maxSettingsPayload   = 1024
 
 	connIdleTTL   = 2 * time.Minute
 	sweepInterval = 15 * time.Second
@@ -79,13 +84,9 @@ const (
 
 // HTTP/3 wire constants (RFC 9114).
 const (
-	frameTypeHeaders  = 0x1
-	frameTypeSettings = 0x4
+	frameTypeHeaders = 0x1
 
-	streamTypeControl      = 0x00
 	streamTypeQPACKEncoder = 0x02
-
-	settingQPACKMaxTableCapacity = 0x01
 )
 
 type streamKind int
@@ -93,7 +94,6 @@ type streamKind int
 const (
 	kindUnknown streamKind = iota
 	kindRequest
-	kindControl
 	kindEncoder
 	kindIgnore
 )
@@ -101,6 +101,7 @@ const (
 type streamState struct {
 	kind      streamKind
 	broken    bool
+	done      bool
 	buf       []byte
 	received  uint32
 	inFrame   bool
@@ -115,11 +116,10 @@ type blockedSection struct {
 }
 
 type connState struct {
-	qpack        *qpackdecode.Decoder
-	streams      map[uint64]*streamState
-	blocked      []blockedSection
-	settingsDone bool
-	lastSeen     time.Time
+	qpack    *qpackdecode.Decoder
+	streams  map[uint64]*streamState
+	blocked  []blockedSection
+	lastSeen time.Time
 }
 
 // Assembler turns chunks into decoded sections. It is not safe for
@@ -143,12 +143,16 @@ func NewAssembler(onSection func(ConnKey, Section)) *Assembler {
 
 // Feed processes one captured chunk.
 func (a *Assembler) Feed(c Chunk) {
+	key := ConnKey{TGID: c.TGID, Conn: c.Conn}
+	if c.Flags&ChunkFlagConnClosed != 0 {
+		delete(a.conns, key)
+		return
+	}
 	if len(c.Data) == 0 {
 		return
 	}
 	now := a.now()
 	a.sweepIdle(now)
-	key := ConnKey{TGID: c.TGID, Conn: c.Conn}
 	cs := a.conns[key]
 	if cs == nil {
 		if len(a.conns) >= maxConnections {
@@ -164,7 +168,7 @@ func (a *Assembler) Feed(c Chunk) {
 
 	st := cs.streams[c.StreamID]
 	if st == nil {
-		if len(cs.streams) >= maxStreamsPerConn {
+		if len(cs.streams) >= maxStreamsPerConn && !cs.retireStream() {
 			return
 		}
 		st = &streamState{}
@@ -192,6 +196,36 @@ func (a *Assembler) Feed(c Chunk) {
 func (st *streamState) markBroken() {
 	st.broken = true
 	st.buf = nil
+}
+
+// retireStream frees one stream slot so a long-lived connection keeps
+// decoding past maxStreamsPerConn streams.
+func (cs *connState) retireStream() bool {
+	var finishedID, requestID uint64
+	haveFinished, haveRequest := false, false
+	for id, st := range cs.streams {
+		switch {
+		case st.kind == kindEncoder:
+			continue
+		case st.broken || st.done || st.kind == kindIgnore:
+			if !haveFinished || id < finishedID {
+				finishedID, haveFinished = id, true
+			}
+		case id&0x2 == 0:
+			if !haveRequest || id < requestID {
+				requestID, haveRequest = id, true
+			}
+		}
+	}
+	switch {
+	case haveFinished:
+		delete(cs.streams, finishedID)
+	case haveRequest:
+		delete(cs.streams, requestID)
+	default:
+		return false
+	}
+	return true
 }
 
 func (a *Assembler) evictOldest() {
@@ -231,12 +265,9 @@ func (a *Assembler) process(key ConnKey, cs *connState, streamID uint64, st *str
 				return
 			}
 			st.buf = st.buf[n:]
-			switch v {
-			case streamTypeControl:
-				st.kind = kindControl
-			case streamTypeQPACKEncoder:
+			if v == streamTypeQPACKEncoder {
 				st.kind = kindEncoder
-			default:
+			} else {
 				st.kind = kindIgnore
 			}
 		}
@@ -255,7 +286,7 @@ func (a *Assembler) process(key ConnKey, cs *connState, streamID uint64, st *str
 		a.retryBlocked(key, cs)
 	case kindIgnore:
 		st.buf = nil
-	case kindControl, kindRequest:
+	case kindRequest:
 		a.processFrames(key, cs, streamID, st)
 	}
 }
@@ -283,13 +314,7 @@ func (a *Assembler) processFrames(key ConnKey, cs *connState, streamID uint64, s
 				return
 			}
 			st.buf = st.buf[n1+n2:]
-			wantHeaders := st.kind == kindRequest && frameType == frameTypeHeaders
-			wantSettings := st.kind == kindControl && frameType == frameTypeSettings && !cs.settingsDone
-			limit := uint64(maxHeadersPayload)
-			if wantSettings {
-				limit = maxSettingsPayload
-			}
-			if (!wantHeaders && !wantSettings) || frameLen > limit {
+			if frameType != frameTypeHeaders || frameLen > maxHeadersPayload {
 				st.skip = frameLen
 				continue
 			}
@@ -302,39 +327,14 @@ func (a *Assembler) processFrames(key ConnKey, cs *connState, streamID uint64, s
 		}
 		payload := st.buf[:st.frameLen]
 		st.buf = st.buf[st.frameLen:]
-		isSettings := st.frameType == frameTypeSettings
 		st.inFrame = false
 		st.frameType = 0
 		st.frameLen = 0
-		if isSettings {
-			a.parseSettings(key, cs, payload)
-		} else {
-			a.decodeSection(key, cs, streamID, st, payload)
-			if st.broken {
-				return
-			}
+		a.decodeSection(key, cs, streamID, st, payload)
+		if st.broken {
+			return
 		}
 	}
-}
-
-func (a *Assembler) parseSettings(key ConnKey, cs *connState, p []byte) {
-	for len(p) > 0 {
-		id, n, ok := readVarint(p)
-		if !ok {
-			break
-		}
-		p = p[n:]
-		value, n, ok := readVarint(p)
-		if !ok {
-			break
-		}
-		p = p[n:]
-		if id == settingQPACKMaxTableCapacity {
-			cs.qpack.SetMaxTableCapacity(value)
-		}
-	}
-	cs.settingsDone = true
-	a.retryBlocked(key, cs)
 }
 
 func (a *Assembler) decodeSection(key ConnKey, cs *connState, streamID uint64, st *streamState, payload []byte) {
@@ -353,7 +353,7 @@ func (a *Assembler) decodeSection(key ConnKey, cs *connState, streamID uint64, s
 		st.markBroken()
 		return
 	}
-	a.emit(key, streamID, fields)
+	a.emit(key, cs, streamID, fields)
 }
 
 func (a *Assembler) retryBlocked(key ConnKey, cs *connState) {
@@ -369,13 +369,13 @@ func (a *Assembler) retryBlocked(key ConnKey, cs *connState) {
 			continue
 		}
 		if err == nil {
-			a.emit(key, b.streamID, fields)
+			a.emit(key, cs, b.streamID, fields)
 		}
 	}
 	cs.blocked = kept
 }
 
-func (a *Assembler) emit(key ConnKey, streamID uint64, fields []qpackdecode.HeaderField) {
+func (a *Assembler) emit(key ConnKey, cs *connState, streamID uint64, fields []qpackdecode.HeaderField) {
 	sec := Section{StreamID: streamID, Fields: fields}
 	for _, f := range fields {
 		switch f.Name {
@@ -388,6 +388,9 @@ func (a *Assembler) emit(key ConnKey, streamID uint64, fields []qpackdecode.Head
 		case "traceparent":
 			sec.Traceparent = f.Value
 		}
+	}
+	if st := cs.streams[streamID]; st != nil && (sec.Method != "" || sec.Status >= 200) {
+		st.done = true
 	}
 	if a.onSection != nil {
 		a.onSection(key, sec)

@@ -19,7 +19,9 @@ const (
 
 	maxFieldLength = 8192
 
-	maxTrackedBytes = 1 << 18
+	maxTrackedBytes = 64 << 10
+
+	hpackDefaultTableSize = 4096
 
 	hpackEntryOverhead = 32
 )
@@ -45,12 +47,39 @@ type tableEntry struct {
 type lateJoinDecoder struct {
 	inserts      []tableEntry
 	trackedBytes int
+	tableSize    int
+	tableSizeSet bool
 }
 
 // resetEpoch discards the observed insertion window.
 func (d *lateJoinDecoder) resetEpoch() {
 	d.inserts = d.inserts[:0]
 	d.trackedBytes = 0
+}
+
+// reset forgets everything, including the table size, for a direction that
+// now carries a different connection.
+func (d *lateJoinDecoder) reset() {
+	d.resetEpoch()
+	d.tableSize = 0
+	d.tableSizeSet = false
+}
+
+func (d *lateJoinDecoder) tableLimit() int {
+	if !d.tableSizeSet {
+		return hpackDefaultTableSize
+	}
+	return d.tableSize
+}
+
+// setTableSize applies a dynamic table size update (RFC 7541 §6.3).
+func (d *lateJoinDecoder) setTableSize(size int) {
+	if size > maxTrackedBytes {
+		size = maxTrackedBytes
+	}
+	d.tableSize = size
+	d.tableSizeSet = true
+	d.evictToLimit()
 }
 
 // decodeBlock decodes one complete header block. complete is false when one
@@ -92,11 +121,12 @@ func (d *lateJoinDecoder) decodeBlock(block []byte) (fields []hpack.HeaderField,
 				complete = false
 			}
 		case b&0xe0 == 0x20:
-			_, n, err := readInteger(block[pos:], 5)
+			size, n, err := readInteger(block[pos:], 5)
 			if err != nil {
 				return nil, false, err
 			}
 			pos += n
+			d.setTableSize(size)
 		default:
 			field, ok, n, err := d.readLiteral(block[pos:], 4)
 			if err != nil {
@@ -178,8 +208,13 @@ func entrySize(entry tableEntry) int {
 func (d *lateJoinDecoder) insert(entry tableEntry) {
 	d.inserts = append(d.inserts, entry)
 	d.trackedBytes += entrySize(entry)
+	d.evictToLimit()
+}
+
+func (d *lateJoinDecoder) evictToLimit() {
+	limit := d.tableLimit()
 	drop := 0
-	for drop < len(d.inserts) && (len(d.inserts)-drop > maxTrackedInserts || d.trackedBytes > maxTrackedBytes) {
+	for drop < len(d.inserts) && (len(d.inserts)-drop > maxTrackedInserts || d.trackedBytes > limit) {
 		d.trackedBytes -= entrySize(d.inserts[drop])
 		drop++
 	}

@@ -2,10 +2,10 @@ package qpackdecode
 
 import "testing"
 
-func TestSetCapacity_RejectedWithoutNegotiation(t *testing.T) {
+func TestSetCapacity_AcceptedWhenOwnSettingsUnknown(t *testing.T) {
 	d := NewDecoder(0)
-	if err := d.ParseEncoderStream(mustHex(t, "3fbd01")); err == nil {
-		t.Fatal("capacity 220 with an un-negotiated (0) SETTINGS max must be rejected (RFC 9204 3.2.3)")
+	if err := d.ParseEncoderStream(mustHex(t, "3fbd01")); err != nil {
+		t.Fatalf("capacity 220 with unknown decoder SETTINGS must be accepted: %v", err)
 	}
 }
 
@@ -20,18 +20,6 @@ func TestSetCapacity_ExceedingNegotiatedRejected(t *testing.T) {
 	d := NewDecoder(100)
 	if err := d.ParseEncoderStream(mustHex(t, "3fbd01")); err == nil {
 		t.Fatal("capacity 220 exceeding negotiated SETTINGS max 100 must be rejected")
-	}
-}
-
-func TestSetMaxTableCapacity_RejectsAboveLimit(t *testing.T) {
-	d := NewDecoder(0)
-	d.SetMaxTableCapacity(1 << 30)
-	if d.settingsCapacity > maxTableCapacity {
-		t.Fatalf("settingsCapacity %d exceeds cap %d after an absurd SETTINGS value", d.settingsCapacity, maxTableCapacity)
-	}
-	d.SetMaxTableCapacity(maxTableCapacity)
-	if d.settingsCapacity != maxTableCapacity {
-		t.Fatalf("settingsCapacity = %d, want %d (a valid SETTINGS at the cap must raise it)", d.settingsCapacity, maxTableCapacity)
 	}
 }
 

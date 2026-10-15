@@ -72,6 +72,7 @@ resolved addresses. Lookups are counted from queries; they are not double-counte
   back to the libc uprobe only.
 - Query names can be sensitive. They flow through the standard redaction rules;
   to redact the **name itself** (it would otherwise reach exporters), set
-  `PODTRACE_REDACT_DNS_NAMES=true` — DNS events then show `[redacted]`.
+  `PODTRACE_REDACT_DNS_NAMES=true` — DNS events then show `[redacted]`, and so
+  does the server name (SNI) of HTTP/3 connection events.
 - Data loss is never silent: a full in-flight map or ring buffer increments
   `podtrace_dns_drops_total`.

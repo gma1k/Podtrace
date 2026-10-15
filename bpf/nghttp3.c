@@ -258,32 +258,60 @@ static __always_inline void h3_capture_stream_bytes(u64 conn, u64 stream_id,
 {
 	if (!src || srclen == 0)
 		return;
-	struct h3_adapter_stream_key k = h3_adapter_key(conn, stream_id);
-	u32 captured = 0;
+	struct h3_conn_key ck = { .tgid = agent_ns_tgid(), .conn = conn };
+	u64 *epoch = bpf_map_lookup_elem(&h3_conn_epoch, &ck);
+	struct h3_capture_key k = {
+		.tgid = ck.tgid,
+		.conn = conn,
+		.stream_id = stream_id,
+		.epoch = epoch ? *epoch : 0,
+	};
+	u32 state = 0;
 	u32 *cp = bpf_map_lookup_elem(&h3_stream_captured, &k);
 	if (cp)
-		captured = *cp;
-	if (captured >= H3_STREAM_CAPTURE_MAX)
+		state = *cp;
+	u32 captured = state & ~H3_CAPTURED_UNCAPPED;
+	u8 uncapped = (state & H3_CAPTURED_UNCAPPED) != 0;
+	if (captured == 0 && (stream_id & 0x2)) {
+		u8 type = 0;
+		if (bpf_probe_read_user(&type, 1, (void *)src) == 0 &&
+		    type == H3_STREAM_TYPE_ENCODER)
+			uncapped = 1;
+	}
+	if (!uncapped && captured >= H3_STREAM_CAPTURE_MAX)
 		return;
 	u32 zero = 0;
 	struct h3_stream_chunk *c = bpf_map_lookup_elem(&h3_chunk_scratch, &zero);
 	if (!c)
 		return;
-	u32 n = nghttp3_clamp_len(srclen, H3_CHUNK_DATA_MAX);
-	if (n == 0)
-		return;
-	c->tgid = agent_ns_tgid();
-	c->conn = conn;
-	c->stream_id = stream_id;
-	c->stream_len = (u32)srclen;
-	c->copied_len = n;
-	c->offset = captured;
-	if (bpf_probe_read_user(c->data, n, (void *)src) != 0)
-		return;
-	bpf_ringbuf_output(&h3_stream_chunks, c,
-			   __builtin_offsetof(struct h3_stream_chunk, data) + n, 0);
-	captured += n;
-	bpf_map_update_elem(&h3_stream_captured, &k, &captured, BPF_ANY);
+	u64 done = 0;
+	for (int i = 0; i < H3_CHUNKS_PER_READ; i++) {
+		if (done >= srclen)
+			break;
+		if (!uncapped && captured >= H3_STREAM_CAPTURE_MAX)
+			break;
+		u64 left = srclen - done;
+		u32 n = nghttp3_clamp_len(left, H3_CHUNK_DATA_MAX);
+		if (n == 0)
+			break;
+		u8 more = left > n && i + 1 < H3_CHUNKS_PER_READ &&
+			  (uncapped || captured + n < H3_STREAM_CAPTURE_MAX);
+		c->tgid = ck.tgid;
+		c->conn = conn;
+		c->stream_id = stream_id;
+		c->stream_len = (left > n && !more) ? (u32)left : n;
+		c->copied_len = n;
+		c->offset = captured;
+		c->flags = 0;
+		if (bpf_probe_read_user(c->data, n, (void *)(src + done)) != 0)
+			break;
+		bpf_ringbuf_output(&h3_stream_chunks, c,
+				   __builtin_offsetof(struct h3_stream_chunk, data) + n, 0);
+		captured += n;
+		done += n;
+	}
+	state = (captured & ~H3_CAPTURED_UNCAPPED) | (uncapped ? H3_CAPTURED_UNCAPPED : 0);
+	bpf_map_update_elem(&h3_stream_captured, &k, &state, BPF_ANY);
 }
 
 SEC("uprobe/nghttp3_read_stream")
@@ -296,5 +324,32 @@ int uprobe_nghttp3_read_stream(struct pt_regs *ctx)
 	h3_adapter_first_inbound(conn, stream_id);
 	h3_capture_stream_bytes(conn, stream_id,
 				(u64)PT_REGS_PARM3(ctx), (u64)PT_REGS_PARM4(ctx));
+	return 0;
+}
+
+SEC("uprobe/nghttp3_conn_del")
+int uprobe_nghttp3_conn_del(struct pt_regs *ctx)
+{
+	if (!http_should_trace())
+		return 0;
+	u64 conn = (u64)PT_REGS_PARM1(ctx);
+	if (!conn)
+		return 0;
+	struct h3_conn_key ck = { .tgid = agent_ns_tgid(), .conn = conn };
+	u64 epoch = bpf_ktime_get_ns();
+	bpf_map_update_elem(&h3_conn_epoch, &ck, &epoch, BPF_ANY);
+	u32 zero = 0;
+	struct h3_stream_chunk *c = bpf_map_lookup_elem(&h3_chunk_scratch, &zero);
+	if (!c)
+		return 0;
+	c->tgid = ck.tgid;
+	c->conn = conn;
+	c->stream_id = 0;
+	c->stream_len = 0;
+	c->copied_len = 0;
+	c->offset = 0;
+	c->flags = H3_CHUNK_F_CONN_CLOSED;
+	bpf_ringbuf_output(&h3_stream_chunks, c,
+			   __builtin_offsetof(struct h3_stream_chunk, data), 0);
 	return 0;
 }

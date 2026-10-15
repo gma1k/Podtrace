@@ -2,6 +2,7 @@ package h3stream
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gma1k/podtrace/internal/ebpf/h3decode"
@@ -26,6 +27,7 @@ type SectionStash struct {
 	entries  map[SectionKey]stashEntry
 	ttl      time.Duration
 	capacity int
+	dropped  atomic.Uint64
 }
 
 // NewSectionStash returns a stash holding at most capacity sections for at
@@ -54,10 +56,16 @@ func (s *SectionStash) Put(key SectionKey, sec Section) {
 			}
 		}
 		if len(s.entries) >= s.capacity {
+			s.dropped.Add(1)
 			return
 		}
 	}
 	s.entries[key] = stashEntry{section: sec, expires: now.Add(s.ttl)}
+}
+
+// Dropped reports how many sections Put discarded because the stash was full.
+func (s *SectionStash) Dropped() uint64 {
+	return s.dropped.Load()
 }
 
 // Take removes and returns the section for key, if present and fresh.

@@ -142,13 +142,14 @@ func Drain(m Maps) (Drained, error) {
 	counts := m.Counts.Iterate()
 	requests := m.Requests.Iterate()
 	return drain(drainIO{
-		nextCount:   counts.Next,
-		countErr:    counts.Err,
-		deleteCount: func(k *Key) error { return m.Counts.Delete(k) },
+		nextCount: counts.Next,
+		countErr:  counts.Err,
+		takeCount: takeCountFrom(m.Counts),
 		lookupStack: func(id uint32, out *[stackDepth]uint64) error {
 			return m.Stacks.Lookup(id, out)
 		},
 		deleteStack:   func(id uint32) error { return m.Stacks.Delete(id) },
+		liveStackIDs:  func() map[uint32]struct{} { return liveStackIDs(m.Counts.Iterate()) },
 		nextRequest:   requests.Next,
 		requestErr:    requests.Err,
 		deleteRequest: func(id *uint64) error { return m.Requests.Delete(id) },
@@ -169,9 +170,10 @@ const stackDepth = 64
 type drainIO struct {
 	nextCount     func(key, value any) bool
 	countErr      func() error
-	deleteCount   func(*Key) error
+	takeCount     func(key *Key, count *uint64) error
 	lookupStack   func(uint32, *[stackDepth]uint64) error
 	deleteStack   func(uint32) error
+	liveStackIDs  func() map[uint32]struct{}
 	nextRequest   func(key, value any) bool
 	requestErr    func() error
 	deleteRequest func(*uint64) error
@@ -199,7 +201,7 @@ func drain(io drainIO) (Drained, error) {
 		return Drained{}, fmt.Errorf("oncpu: iterate counts: %w", err)
 	}
 	for i := range keys {
-		if err := io.deleteCount(&keys[i]); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		if err := io.takeCount(&keys[i], &rows[i]); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			return Drained{}, fmt.Errorf("oncpu: delete count: %w", err)
 		}
 	}
@@ -226,7 +228,11 @@ func drain(io drainIO) (Drained, error) {
 			Count:         rows[i],
 		})
 	}
+	live := io.liveStackIDs()
 	for id := range stacks {
+		if _, referenced := live[id]; referenced {
+			continue
+		}
 		if err := io.deleteStack(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			return Drained{}, fmt.Errorf("oncpu: delete stack: %w", err)
 		}
@@ -393,4 +399,39 @@ func parseCPUList(list string) ([]int, error) {
 		return nil, fmt.Errorf("oncpu: CPU list %q names no CPU", list)
 	}
 	return cpus, nil
+}
+
+// countIterator is the part of *ebpf.MapIterator liveStackIDs reads.
+type countIterator interface {
+	Next(key, value any) bool
+}
+
+// liveStackIDs collects the stack ids the counts in it reference.
+func liveStackIDs(it countIterator) map[uint32]struct{} {
+	live := map[uint32]struct{}{}
+	var key Key
+	var count uint64
+	for it.Next(&key, &count) {
+		live[key.StackID] = struct{}{}
+	}
+	return live
+}
+
+// countTaker is the part of *ebpf.Map takeCountFrom uses.
+type countTaker interface {
+	LookupAndDelete(key, valueOut any) error
+	Delete(key any) error
+}
+
+// takeCountFrom removes counts atomically with their final value where the
+// kernel supports lookup-and-delete on hash maps (5.14+), and falls back to a
+// plain delete that keeps the value as iterated.
+func takeCountFrom(m countTaker) func(*Key, *uint64) error {
+	return func(k *Key, count *uint64) error {
+		err := m.LookupAndDelete(k, count)
+		if errors.Is(err, ebpf.ErrNotSupported) {
+			return m.Delete(k)
+		}
+		return err
+	}
 }

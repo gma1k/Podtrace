@@ -104,6 +104,8 @@ operating podtrace, but do not build a product surface on them.
 | `podtrace_dns_drops_total` | DNS events dropped in the kernel |
 | `podtrace_filtered_event_drops_total` | Events discarded by the userspace filter |
 | `podtrace_event_tee_aux_drops_total` | Events dropped by the auxiliary tee sink |
+| `podtrace_l7_decoder_drops_total` | Records or sections the userspace L7 decoders discarded, labeled `decoder` (`h2`/`h3`) and `reason` (h3 `shutdown` counts transactions still awaiting their inbound headers when the agent stops) |
+| `podtrace_l7_decoder_retained_bytes` | Traffic-controlled state an L7 decoder holds, labeled `decoder` |
 | `podtrace_event_processing_latency_seconds` | Time to process one event in userspace |
 | `podtrace_event_channel_depth` | Current depth of each internal event channel, labeled `channel` |
 | `podtrace_bpf_map_utilization_ratio` | Fill ratio per BPF map, labeled `map` |
