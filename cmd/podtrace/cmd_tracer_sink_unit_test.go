@@ -386,3 +386,68 @@ func TestNewScheduleTriggerCmd_MissingArgErrors(t *testing.T) {
 		t.Fatal("expected error when positional schedule-name is missing")
 	}
 }
+
+func TestUpsertReportSecret_ForbiddenUpdateReplacesAndKeepsLabels(t *testing.T) {
+	existing := &corev1.Secret{}
+	existing.Name = "staging"
+	existing.Namespace = "podtrace-system"
+	existing.UID = "uid-1"
+	existing.Labels = map[string]string{"podtrace.io/session": "s"}
+	client := fake.NewSimpleClientset(existing)
+	client.PrependReactor("update", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "staging", errors.New("no update verb"))
+	})
+
+	if err := upsertReportSecret(context.Background(), client, "podtrace-system", "staging", "report-n1.txt", "body"); err != nil {
+		t.Fatalf("a forbidden update must fall back to delete and create: %v", err)
+	}
+	got, err := client.CoreV1().Secrets("podtrace-system").Get(context.Background(), "staging", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data["report-n1.txt"]) != "body" {
+		t.Errorf("report data = %q, want body", got.Data["report-n1.txt"])
+	}
+	if got.Labels["podtrace.io/session"] != "s" {
+		t.Errorf("the replacement must keep the operator's labels, got %v", got.Labels)
+	}
+}
+
+func forbiddenUpdateClient() *fake.Clientset {
+	existing := &corev1.Secret{}
+	existing.Name = "staging"
+	existing.Namespace = "podtrace-system"
+	client := fake.NewSimpleClientset(existing)
+	client.PrependReactor("update", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "staging", errors.New("no update verb"))
+	})
+	return client
+}
+
+func TestUpsertReportSecret_ReplaceDeleteErrorPropagates(t *testing.T) {
+	client := forbiddenUpdateClient()
+	client.PrependReactor("delete", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("delete failed")
+	})
+	if err := upsertReportSecret(context.Background(), client, "podtrace-system", "staging", "report-n1.txt", "body"); err == nil {
+		t.Fatal("a failed delete during the replace must be surfaced")
+	}
+}
+
+func TestUpsertReportSecret_ReplaceRaceRetries(t *testing.T) {
+	client := forbiddenUpdateClient()
+	creates := 0
+	client.PrependReactor("create", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		creates++
+		if creates == 1 {
+			return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, "staging")
+		}
+		return false, nil, nil
+	})
+	if err := upsertReportSecret(context.Background(), client, "podtrace-system", "staging", "report-n1.txt", "body"); err != nil {
+		t.Fatalf("a replacement racing another writer must be retried: %v", err)
+	}
+	if creates < 2 {
+		t.Errorf("creates = %d, want a retry after the race", creates)
+	}
+}

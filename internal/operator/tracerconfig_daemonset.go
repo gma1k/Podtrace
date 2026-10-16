@@ -14,6 +14,8 @@ import (
 
 // buildAgentDaemonSetSpec renders the DaemonSet.Spec for the agent
 // derived from a TracerConfig.
+const agentTerminationGracePeriodSeconds = 120
+
 func buildAgentDaemonSetSpec(tc *podtracev1alpha1.TracerConfig, systemNS string) appsv1.DaemonSetSpec {
 	selector := &metav1.LabelSelector{
 		MatchLabels: map[string]string{
@@ -80,7 +82,17 @@ func buildAgentDaemonSetSpec(tc *podtracev1alpha1.TracerConfig, systemNS string)
 	)
 	if a := tc.Spec.Agent.Alerting; a != nil && a.Enabled {
 		env = append(env, corev1.EnvVar{Name: "PODTRACE_ALERTING_ENABLED", Value: "true"})
-		if a.WebhookURL != "" {
+		switch {
+		case a.WebhookURLSecretRef != nil && a.WebhookURLSecretRef.Name != "":
+			env = append(env, corev1.EnvVar{
+				Name: "PODTRACE_ALERT_WEBHOOK_URL",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: a.WebhookURLSecretRef.Name},
+					Key:                  a.WebhookURLSecretRef.Key,
+					Optional:             pointerBool(true),
+				}},
+			})
+		case a.WebhookURL != "":
 			env = append(env, corev1.EnvVar{Name: "PODTRACE_ALERT_WEBHOOK_URL", Value: a.WebhookURL})
 		}
 		if a.AllowInsecureWebhook {
@@ -119,7 +131,7 @@ func buildAgentDaemonSetSpec(tc *podtracev1alpha1.TracerConfig, systemNS string)
 				Tolerations:                   tc.Spec.Tolerations,
 				Affinity:                      tc.Spec.Affinity,
 				ImagePullSecrets:              tc.Spec.ImagePullSecrets,
-				TerminationGracePeriodSeconds: ptrInt64(30),
+				TerminationGracePeriodSeconds: ptrInt64(agentTerminationGracePeriodSeconds),
 				Containers: []corev1.Container{{
 					Name:            "agent",
 					Image:           tc.Spec.Image,

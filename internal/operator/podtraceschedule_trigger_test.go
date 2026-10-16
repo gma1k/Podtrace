@@ -67,9 +67,12 @@ func TestParseAlertEvent(t *testing.T) {
 			alerting.AnnotationAlertSeverity: severity,
 		}}
 	}
+	validMeta := srcAnn(alerting.AlertSourceOOM, "fatal")
+	validMeta.Namespace = "prod"
 	valid := &corev1.Event{
-		ObjectMeta:     srcAnn(alerting.AlertSourceOOM, "fatal"),
+		ObjectMeta:     validMeta,
 		Reason:         alerting.EventReasonAlert,
+		Source:         corev1.EventSource{Component: alerting.EventComponent},
 		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "prod", Name: "checkout-7f"},
 		LastTimestamp:  metav1.NewTime(at),
 	}
@@ -211,6 +214,7 @@ func TestParseAlertEvent_FallsBackToEventNamespace(t *testing.T) {
 			},
 		},
 		Reason:         alerting.EventReasonAlert,
+		Source:         corev1.EventSource{Component: alerting.EventComponent},
 		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "checkout-7f"},
 		LastTimestamp:  metav1.NewTime(at),
 	}
@@ -303,5 +307,59 @@ func TestAnIssueAlertMapsToTheIssueTriggerKind(t *testing.T) {
 	}
 	if _, ok := triggerSourceKindForAlertSource("not_a_source"); ok {
 		t.Error("an unknown alert source was mapped to a trigger kind")
+	}
+}
+
+func TestParseAlertEvent_RejectsInvolvedObjectInAnotherNamespace(t *testing.T) {
+	ev := podtraceAlertEvent("tenant-a", "hog")
+	ev.InvolvedObject.Namespace = "tenant-b"
+	if _, ok := parseAlertEvent(ev); ok {
+		t.Error("an Event in tenant-a naming a pod in tenant-b must not parse")
+	}
+}
+
+func TestParseAlertEvent_RequiresAgentComponent(t *testing.T) {
+	ev := podtraceAlertEvent("obs", "hog")
+	ev.Source = corev1.EventSource{Component: "kubectl"}
+	if _, ok := parseAlertEvent(ev); ok {
+		t.Error("an Event not reported by the podtrace agent must not parse")
+	}
+	ev.ReportingController = alerting.EventComponent
+	if _, ok := parseAlertEvent(ev); !ok {
+		t.Error("an events.k8s.io Event whose reportingController is the agent must parse")
+	}
+}
+
+func TestSelectEventsToFire_IgnoresEventsOlderThanRetention(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	stale := resourceAlertFor("obs", "hog-old")
+	stale.At = now.Add(-2 * triggerRateWindow)
+	fresh := resourceAlertFor("obs", "hog-new")
+	fresh.At = now.Add(-time.Minute)
+
+	got, rateLimited := selectEventsToFire([]alertEvent{stale, fresh}, nil, now, defaultTriggerCooldown, 10)
+	if rateLimited {
+		t.Error("nothing was held back by the hourly cap")
+	}
+	if len(got) != 1 || got[0].PodName != "hog-new" {
+		t.Errorf("only the event inside the retention window may fire, got %+v", got)
+	}
+}
+
+func TestSelectEventsToFire_OnePerPodAndCapped(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	a1 := resourceAlertFor("obs", "a")
+	a1.At = now.Add(-3 * time.Minute)
+	a2 := resourceAlertFor("obs", "a")
+	a2.At = now.Add(-2 * time.Minute)
+	b := resourceAlertFor("obs", "b")
+	b.At = now.Add(-time.Minute)
+
+	got, rateLimited := selectEventsToFire([]alertEvent{a1, a2, b}, nil, now, defaultTriggerCooldown, 1)
+	if len(got) != 1 || got[0].PodName != "a" {
+		t.Errorf("want only the oldest pod-a alert, got %+v", got)
+	}
+	if !rateLimited {
+		t.Error("pod b was held back by the cap and must report rate limiting")
 	}
 }

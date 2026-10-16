@@ -200,12 +200,22 @@ func ensureSessionPodReadRBAC(ctx context.Context, c client.Client, s *podtracev
 			return fmt.Errorf("ensure session pod-read RoleBinding in %s: %w", ns, err)
 		}
 	}
-	return nil
+	return pruneSessionPodReadRBAC(ctx, c, s, namespaces)
 }
 
 // cleanupSessionPodReadRBAC deletes the cross-namespace pod-read Role+RoleBinding
 // for a session.
 func cleanupSessionPodReadRBAC(ctx context.Context, c client.Client, s *podtracev1alpha1.PodTraceSession) error {
+	return pruneSessionPodReadRBAC(ctx, c, s, nil)
+}
+
+// pruneSessionPodReadRBAC deletes the session's pod-read Role+RoleBinding in
+// every namespace not in keep.
+func pruneSessionPodReadRBAC(ctx context.Context, c client.Client, s *podtracev1alpha1.PodTraceSession, keep []string) error {
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, ns := range keep {
+		keepSet[ns] = struct{}{}
+	}
 	sel := client.MatchingLabels(sessionRBACLabels(s))
 
 	var bindings rbacv1.RoleBindingList
@@ -214,6 +224,9 @@ func cleanupSessionPodReadRBAC(ctx context.Context, c client.Client, s *podtrace
 	}
 	for i := range bindings.Items {
 		if bindings.Items[i].Name != SessionPodReadRoleBindingName(s.UID) {
+			continue
+		}
+		if _, ok := keepSet[bindings.Items[i].Namespace]; ok {
 			continue
 		}
 		if err := c.Delete(ctx, &bindings.Items[i]); err != nil && !apierrors.IsNotFound(err) {
@@ -228,6 +241,9 @@ func cleanupSessionPodReadRBAC(ctx context.Context, c client.Client, s *podtrace
 	}
 	for i := range roles.Items {
 		if roles.Items[i].Name != SessionPodReadRoleName(s.UID) {
+			continue
+		}
+		if _, ok := keepSet[roles.Items[i].Namespace]; ok {
 			continue
 		}
 		if err := c.Delete(ctx, &roles.Items[i]); err != nil && !apierrors.IsNotFound(err) {
@@ -252,7 +268,7 @@ func buildSessionReportRules(ref *podtracev1alpha1.ReportReference) []rbacv1.Pol
 		},
 	}
 	resource, name := reportRefResource(ref)
-	if resource == "" || name == "" {
+	if resource == "" || name == "" || resource == "secrets" {
 		return rules
 	}
 	rules = append(rules,
@@ -286,8 +302,9 @@ func (e *reportObjectConflictError) Error() string {
 		"pick a name that does not collide with an existing object", e.resource, e.namespace, e.name)
 }
 
-// ensureSessionReportObject pre-creates an empty report ConfigMap/Secret in the
+// ensureSessionReportObject pre-creates an empty report ConfigMap in the
 // session namespace so the Job's ServiceAccount needs only scoped get/update.
+// A Secret report is staged instead; see session_report_staging.go.
 func ensureSessionReportObject(ctx context.Context, c client.Client, s *podtracev1alpha1.PodTraceSession) error {
 	resource, name := reportRefResource(s.Spec.ReportRef)
 	if name == "" {
@@ -304,8 +321,6 @@ func ensureSessionReportObject(ctx context.Context, c client.Client, s *podtrace
 	switch resource {
 	case "configmaps":
 		obj = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: labels}}
-	case "secrets":
-		obj = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: labels}}
 	default:
 		return nil
 	}

@@ -362,17 +362,23 @@ type agentRead struct {
 // starting is not a failed read, and one that is not ready because its eBPF
 // backend is down has nothing current to report.
 func (c *IssueCorrelator) agents(ctx context.Context) ([]corev1.Pod, error) {
-	var pods corev1.PodList
-	if err := c.Client.List(ctx, &pods,
-		client.InNamespace(c.SystemNamespace),
-		client.MatchingLabels{LabelComponent: ComponentAgent},
-	); err != nil {
+	namespaces, err := fleetSystemNamespaces(ctx, c.Client, c.SystemNamespace)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]corev1.Pod, 0, len(pods.Items))
-	for _, p := range pods.Items {
-		if p.Status.Phase == corev1.PodRunning && p.Status.PodIP != "" && p.DeletionTimestamp == nil && podReady(&p) {
-			out = append(out, p)
+	var out []corev1.Pod
+	for _, ns := range namespaces {
+		var pods corev1.PodList
+		if err := c.Client.List(ctx, &pods,
+			client.InNamespace(ns),
+			client.MatchingLabels{LabelComponent: ComponentAgent},
+		); err != nil {
+			return nil, err
+		}
+		for _, p := range pods.Items {
+			if p.Status.Phase == corev1.PodRunning && p.Status.PodIP != "" && p.DeletionTimestamp == nil && podReady(&p) {
+				out = append(out, p)
+			}
 		}
 	}
 	return out, nil

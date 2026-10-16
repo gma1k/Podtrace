@@ -127,6 +127,11 @@ data:
         {{- if .Values.agent.alerting.enabled }}
         alerting:
           enabled: true
+          {{- with .Values.agent.alerting.webhookURLSecretRef }}
+          webhookURLSecretRef:
+            name: {{ .name | quote }}
+            key: {{ .key | default "url" | quote }}
+          {{- end }}
           {{- with .Values.agent.alerting.webhookURL }}
           webhookURL: {{ . | quote }}
           {{- end }}

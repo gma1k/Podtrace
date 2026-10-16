@@ -1,16 +1,18 @@
 apiVersion: v2
 name: podtrace
-description: |
-  Podtrace: a lightweight yet powerful eBPF-driven diagnostic tool for
-  Kubernetes applications.
+description: eBPF-driven APM and diagnostic tool for Kubernetes applications 🐝
 type: application
 kubeVersion: '>=1.28.0-0'
 version: 0.14.9
 appVersion: 0.14.9
 keywords:
   - ebpf
-  - tracing
+  - apm
   - observability
+  - metrics
+  - tracing
+  - opentelemetry
+  - prometheus
   - kubernetes
   - operator
   - diagnostics
@@ -24,10 +26,122 @@ icon: https://raw.githubusercontent.com/gma1k/podtrace/main/assets/podtrace-logo
 annotations:
   artifacthub.io/changes: |
     - kind: added
-      description: "values.schema.json: chart values are now validated by JSON Schema at install/upgrade time."
+      description: "agent.alerting.webhookURLSecretRef reads the alert webhook URL from a Secret; changing the Secret rolls the agents."
+    - kind: added
+      description: "Validating webhook for ApplicationTrace."
     - kind: changed
-      description: "Chart description rewritten to mirror the project README."
+      description: "session.maxDuration is unset by default; sessions run up to the 24h a session Job allows."
+    - kind: changed
+      description: "Agent termination grace period raised to 120s so probe detach completes on every rollout."
+    - kind: fixed
+      description: "reportRef.secret sessions publish their report without the operator holding cluster-wide secrets update."
+    - kind: fixed
+      description: "Exporter bundles are withdrawn when their ExporterConfig is gone and reach every fleet's systemNamespace."
+    - kind: security
+      description: "TracerConfig.spec.systemNamespace may no longer be default or a kube-* namespace."
+    - kind: changed
+      description: "Chart description and README describe continuous APM."
   artifacthub.io/category: monitoring-logging
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/gma1k/podtrace/tree/main/docs
+    - name: Continuous metrics
+      url: https://github.com/gma1k/podtrace/blob/main/docs/continuous-metrics.md
+    - name: Continuous inspections
+      url: https://github.com/gma1k/podtrace/blob/main/docs/continuous-inspections.md
+    - name: Supply chain
+      url: https://github.com/gma1k/podtrace/blob/main/docs/supply-chain.md
+  artifacthub.io/crds: |
+    - kind: TracerConfig
+      version: v1alpha1
+      name: tracerconfigs.podtrace.io
+      displayName: TracerConfig
+      description: An agent fleet. Image, node selection, continuous metrics and inspections, redaction and alerting for the podtrace agents.
+    - kind: PodTrace
+      version: v1alpha1
+      name: podtraces.podtrace.io
+      displayName: PodTrace
+      description: Traces the pods matching a selector continuously and streams events and spans to an exporter.
+    - kind: ApplicationTrace
+      version: v1alpha1
+      name: applicationtraces.podtrace.io
+      displayName: ApplicationTrace
+      description: Traces an application made of several workloads as one, across namespaces.
+    - kind: PodTraceSession
+      version: v1alpha1
+      name: podtracesessions.podtrace.io
+      displayName: PodTraceSession
+      description: A bounded diagnose of the matching pods that writes a report to a ConfigMap, Secret or object store.
+    - kind: PodTraceSchedule
+      version: v1alpha1
+      name: podtraceschedules.podtrace.io
+      displayName: PodTraceSchedule
+      description: Starts sessions on a cron schedule, or when an alert or issue fires for a pod.
+    - kind: ExporterConfig
+      version: v1alpha1
+      name: exporterconfigs.podtrace.io
+      displayName: ExporterConfig
+      description: Where spans and metrics go. OTLP, Jaeger, Zipkin, Splunk HEC or Datadog.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: podtrace.io/v1alpha1
+      kind: ExporterConfig
+      metadata:
+        name: prod-otlp
+        namespace: my-app
+      spec:
+        type: otlp
+        otlp:
+          endpoint: otel-collector.observability:4318
+          protocol: http
+          metrics:
+            enabled: true
+    - apiVersion: podtrace.io/v1alpha1
+      kind: PodTrace
+      metadata:
+        name: watch-api
+        namespace: my-app
+      spec:
+        selector:
+          matchLabels:
+            app: api
+        filters: [dns, net]
+        exporterRef:
+          name: prod-otlp
+    - apiVersion: podtrace.io/v1alpha1
+      kind: PodTraceSession
+      metadata:
+        name: diag-api
+        namespace: my-app
+      spec:
+        selector:
+          matchLabels:
+            app: api
+        duration: 30s
+        filters: [dns, net]
+        reportRef:
+          configMap:
+            name: api-diag-report
+    - apiVersion: podtrace.io/v1alpha1
+      kind: PodTraceSchedule
+      metadata:
+        name: on-issue
+        namespace: my-app
+      spec:
+        trigger:
+          sources:
+            - kind: Issue
+              minSeverity: warning
+        sessionTemplate:
+          spec:
+            selector:
+              matchLabels:
+                app: api
+            duration: 60s
+            reportRef:
+              configMap:
+                name: on-issue-report
   artifacthub.io/images: |
     - name: podtrace
       image: ghcr.io/gma1k/podtrace:0.14.9 # x-release-please-version

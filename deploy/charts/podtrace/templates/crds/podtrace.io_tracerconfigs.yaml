@@ -994,8 +994,33 @@ spec:
                       enabled:
                         type: boolean
                       webhookURL:
+                        description: |-
+                          WebhookURL is the alert webhook in plain text. A Slack or PagerDuty
+                          URL is itself a credential, readable by anyone who can read this
+                          TracerConfig or the agent DaemonSet; prefer WebhookURLSecretRef.
                         type: string
+                      webhookURLSecretRef:
+                        description: |-
+                          WebhookURLSecretRef reads the alert webhook URL from a key of a Secret
+                          in the fleet's system namespace. The agents receive it as an env var
+                          from the Secret, so the URL appears in neither this TracerConfig nor
+                          the DaemonSet. A missing Secret or key does not stop the agents; they
+                          run without the webhook and the TracerConfig's Reconciled condition
+                          says why.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
                     type: object
+                    x-kubernetes-validations:
+                    - message: set at most one of webhookURL or webhookURLSecretRef
+                      rule: '!(has(self.webhookURL) && size(self.webhookURL) > 0 &&
+                        has(self.webhookURLSecretRef))'
                   continuousProfiling:
                     default: true
                     description: |-
@@ -1505,6 +1530,8 @@ spec:
                     type: integer
                 type: object
               systemNamespace:
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               tolerations:
                 items:

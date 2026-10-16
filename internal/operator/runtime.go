@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -21,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
+	"github.com/gma1k/podtrace/internal/alerting"
 	webhookv1alpha1 "github.com/gma1k/podtrace/internal/webhook/v1alpha1"
 )
 
@@ -119,6 +121,7 @@ func Run(ctx context.Context, opts Options) error {
 	managerOpts.Cache.ByObject = map[client.Object]cache.ByObject{
 		&corev1.Node{}:   {Transform: stripNodeStatus},
 		&corev1.Secret{}: {Transform: stripSecretData},
+		&corev1.Event{}:  {Field: alertEventFieldSelector()},
 
 		&discoveryv1.EndpointSlice{}: {Transform: trimEndpointSlice},
 	}
@@ -170,6 +173,10 @@ func Run(ctx context.Context, opts Options) error {
 	return mgr.Start(ctx)
 }
 
+func alertEventFieldSelector() fields.Selector {
+	return fields.OneTermEqualSelector("reason", alerting.EventReasonAlert)
+}
+
 func stripSecretData(obj any) (any, error) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
@@ -210,11 +217,14 @@ func registerWebhooks(mgr ctrl.Manager, systemNamespace string) error {
 	if err := webhookv1alpha1.SetupExporterConfigWebhookWithManager(mgr); err != nil {
 		return fmt.Errorf("exporterconfig webhook: %w", err)
 	}
-	if err := webhookv1alpha1.SetupPodTraceScheduleWebhookWithManager(mgr); err != nil {
+	if err := webhookv1alpha1.SetupPodTraceScheduleWebhookWithManager(mgr, systemNamespace); err != nil {
 		return fmt.Errorf("podtraceschedule webhook: %w", err)
 	}
 	if err := webhookv1alpha1.SetupTracerConfigWebhookWithManager(mgr); err != nil {
 		return fmt.Errorf("tracerconfig webhook: %w", err)
+	}
+	if err := webhookv1alpha1.SetupApplicationTraceWebhookWithManager(mgr); err != nil {
+		return fmt.Errorf("applicationtrace webhook: %w", err)
 	}
 	return nil
 }

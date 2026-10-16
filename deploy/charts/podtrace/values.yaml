@@ -114,7 +114,11 @@ agent:
 
   alerting:
     enabled: false
+    # Prefer webhookURLSecretRef: a Slack or PagerDuty URL is a credential,
+    # and webhookURL puts it in plain text on the TracerConfig and the agent
+    # DaemonSet.
     webhookURL: ""
+    webhookURLSecretRef: {}
     allowInsecureWebhook: false
 
   # The continuous APM plane: per-workload golden-signal metrics on the
@@ -165,6 +169,12 @@ session:
   activeDeadlineOffset: 90s
   backoffLimit: 0
   maxConcurrentSessionsPerNode: 2
+  # Optional cap on every session's spec.duration, e.g. "1h". Unset, a session
+  # runs as long as it asks, up to the 24h a session Job can run. On a shared
+  # multi-tenant cluster a cap stops one namespace holding a node's
+  # maxConcurrentSessionsPerNode slots for that long; a session waiting for a
+  # slot fails after 30 minutes either way. Continuous tracing (PodTrace) is
+  # never capped.
   maxDuration: ""
   resources:
     requests:

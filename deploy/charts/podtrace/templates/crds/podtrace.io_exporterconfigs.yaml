@@ -125,6 +125,9 @@ spec:
                         OTLP header.
                       properties:
                         name:
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[-._a-zA-Z0-9]+$
                           type: string
                         value:
                           type: string

@@ -26,7 +26,7 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 
 	backoffLimit := int32(0)
 	ttlSeconds := int32(300)
-	deadlineOffset := int32(defaultSessionDeadlineOffset / time.Second)
+	deadlineOffset := int64(defaultSessionDeadlineOffset / time.Second)
 	sidecarUploader := false
 	if tc != nil {
 		if tc.Spec.Session.BackoffLimit != nil {
@@ -36,13 +36,13 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 			ttlSeconds = *tc.Spec.Session.TTLSecondsAfterFinished
 		}
 		if o := tc.Spec.Session.ActiveDeadlineOffset; o != nil && o.Duration > 0 {
-			deadlineOffset = int32(o.Seconds())
+			deadlineOffset = int64(o.Seconds())
 		}
 		sidecarUploader = tc.Spec.Session.SidecarUploader
 	}
 
 	effectiveDuration := effectiveSessionDuration(s, tc)
-	activeDeadline := int64(effectiveDuration.Seconds()) + int64(deadlineOffset)
+	activeDeadline := int64(effectiveDuration.Seconds()) + deadlineOffset
 	killAt := sessionClock().Add(time.Duration(activeDeadline) * time.Second)
 
 	imagePullPolicy := corev1.PullIfNotPresent
@@ -63,6 +63,9 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 
 	args := buildDiagnoseArgs(s, targets, effectiveDuration)
 	reportTo := reportToSpecFromReportRef(s)
+	if reportSinkIsSecret(s) {
+		reportTo = "secret/$(POD_NAMESPACE)/" + SessionReportStagingName(s.UID, node)
+	}
 
 	volumes := []corev1.Volume{
 		{Name: "bpf", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/sys/fs/bpf"}}},
@@ -137,6 +140,7 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 		},
 		{Name: "PODTRACE_OTLP_INSECURE", Value: "1"},
 		{Name: config.EnvArtifactBaseDir, Value: "/var/run/podtrace"},
+		podNamespaceEnv(),
 	}
 	if tc != nil {
 		mainEnv = append(mainEnv, redactionEnv(tc.Spec.Redaction)...)
@@ -234,7 +238,7 @@ func buildSessionSidecar(enabled bool, reportTo, image string, pullPolicy corev1
 	mounts := []corev1.VolumeMount{
 		{Name: "rundir", MountPath: "/var/run/podtrace"},
 	}
-	var env []corev1.EnvVar
+	env := []corev1.EnvVar{podNamespaceEnv()}
 	if _, ok := objectStoreCredentialsVolume(s); ok {
 		const credsMount = "/etc/podtrace/objectstore-credentials" // #nosec G101 -- mount path, not a credential value; documented in docs/object-store-reports.md
 		mounts = append(mounts, corev1.VolumeMount{
@@ -272,6 +276,16 @@ func buildSessionSidecar(enabled bool, reportTo, image string, pullPolicy corev1
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 	}}
+}
+
+// podNamespaceEnv exposes the Job's namespace for $(POD_NAMESPACE) in args.
+func podNamespaceEnv() corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: "POD_NAMESPACE",
+		ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		},
+	}
 }
 
 const objectStoreCredentialsVolumeName = "objectstore-credentials"
@@ -449,6 +463,26 @@ func mergeSessionJobRefs(live []batchv1.Job, prior []podtracev1alpha1.SessionJob
 	}
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Node < refs[j].Node })
 	return refs
+}
+
+// fannedOutNodes returns the sorted nodes the session has already created
+// Jobs on.
+func fannedOutNodes(refs []podtracev1alpha1.SessionJobRef) []string {
+	seen := make(map[string]struct{}, len(refs))
+	out := make([]string, 0, len(refs))
+	for i := range refs {
+		node := refs[i].Node
+		if node == "" {
+			continue
+		}
+		if _, dup := seen[node]; dup {
+			continue
+		}
+		seen[node] = struct{}{}
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // completedSessionNodes returns the set of nodes with a recorded terminal

@@ -48,7 +48,10 @@ func TestRunPodtrace_EnableMetrics_DiagnoseMode(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runPodtrace: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Error("runPodtrace with enableMetrics did not complete in time")
 	}
@@ -100,7 +103,10 @@ func TestRunPodtrace_EnableMetrics_WithEvent(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runPodtrace: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Error("runPodtrace with enableMetrics+event did not complete in time")
 	}

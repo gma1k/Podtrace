@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -110,8 +112,7 @@ func (r *PodTraceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "ExporterNotFound",
 				fmt.Sprintf("ExporterConfig %s not found", ecKey))
 			r.setCondition(&pt, ConditionReady, metav1.ConditionFalse, "ExporterNotFound", "")
-			_ = r.Status().Update(ctx, &pt)
-			return ctrl.Result{}, nil
+			return r.withdrawBundle(ctx, &pt, "ExporterNotFound")
 		}
 		return ctrl.Result{}, fmt.Errorf("get ExporterConfig: %w", err)
 	}
@@ -119,7 +120,7 @@ func (r *PodTraceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := validateManagedCRName("ExporterConfig", ec.Name); err != nil {
 		r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "ExporterConfigNameTooLong", err.Error())
 		r.setCondition(&pt, ConditionReady, metav1.ConditionFalse, "ExporterConfigNameTooLong", err.Error())
-		return ctrl.Result{}, r.Status().Update(ctx, &pt)
+		return r.withdrawBundle(ctx, &pt, "ExporterConfigNameTooLong")
 	}
 
 	// Resolve spec.namespaceSelector against the cluster's Namespace
@@ -130,18 +131,27 @@ func (r *PodTraceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	targetNamespaces, deniedNamespaces, err := ResolveNamespaceSelector(ctx, r.Client, pt.Spec.NamespaceSelector, pt.Namespace)
 	if err != nil {
 		r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "NamespaceSelectorInvalid", err.Error())
-		_ = r.Status().Update(ctx, &pt)
-		return ctrl.Result{}, nil
+		return r.withdrawBundle(ctx, &pt, "NamespaceSelectorInvalid")
 	}
 
-	if err := r.syncExporterBundle(ctx, &pt, &ec, targetNamespaces); err != nil {
+	bundleNamespaces, err := r.bundleNamespaces(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.syncExporterBundle(ctx, &pt, &ec, targetNamespaces, bundleNamespaces); err != nil {
+		var invalid *bundlePolicyError
+		if errors.As(err, &invalid) {
+			r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "BundleInvalid", err.Error())
+			r.setCondition(&pt, ConditionPolicyApplied, metav1.ConditionFalse, "BundleInvalid", err.Error())
+			return r.withdrawBundle(ctx, &pt, "BundleInvalid")
+		}
 		r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "BundleSync", err.Error())
 		r.setCondition(&pt, ConditionPolicyApplied, metav1.ConditionFalse, "BundleSync", err.Error())
 		_ = r.Status().Update(ctx, &pt)
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 
-	if err := cleanupOrphanBundles(ctx, r.Client, &pt, r.effectiveSystemNamespace(ctx)); err != nil {
+	if err := cleanupOrphanBundlesOutside(ctx, r.Client, &pt, bundleNamespaces); err != nil {
 		r.setCondition(&pt, ConditionDegraded, metav1.ConditionTrue, "OrphanBundleCleanup", err.Error())
 		_ = r.Status().Update(ctx, &pt)
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
@@ -209,14 +219,12 @@ func (r *PodTraceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// tracerConfigToPodTraces enqueues every PodTrace when the default
-// TracerConfig changes, so a spec.systemNamespace change rewrites each
-// bundle into the new namespace (and the reconcile then sweeps the orphan
-// left in the old one).
-func (r *PodTraceReconciler) tracerConfigToPodTraces(ctx context.Context, obj client.Object) []reconcile.Request {
-	if obj.GetName() != "default" {
-		return nil
-	}
+// tracerConfigToPodTraces enqueues every PodTrace when any TracerConfig
+// changes: each fleet's agents read bundles from that fleet's
+// spec.systemNamespace, so adding a fleet or moving one rewrites every
+// bundle into the new set of namespaces (and the reconcile then sweeps the
+// orphans left in namespaces no fleet uses any more).
+func (r *PodTraceReconciler) tracerConfigToPodTraces(ctx context.Context, _ client.Object) []reconcile.Request {
 	var list podtracev1alpha1.PodTraceList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
@@ -282,68 +290,125 @@ func (r *PodTraceReconciler) exporterConfigToPodTraces(ctx context.Context, obj 
 	return reqs
 }
 
-func (r *PodTraceReconciler) syncExporterBundle(ctx context.Context, pt *podtracev1alpha1.PodTrace, ec *podtracev1alpha1.ExporterConfig, targetNamespaces []string) error {
-	systemNS := r.effectiveSystemNamespace(ctx)
-	name := ExporterBundleName(pt.UID)
+// bundlePolicyError marks a bundle that cannot be rendered from the
+// ExporterConfig at all, as opposed to a transient API failure.
+type bundlePolicyError struct{ err error }
 
+func (e *bundlePolicyError) Error() string { return e.err.Error() }
+func (e *bundlePolicyError) Unwrap() error { return e.err }
+
+// withdrawBundle deletes every exporter bundle of the PodTrace and records
+// the status.
+func (r *PodTraceReconciler) withdrawBundle(ctx context.Context, pt *podtracev1alpha1.PodTrace, reason string) (ctrl.Result, error) {
+	if err := cleanupOrphanBundles(ctx, r.Client, pt, ""); err != nil {
+		r.setCondition(pt, ConditionPolicyApplied, metav1.ConditionFalse, reason, err.Error())
+		_ = r.Status().Update(ctx, pt)
+		return ctrl.Result{}, fmt.Errorf("withdraw bundle: %w", err)
+	}
+	pt.Status.TargetNamespaces = nil
+	r.setCondition(pt, ConditionPolicyApplied, metav1.ConditionFalse, reason, "exporter bundle withdrawn")
+	_ = r.Status().Update(ctx, pt)
+	return ctrl.Result{}, nil
+}
+
+// bundleNamespaces returns the namespaces agents read bundles from: one per
+// fleet, since each fleet's agents only look in their own.
+func (r *PodTraceReconciler) bundleNamespaces(ctx context.Context) ([]string, error) {
+	return fleetSystemNamespaces(ctx, r.Client, r.SystemNamespace)
+}
+
+// fleetSystemNamespaces returns, sorted, the namespace every TracerConfig's
+// agents run in: its spec.systemNamespace, or fallback (the operator's own)
+// when it sets none. With no TracerConfig at all it returns fallback alone. A
+// TracerConfig whose systemNamespace is refused runs no agents, so it gets no
+// copy of any tenant's credentials either.
+func fleetSystemNamespaces(ctx context.Context, c client.Reader, fallback string) ([]string, error) {
+	var configs podtracev1alpha1.TracerConfigList
+	if err := c.List(ctx, &configs); err != nil {
+		return nil, fmt.Errorf("list TracerConfigs: %w", err)
+	}
+	set := map[string]struct{}{}
+	for i := range configs.Items {
+		ns := configs.Items[i].Spec.SystemNamespace
+		if podtracev1alpha1.ValidateSystemNamespace(ns) != nil {
+			continue
+		}
+		if ns == "" {
+			ns = fallback
+		}
+		set[ns] = struct{}{}
+	}
+	if len(set) == 0 {
+		set[fallback] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for ns := range set {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (r *PodTraceReconciler) syncExporterBundle(ctx context.Context, pt *podtracev1alpha1.PodTrace, ec *podtracev1alpha1.ExporterConfig, targetNamespaces, systemNamespaces []string) error {
 	payload, credSecretRef, headersFrom, err := renderBundlePayload(policyFromPodTrace(pt), ec, targetNamespaces)
 	if err != nil {
-		return err
+		return &bundlePolicyError{err: err}
 	}
-
-	cm := &corev1.ConfigMap{
-		ObjectMeta: ManagedObjectMeta(name, systemNS, ComponentBundle, map[string]string{
-			LabelPodTraceName:   pt.Name,
-			LabelPodTraceNS:     pt.Namespace,
-			LabelExporterConfig: ec.Name,
-		}),
-	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
-		cm.Labels = mergeLabels(cm.Labels, map[string]string{
-			LabelManagedBy:      ManagedByValue,
-			LabelComponent:      ComponentBundle,
-			LabelPodTraceName:   pt.Name,
-			LabelPodTraceNS:     pt.Namespace,
-			LabelExporterConfig: ec.Name,
-		})
-		cm.Annotations = mergeLabels(cm.Annotations, map[string]string{
-			BundleAnnotationSourceRef: ec.Namespace + "/" + ec.Name,
-		})
-		cm.Data = payload
-		return nil
-	}); err != nil {
-		return fmt.Errorf("bundle ConfigMap: %w", err)
-	}
-
+	var credData map[string][]byte
 	if credSecretRef != nil || headersFrom != nil {
-		credData, err := buildBundleSecretData(ctx, r.reader(), ec.Namespace, credSecretRef, headersFrom)
+		credData, err = buildBundleSecretData(ctx, r.reader(), ec.Namespace, credSecretRef, headersFrom)
 		if err != nil {
 			return fmt.Errorf("load credential Secret: %w", err)
 		}
-		secret := &corev1.Secret{
-			ObjectMeta: ManagedObjectMeta(name, systemNS, ComponentBundle, map[string]string{
-				LabelPodTraceName:   pt.Name,
-				LabelPodTraceNS:     pt.Namespace,
-				LabelExporterConfig: ec.Name,
-			}),
+	}
+	for _, systemNS := range systemNamespaces {
+		if err := r.writeBundle(ctx, pt, ec, systemNS, payload, credData); err != nil {
+			return err
 		}
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-			secret.Labels = mergeLabels(secret.Labels, map[string]string{
-				LabelManagedBy:      ManagedByValue,
-				LabelComponent:      ComponentBundle,
-				LabelPodTraceName:   pt.Name,
-				LabelPodTraceNS:     pt.Namespace,
-				LabelExporterConfig: ec.Name,
-			})
-			secret.Annotations = mergeLabels(secret.Annotations, map[string]string{
-				BundleAnnotationSourceRef: ec.Namespace + "/" + ec.Name,
-			})
-			secret.Type = corev1.SecretTypeOpaque
-			secret.Data = credData
-			return nil
-		}); err != nil {
-			return fmt.Errorf("bundle Secret: %w", err)
+	}
+	return nil
+}
+
+func (r *PodTraceReconciler) writeBundle(ctx context.Context, pt *podtracev1alpha1.PodTrace, ec *podtracev1alpha1.ExporterConfig, systemNS string, payload map[string]string, credData map[string][]byte) error {
+	name := ExporterBundleName(pt.UID)
+	labels := map[string]string{
+		LabelManagedBy:      ManagedByValue,
+		LabelComponent:      ComponentBundle,
+		LabelPodTraceName:   pt.Name,
+		LabelPodTraceNS:     pt.Namespace,
+		LabelExporterConfig: ec.Name,
+	}
+	annotations := map[string]string{
+		BundleAnnotationSourceRef: ec.Namespace + "/" + ec.Name,
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: ManagedObjectMeta(name, systemNS, ComponentBundle, labels),
+	}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+		cm.Labels = mergeLabels(cm.Labels, labels)
+		cm.Annotations = mergeLabels(cm.Annotations, annotations)
+		cm.Data = payload
+		return nil
+	}); err != nil {
+		return fmt.Errorf("bundle ConfigMap in %s: %w", systemNS, err)
+	}
+
+	if credData == nil {
+		stale := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNS}}
+		if err := r.Delete(ctx, stale); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("prune stale bundle Secret in %s: %w", systemNS, err)
 		}
+		return nil
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: ManagedObjectMeta(name, systemNS, ComponentBundle, labels),
+		Type:       corev1.SecretTypeOpaque,
+		Data:       credData,
+	}
+	secret.Annotations = mergeLabels(secret.Annotations, annotations)
+	if err := applySecret(ctx, r.Client, r.reader(), secret); err != nil {
+		return fmt.Errorf("bundle Secret in %s: %w", systemNS, err)
 	}
 	return nil
 }

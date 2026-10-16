@@ -22,7 +22,7 @@
   <a href="https://github.com/gma1k/podtrace/actions/workflows/go-ci.yml?query=branch%3Amain"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/gma1k/5935cb4275b5ae9369b2b8cb097ae0e2/raw/podtrace-go-coverage.json" alt="Coverage"/></a>
 </p>
 
-Podtrace is an eBPF-based observability tool for Kubernetes, with no code changes, no sidecars and no instrumentation. It works in two ways from one agent:
+Podtrace is an eBPF-driven observability tool for Kubernetes, with no code changes, no sidecars and no instrumentation. It works in two ways from one agent:
 
 - **Always on.** Every pod on every node reports its golden signals continuously: request rate, errors and latency per workload, plus network, DNS, TLS, filesystem, CPU and connection-pool health. Podtrace watches those signals, raises an issue when something is wrong, names its likely root cause, and can start a deep-dive on the affected pod by itself.
 - **On demand.** Point it at a pod, or at a whole application across all its pods, and it records everything they do for as long as you ask: network flows, TCP and UDP performance, file activity, system calls, and application events such as HTTP/1, HTTP/2, HTTP/3, gRPC, DNS and database queries, then explains what it found in a report.

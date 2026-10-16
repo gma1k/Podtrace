@@ -21,7 +21,7 @@ func newBypassPodInfo(podName, namespace, containerName string) *kubernetes.PodI
 		PodName:       podName,
 		Namespace:     namespace,
 		ContainerID:   "test-container-id",
-		CgroupPath:    "", // empty → safety check skipped
+		CgroupPath:    "/sys/fs/cgroup/kubepods.slice/cri-containerd-test-container-id.scope",
 		ContainerName: containerName,
 	}
 }
@@ -210,7 +210,10 @@ func TestRunPodtrace_BypassCgroup_DiagnoseMode(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runPodtrace: %v", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Error("runPodtrace did not complete in time")
 	}
@@ -253,7 +256,10 @@ func TestRunPodtrace_BypassCgroup_WithEventFilter(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runPodtrace: %v", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Error("runPodtrace did not complete in time")
 	}
@@ -289,7 +295,10 @@ func TestRunPodtrace_BypassCgroup_WithClientset(t *testing.T) {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runPodtrace: %v", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Error("runPodtrace did not complete in time")
 	}

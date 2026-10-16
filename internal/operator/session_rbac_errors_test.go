@@ -27,7 +27,7 @@ func TestReportObjectConflictError_Error(t *testing.T) {
 	}
 }
 
-func TestEnsureSessionReportObject_SecretVariant(t *testing.T) {
+func TestEnsureSessionReportObject_SecretVariantCreatesNothingInTenantNamespace(t *testing.T) {
 	scheme := newRBACScheme(t)
 	ctx := context.Background()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -42,15 +42,8 @@ func TestEnsureSessionReportObject_SecretVariant(t *testing.T) {
 		t.Fatalf("ensureSessionReportObject(secret): %v", err)
 	}
 	var sec corev1.Secret
-	if err := c.Get(ctx, types.NamespacedName{Name: "report-secret", Namespace: "team-a"}, &sec); err != nil {
-		t.Fatalf("report Secret not created: %v", err)
-	}
-	if !reportObjectOwnedBySession(sec.Labels, s) {
-		t.Errorf("report Secret missing ownership labels: %+v", sec.Labels)
-	}
-
-	if err := ensureSessionReportObject(ctx, c, s); err != nil {
-		t.Fatalf("re-reconcile must adopt own Secret: %v", err)
+	if err := c.Get(ctx, types.NamespacedName{Name: "report-secret", Namespace: "team-a"}, &sec); err == nil {
+		t.Fatal("a Secret report is published at the end of the session, not pre-created")
 	}
 }
 

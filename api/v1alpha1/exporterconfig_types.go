@@ -74,6 +74,9 @@ type OTLPMetrics struct {
 // OTLPHeader is a single literal or secret-backed OTLP header.
 type OTLPHeader struct {
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
 	Name string `json:"name"`
 	// +optional
 	Value string `json:"value,omitempty"`

@@ -3,11 +3,12 @@ package operator
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/retry"
 	"sort"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -79,6 +80,15 @@ func (r *PodTraceScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{RequeueAfter: scheduleResyncCeiling}, nil
 	}
 	r.setCondition(&sch, ConditionPaused, metav1.ConditionFalse, "NotSuspended", "")
+
+	if err := validateManagedCRName("PodTraceSchedule", sch.Name); err != nil {
+		r.setCondition(&sch, ConditionDegraded, metav1.ConditionTrue, "NameTooLong", err.Error())
+		r.refreshStatus(&sch, active, nil)
+		if perr := r.patchStatus(ctx, &sch); perr != nil {
+			return ctrl.Result{}, perr
+		}
+		return ctrl.Result{}, nil
+	}
 
 	if err := podtracev1alpha1.ValidateSessionTemplateMetadata(sch.Spec.SessionTemplate.Metadata); err != nil {
 		r.setCondition(&sch, ConditionDegraded, metav1.ConditionTrue, "SessionTemplateInvalid", err.Error())
@@ -181,14 +191,15 @@ func (r *PodTraceScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if err := r.applyHistoryLimits(ctx, &sch, succeeded, failed); err != nil {
 			return ctrl.Result{}, err
 		}
+		skipped := skipDueRuns(&sch, cronSched, nextRun, now)
 		r.refreshStatus(&sch, active, mostRecentSuccess(succeeded))
 		r.setCondition(&sch, ConditionReconciled, metav1.ConditionTrue, "ActiveLimitReached",
 			fmt.Sprintf("run at %s skipped: %d active session(s) >= maxActiveSessions=%d",
-				nextRun.Format(time.RFC3339), len(active), *cap))
+				skipped.Format(time.RFC3339), len(active), *cap))
 		if err := r.patchStatus(ctx, &sch); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: requeue}, nil
+		return ctrl.Result{RequeueAfter: requeueAfter(cronSched.Next(skipped), now)}, nil
 	}
 
 	switch sch.Spec.ConcurrencyPolicy {
@@ -198,13 +209,14 @@ func (r *PodTraceScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			if err := r.applyHistoryLimits(ctx, &sch, succeeded, failed); err != nil {
 				return ctrl.Result{}, err
 			}
+			skipped := skipDueRuns(&sch, cronSched, nextRun, now)
 			r.refreshStatus(&sch, active, mostRecentSuccess(succeeded))
 			r.setCondition(&sch, ConditionReconciled, metav1.ConditionTrue, "Forbidden",
-				fmt.Sprintf("run at %s skipped: %d active session(s)", nextRun.Format(time.RFC3339), len(active)))
+				fmt.Sprintf("run at %s skipped: %d active session(s)", skipped.Format(time.RFC3339), len(active)))
 			if err := r.patchStatus(ctx, &sch); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: requeue}, nil
+			return ctrl.Result{RequeueAfter: requeueAfter(cronSched.Next(skipped), now)}, nil
 		}
 	case podtracev1alpha1.ReplaceConcurrent:
 		for i := range active {
@@ -216,10 +228,6 @@ func (r *PodTraceScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	session, created, err := r.ensureSessionForRun(ctx, &sch, nextRun)
 	if err != nil {
-		// Namespace-being-terminated races: the schedule's namespace was
-		// deleted and the apiserver refused to create children. Cascade
-		// GC will reap the schedule shortly — exit cleanly so we don't
-		// stack-trace on what is normal teardown.
 		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "being terminated") {
 			logger.Info("namespace terminating; stopping schedule reconcile", "err", err)
 			return ctrl.Result{}, nil
@@ -399,9 +407,37 @@ func scheduledSessionName(scheduleName string, runTime time.Time) string {
 	raw := fmt.Sprintf(scheduleSessionNameFmt, scheduleName, runTime.Unix())
 	if len(raw) > 63 {
 		trail := fmt.Sprintf("-%d", runTime.Unix())
-		raw = scheduleName[:63-len(trail)] + trail
+		raw = truncateNamePrefix(scheduleName, 63-len(trail)) + trail
 	}
 	return raw
+}
+
+// skipDueRuns records every run due by now as skipped, the way a CronJob
+// skips a run that Forbid or a cap holds back: lastScheduleTime moves to
+// the most recent due run, so the skipped ticks do not replay one by one
+// once the active sessions finish. It returns that run.
+func skipDueRuns(sch *podtracev1alpha1.PodTraceSchedule, cronSched interface{ Next(time.Time) time.Time }, nextRun, now time.Time) time.Time {
+	latest := nextRun
+	for i := 0; i < maxMissedRuns; i++ {
+		next := cronSched.Next(latest)
+		if next.After(now) {
+			break
+		}
+		latest = next
+	}
+	t := metav1.NewTime(latest)
+	sch.Status.LastScheduleTime = &t
+	return latest
+}
+
+// truncateNamePrefix cuts name to at most n bytes for use as the head of a
+// generated object name, dropping trailing '-' and '.' so the cut never
+// leaves an empty or non-alphanumeric DNS label such as "x.-1700000000".
+func truncateNamePrefix(name string, n int) string {
+	if len(name) > n {
+		name = name[:n]
+	}
+	return strings.TrimRight(name, "-.")
 }
 
 func (r *PodTraceScheduleReconciler) applyHistoryLimits(ctx context.Context, sch *podtracev1alpha1.PodTraceSchedule, succeeded, failed []podtracev1alpha1.PodTraceSession) error {

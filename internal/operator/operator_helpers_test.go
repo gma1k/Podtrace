@@ -95,13 +95,13 @@ func TestPodTraceMapFuncs_ListErrorsReturnNil(t *testing.T) {
 	}
 }
 
-func TestPodTraceTracerConfigMapFunc_IgnoresNonDefault(t *testing.T) {
+func TestPodTraceTracerConfigMapFunc_NoPodTraces(t *testing.T) {
 	scheme := newOperatorScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &PodTraceReconciler{Client: c, Scheme: scheme}
 	tc := &podtracev1alpha1.TracerConfig{ObjectMeta: metav1.ObjectMeta{Name: "custom"}}
-	if got := r.tracerConfigToPodTraces(context.Background(), tc); got != nil {
-		t.Errorf("non-default TracerConfig should map to nil, got %v", got)
+	if got := r.tracerConfigToPodTraces(context.Background(), tc); len(got) != 0 {
+		t.Errorf("no PodTraces should map to no requests, got %v", got)
 	}
 }
 

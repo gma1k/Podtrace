@@ -60,7 +60,10 @@ func TestEngine_ObserverMayCallStats(t *testing.T) {
 	}
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("engine Run returned %v on shutdown", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("engine did not shut down")
 	}
@@ -105,7 +108,10 @@ func TestEngine_ShutdownFlushesTailBatch(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("engine Run returned %v on shutdown", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("engine did not shut down")
 	}
@@ -143,7 +149,10 @@ func TestEngine_DropsAreCounted(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("engine Run returned %v on shutdown", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("engine did not shut down")
 	}

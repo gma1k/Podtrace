@@ -53,3 +53,11 @@ func TestBuildAgentDaemonSetSpec_AlertingDisabledOmitsEnv(t *testing.T) {
 		t.Error("PODTRACE_ALERTING_ENABLED must be absent when alerting is disabled")
 	}
 }
+
+func TestBuildAgentDaemonSetSpec_GracePeriodCoversProbeDetach(t *testing.T) {
+	spec := buildAgentDaemonSetSpec(tc(nil), "podtrace-system")
+	grace := spec.Template.Spec.TerminationGracePeriodSeconds
+	if grace == nil || *grace < 90 {
+		t.Fatalf("terminationGracePeriodSeconds = %v; an agent with hundreds of uprobes needs about 40s to detach them, and a SIGKILL first leaves the kernel to do it far more slowly", grace)
+	}
+}

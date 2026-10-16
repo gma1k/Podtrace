@@ -115,4 +115,22 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["tracerconfigs"]
+
+  - name: vapplicationtrace.podtrace.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: {{ include "podtrace.fullname" . }}-webhook
+        namespace: {{ include "podtrace.systemNamespace" . }}
+        path: /validate-podtrace-io-v1alpha1-applicationtrace
+      {{- if .Values.webhook.caBundle }}
+      caBundle: {{ .Values.webhook.caBundle }}
+      {{- end }}
+    rules:
+      - apiGroups: ["podtrace.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["applicationtraces"]
 {{- end }}

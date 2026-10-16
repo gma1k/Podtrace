@@ -10,6 +10,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-podtrace-io-v1alpha1-applicationtrace
+  failurePolicy: Fail
+  name: vapplicationtrace.podtrace.io
+  rules:
+  - apiGroups:
+    - podtrace.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - applicationtraces
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-podtrace-io-v1alpha1-exporterconfig
   failurePolicy: Fail
   name: vexporterconfig.podtrace.io

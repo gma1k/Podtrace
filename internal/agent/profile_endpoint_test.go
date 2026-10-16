@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -115,7 +116,9 @@ func TestServeMetricsRegistersTheProfileEndpointOnlyWithAProfiler(t *testing.T) 
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("serveMetrics returned %v on shutdown", err)
+	}
 }
 
 func TestBuildExportersAddsTheProfilerOnlyWhenEnabled(t *testing.T) {

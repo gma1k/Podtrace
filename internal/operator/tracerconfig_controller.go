@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -39,6 +41,7 @@ import (
 // agents the minimum RBAC to do their job.
 type TracerConfigReconciler struct {
 	client.Client
+	APIReader       client.Reader
 	Scheme          *runtime.Scheme
 	SystemNamespace string
 }
@@ -85,6 +88,16 @@ func (r *TracerConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
+	if err := podtracev1alpha1.ValidateSystemNamespace(tc.Spec.SystemNamespace); err != nil {
+		logger.Info("refusing agent fleet: system namespace not allowed", "systemNamespace", tc.Spec.SystemNamespace)
+		r.setCondition(&tc, ConditionDegraded, metav1.ConditionTrue, "SystemNamespaceInvalid", err.Error())
+		r.setCondition(&tc, ConditionReady, metav1.ConditionFalse, "SystemNamespaceInvalid", err.Error())
+		if uerr := r.Status().Update(ctx, &tc); uerr != nil && !apierrors.IsConflict(uerr) {
+			return ctrl.Result{}, fmt.Errorf("update status: %w", uerr)
+		}
+		return ctrl.Result{}, nil
+	}
+
 	systemNS := r.systemNamespaceFor(&tc)
 
 	if err := r.ensureAgentRBAC(ctx, &tc, systemNS); err != nil {
@@ -96,7 +109,8 @@ func (r *TracerConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	ds, err := r.ensureAgentDaemonSet(ctx, &tc, systemNS)
+	webhookHash, webhookProblem := r.alertWebhookSecret(ctx, &tc, systemNS)
+	ds, err := r.ensureAgentDaemonSet(ctx, &tc, systemNS, webhookHash)
 	if err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -124,8 +138,11 @@ func (r *TracerConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("spec.btfMode=embedded is deprecated and does nothing; agent uses host BTF (auto). Use btfMode=file with spec.btfSource")
 	}
 	blobProblem := r.btfBlobProblem(ctx, &tc, systemNS)
-	r.setCondition(&tc, ConditionReconciled, metav1.ConditionTrue, "Reconciled",
-		reconciledMessageFor(&tc, blobProblem))
+	message := reconciledMessageFor(&tc, blobProblem)
+	if webhookProblem != "" {
+		message += "; " + webhookProblem
+	}
+	r.setCondition(&tc, ConditionReconciled, metav1.ConditionTrue, "Reconciled", message)
 	r.setCondition(&tc, ConditionReady,
 		conditionStatusFromBool(tc.Status.ReadyAgents == tc.Status.DesiredAgents && tc.Status.DesiredAgents > 0),
 		"AgentFleetReady",
@@ -139,14 +156,66 @@ func (r *TracerConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, fmt.Errorf("update status: %w", err)
 	}
-	if blobProblem != "" {
+	if blobProblem != "" || webhookProblem != "" {
 		return ctrl.Result{RequeueAfter: btfBlobRecheckInterval}, nil
 	}
 	return ctrl.Result{}, nil
 }
 
-// btfBlobRecheckInterval is how often a TracerConfig naming an unusable BTF
-// blob is re-examined, so the condition clears on its own once the blob lands.
+// AnnotationAlertWebhookHash on the agent pod template carries a hash of the
+// alert webhook URL read from webhookURLSecretRef, so changing the Secret
+// rolls the agents.
+const AnnotationAlertWebhookHash = "podtrace.io/alert-webhook-hash"
+
+// alertWebhookSecret reads spec.agent.alerting.webhookURLSecretRef.
+func (r *TracerConfigReconciler) alertWebhookSecret(ctx context.Context, tc *podtracev1alpha1.TracerConfig, systemNS string) (hash, problem string) {
+	a := tc.Spec.Agent.Alerting
+	if a == nil || !a.Enabled || a.WebhookURLSecretRef == nil || a.WebhookURLSecretRef.Name == "" {
+		return "", ""
+	}
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
+	ref := a.WebhookURLSecretRef
+	var secret corev1.Secret
+	err := reader.Get(ctx, types.NamespacedName{Namespace: systemNS, Name: ref.Name}, &secret)
+	if apierrors.IsNotFound(err) {
+		return "", fmt.Sprintf("alert webhook Secret %s/%s does not exist, so agents run without the webhook", systemNS, ref.Name)
+	}
+	if err != nil {
+		return "", ""
+	}
+	value := secret.Data[ref.Key]
+	if len(value) == 0 {
+		return "", fmt.Sprintf("alert webhook Secret %s/%s has no key %q, so agents run without the webhook", systemNS, ref.Name, ref.Key)
+	}
+	sum := sha256.Sum256(value)
+	return hex.EncodeToString(sum[:8]), ""
+}
+
+// secretToTracerConfigs enqueues the TracerConfigs whose alert webhook Secret
+// changed.
+func (r *TracerConfigReconciler) secretToTracerConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	var configs podtracev1alpha1.TracerConfigList
+	if err := r.List(ctx, &configs); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for i := range configs.Items {
+		tc := &configs.Items[i]
+		a := tc.Spec.Agent.Alerting
+		if a == nil || a.WebhookURLSecretRef == nil || a.WebhookURLSecretRef.Name != obj.GetName() {
+			continue
+		}
+		if r.systemNamespaceFor(tc) != obj.GetNamespace() {
+			continue
+		}
+		out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: tc.Name}})
+	}
+	return out
+}
+
 const btfBlobRecheckInterval = 15 * time.Second
 
 // SetupWithManager registers the reconciler, declaring owned resources
@@ -166,10 +235,13 @@ func (r *TracerConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Watches(&podtracev1alpha1.PodTraceSession{},
-			handler.EnqueueRequestsFromMapFunc(r.enqueueAllTracerConfigs)).
+			handler.EnqueueRequestsFromMapFunc(r.enqueueAllTracerConfigs),
+			builder.WithPredicates(sessionStateChangedPredicate())).
 		Watches(&podtracev1alpha1.TracerConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueAllTracerConfigs),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.secretToTracerConfigs)).
 		Watches(&corev1.Node{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueAllTracerConfigs),
 			builder.WithPredicates(nodeSchedulingChangedPredicate())).
@@ -192,9 +264,26 @@ func (r *TracerConfigReconciler) enqueueAllTracerConfigs(ctx context.Context, _ 
 	return requests
 }
 
+// sessionStateChangedPredicate admits only the session events that can
+// change a TracerConfig's active-session count: creation, deletion, and a
+// state transition.
+func sessionStateChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldSession, okOld := e.ObjectOld.(*podtracev1alpha1.PodTraceSession)
+			newSession, okNew := e.ObjectNew.(*podtracev1alpha1.PodTraceSession)
+			if !okOld || !okNew {
+				return true
+			}
+			return oldSession.Status.State != newSession.Status.State ||
+				oldSession.DeletionTimestamp.IsZero() != newSession.DeletionTimestamp.IsZero()
+		},
+	}
+}
+
 // nodeSchedulingChangedPredicate admits only the Node transitions that can
 // change which fleet targets a node: creation, deletion, and edits to labels
-// or taints. Everything else, status heartbeats above all, is dropped.
+// or taints.
 func nodeSchedulingChangedPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
@@ -562,13 +651,17 @@ func (r *TracerConfigReconciler) deleteAgentObjectsOutsideNamespace(ctx context.
 
 // ensureAgentDaemonSet creates / updates the DaemonSet, returning its
 // current status so Reconcile can roll it up.
-func (r *TracerConfigReconciler) ensureAgentDaemonSet(ctx context.Context, tc *podtracev1alpha1.TracerConfig, systemNS string) (*appsv1.DaemonSet, error) {
+func (r *TracerConfigReconciler) ensureAgentDaemonSet(ctx context.Context, tc *podtracev1alpha1.TracerConfig, systemNS, webhookHash string) (*appsv1.DaemonSet, error) {
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: ManagedObjectMeta(AgentDaemonSetName(tc.Name), systemNS, ComponentAgent, agentObjectLabels(tc.Name)),
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, ds, func() error {
 		ds.Labels = mergeLabels(ds.Labels, agentObjectLabels(tc.Name))
 		ds.Spec = buildAgentDaemonSetSpec(tc, systemNS)
+		if webhookHash != "" {
+			ds.Spec.Template.Annotations = mergeLabels(ds.Spec.Template.Annotations,
+				map[string]string{AnnotationAlertWebhookHash: webhookHash})
+		}
 		return controllerutil.SetControllerReference(tc, ds, r.Scheme)
 	}); err != nil {
 		return nil, err

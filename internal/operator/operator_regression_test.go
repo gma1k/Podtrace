@@ -149,8 +149,8 @@ func TestTracerConfigToPodTraces(t *testing.T) {
 		t.Errorf("default TracerConfig should enqueue all PodTraces; got %d", len(got))
 	}
 	other := &podtracev1alpha1.TracerConfig{ObjectMeta: metav1.ObjectMeta{Name: "other"}}
-	if got := r.tracerConfigToPodTraces(context.Background(), other); len(got) != 0 {
-		t.Errorf("non-default TracerConfig should enqueue nothing; got %d", len(got))
+	if got := r.tracerConfigToPodTraces(context.Background(), other); len(got) != 2 {
+		t.Errorf("a non-default fleet should enqueue all PodTraces; got %d", len(got))
 	}
 }
 

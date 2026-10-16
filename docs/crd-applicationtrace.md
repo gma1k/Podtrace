@@ -63,6 +63,10 @@ podtrace watch --application --name checkout \
 | `thresholds` | object | optional | Passed through to the generated `PodTrace`. |
 | `paused` | bool | optional | Stop tracing without deleting; propagated to the child. |
 
+### Admission checks
+
+With the validating webhook on (`webhook.enabled=true`), an ApplicationTrace is rejected at `kubectl apply` when its name is longer than 63 characters, `appSelector.matchSelectors` is empty or holds a malformed selector, `namespaceSelector` is malformed, or `exporterRef` names no ExporterConfig in the namespace. A `namespaceSelector` reaching a namespace that has not granted tracing is admitted with a warning, as for a PodTrace; the operator still enforces consent at reconcile time.
+
 ## Status reference
 
 | Field | Notes |

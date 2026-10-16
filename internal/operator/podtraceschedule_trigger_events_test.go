@@ -65,6 +65,7 @@ func podtraceAlertEvent(namespace, pod string) *corev1.Event {
 			},
 		},
 		Reason:         alerting.EventReasonAlert,
+		Source:         corev1.EventSource{Component: alerting.EventComponent},
 		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: namespace, Name: pod},
 	}
 }

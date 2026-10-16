@@ -22,9 +22,19 @@ package v1alpha1
 //
 // AgentAlertingSpec configures agent-side resource-limit alert delivery.
 type AgentAlertingSpecApplyConfiguration struct {
-	Enabled              *bool   `json:"enabled,omitempty"`
-	WebhookURL           *string `json:"webhookURL,omitempty"`
-	AllowInsecureWebhook *bool   `json:"allowInsecureWebhook,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+	// WebhookURL is the alert webhook in plain text. A Slack or PagerDuty
+	// URL is itself a credential, readable by anyone who can read this
+	// TracerConfig or the agent DaemonSet; prefer WebhookURLSecretRef.
+	WebhookURL *string `json:"webhookURL,omitempty"`
+	// WebhookURLSecretRef reads the alert webhook URL from a key of a Secret
+	// in the fleet's system namespace. The agents receive it as an env var
+	// from the Secret, so the URL appears in neither this TracerConfig nor
+	// the DaemonSet. A missing Secret or key does not stop the agents; they
+	// run without the webhook and the TracerConfig's Reconciled condition
+	// says why.
+	WebhookURLSecretRef  *SecretKeySelectorApplyConfiguration `json:"webhookURLSecretRef,omitempty"`
+	AllowInsecureWebhook *bool                                `json:"allowInsecureWebhook,omitempty"`
 }
 
 // AgentAlertingSpecApplyConfiguration constructs a declarative configuration of the AgentAlertingSpec type for use with
@@ -46,6 +56,14 @@ func (b *AgentAlertingSpecApplyConfiguration) WithEnabled(value bool) *AgentAler
 // If called multiple times, the WebhookURL field is set to the value of the last call.
 func (b *AgentAlertingSpecApplyConfiguration) WithWebhookURL(value string) *AgentAlertingSpecApplyConfiguration {
 	b.WebhookURL = &value
+	return b
+}
+
+// WithWebhookURLSecretRef sets the WebhookURLSecretRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the WebhookURLSecretRef field is set to the value of the last call.
+func (b *AgentAlertingSpecApplyConfiguration) WithWebhookURLSecretRef(value *SecretKeySelectorApplyConfiguration) *AgentAlertingSpecApplyConfiguration {
+	b.WebhookURLSecretRef = value
 	return b
 }
 

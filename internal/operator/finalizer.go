@@ -70,6 +70,16 @@ func cleanupPodTraceChildren(ctx context.Context, c client.Client, pt *podtracev
 // cleanupOrphanBundles deletes exporter-bundle ConfigMaps/Secrets for this
 // PodTrace that live in any namespace other than keepNS.
 func cleanupOrphanBundles(ctx context.Context, c client.Client, pt *podtracev1alpha1.PodTrace, keepNS string) error {
+	return cleanupOrphanBundlesOutside(ctx, c, pt, []string{keepNS})
+}
+
+// cleanupOrphanBundlesOutside deletes exporter-bundle ConfigMaps/Secrets for
+// this PodTrace that live in none of the keep namespaces.
+func cleanupOrphanBundlesOutside(ctx context.Context, c client.Client, pt *podtracev1alpha1.PodTrace, keep []string) error {
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, ns := range keep {
+		keepSet[ns] = struct{}{}
+	}
 	sel := client.MatchingLabels{
 		LabelManagedBy:    ManagedByValue,
 		LabelComponent:    ComponentBundle,
@@ -82,7 +92,7 @@ func cleanupOrphanBundles(ctx context.Context, c client.Client, pt *podtracev1al
 		return fmt.Errorf("list bundle ConfigMaps: %w", err)
 	}
 	for i := range cms.Items {
-		if cms.Items[i].Namespace == keepNS {
+		if _, ok := keepSet[cms.Items[i].Namespace]; ok {
 			continue
 		}
 		if err := c.Delete(ctx, &cms.Items[i]); err != nil && !apierrors.IsNotFound(err) {
@@ -96,7 +106,7 @@ func cleanupOrphanBundles(ctx context.Context, c client.Client, pt *podtracev1al
 		return fmt.Errorf("list bundle Secrets: %w", err)
 	}
 	for i := range secrets.Items {
-		if secrets.Items[i].Namespace == keepNS {
+		if _, ok := keepSet[secrets.Items[i].Namespace]; ok {
 			continue
 		}
 		if err := c.Delete(ctx, &secrets.Items[i]); err != nil && !apierrors.IsNotFound(err) {
@@ -165,6 +175,9 @@ func cleanupPodTraceSessionChildren(ctx context.Context, c client.Client, s *pod
 		return err
 	}
 	if err := cleanupSessionPodReadRBAC(ctx, c, s); err != nil {
+		return err
+	}
+	if err := cleanupSessionReportStaging(ctx, c, s, systemNS); err != nil {
 		return err
 	}
 	if err := cleanupSessionServiceAccount(ctx, c, s, systemNS); err != nil {

@@ -20,12 +20,13 @@ import (
 // (recursively) the embedded SessionTemplate spec, so a schedule cannot
 // fire sessions that would themselves be rejected.
 type PodTraceScheduleCustomValidator struct {
-	Client client.Client
+	Client          client.Client
+	SystemNamespace string
 }
 
-func SetupPodTraceScheduleWebhookWithManager(mgr ctrl.Manager) error {
+func SetupPodTraceScheduleWebhookWithManager(mgr ctrl.Manager, systemNamespace string) error {
 	return ctrl.NewWebhookManagedBy(mgr, &podtracev1alpha1.PodTraceSchedule{}).
-		WithValidator(&PodTraceScheduleCustomValidator{Client: mgr.GetClient()}).
+		WithValidator(&PodTraceScheduleCustomValidator{Client: mgr.GetClient(), SystemNamespace: systemNamespace}).
 		Complete()
 }
 
@@ -47,6 +48,10 @@ func (v *PodTraceScheduleCustomValidator) ValidateDelete(_ context.Context, _ *p
 }
 
 func (v *PodTraceScheduleCustomValidator) validate(ctx context.Context, s *podtracev1alpha1.PodTraceSchedule) (admission.Warnings, error) {
+	if len(s.Name) > podtracev1alpha1.MaxManagedCRNameLength {
+		return nil, fmt.Errorf("metadata.name is %d characters; PodTraceSchedule names are limited to %d because the name is stamped into the podtrace.io/schedule label of every session",
+			len(s.Name), podtracev1alpha1.MaxManagedCRNameLength)
+	}
 	hasSchedule := s.Spec.Schedule != ""
 	hasTrigger := s.Spec.Trigger != nil
 	switch {
@@ -90,7 +95,10 @@ func (v *PodTraceScheduleCustomValidator) validate(ctx context.Context, s *podtr
 	if tmpl.Duration.Duration <= 0 {
 		return nil, fmt.Errorf("spec.sessionTemplate.spec.duration must be greater than zero")
 	}
-	if err := resolveExporterRef(ctx, v.Client, s.Namespace, tmpl.ExporterRef.Name); err != nil {
+	if err := resolveSessionExporterRef(ctx, v.Client, s.Namespace, tmpl.ExporterRef.Name); err != nil {
+		return nil, fmt.Errorf("spec.sessionTemplate.%w", err)
+	}
+	if err := resolveTracerConfigRef(ctx, v.Client, tmpl.TracerConfigRef, s.Namespace, v.SystemNamespace); err != nil {
 		return nil, fmt.Errorf("spec.sessionTemplate.%w", err)
 	}
 	if err := validateReportRef(tmpl.ReportRef); err != nil {

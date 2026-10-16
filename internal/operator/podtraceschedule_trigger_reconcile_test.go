@@ -194,6 +194,7 @@ func TestReconcileTrigger_HistoryLimitFailurePropagates(t *testing.T) {
 }
 
 func TestReconcileTrigger_ReplaceDeleteFailurePropagates(t *testing.T) {
+	now := time.Now()
 	sch := triggerScheduleWithTemplate("fr", "obs", func(s *podtracev1alpha1.PodTraceSchedule) {
 		s.Spec.Trigger.ConcurrencyPolicy = podtracev1alpha1.ReplaceConcurrent
 	})
@@ -202,15 +203,66 @@ func TestReconcileTrigger_ReplaceDeleteFailurePropagates(t *testing.T) {
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
 			return errors.New("apiserver down")
 		},
-	}, &active[0])
+	}, &active[0], storedAlertEvent("obs", "hog-a", "uid-a", now.Add(-time.Minute)))
 
-	_, err := r.reconcileTrigger(context.Background(), sch, active, nil, nil, time.Now())
+	_, err := r.reconcileTrigger(context.Background(), sch, active, nil, nil, now)
 	if err == nil {
 		t.Fatal("a failed Replace delete must surface as a reconcile error")
 		return
 	}
 	if !strings.Contains(err.Error(), "replace: delete active session running") {
 		t.Errorf("error %q should name the session it could not replace", err.Error())
+	}
+}
+
+func TestReconcileTrigger_ReplaceKeepsActiveSessionWithoutNewAlert(t *testing.T) {
+	sch := triggerScheduleWithTemplate("fr", "obs", func(s *podtracev1alpha1.PodTraceSchedule) {
+		s.Spec.Trigger.ConcurrencyPolicy = podtracev1alpha1.ReplaceConcurrent
+	})
+	active := []podtracev1alpha1.PodTraceSession{ownedSession("running", "obs", sch)}
+	deletes := 0
+	r := reconcileTriggerFixture(t, sch, interceptor.Funcs{
+		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			deletes++
+			return cl.Delete(ctx, obj, opts...)
+		},
+	}, &active[0])
+
+	if _, err := r.reconcileTrigger(context.Background(), sch, active, nil, nil, time.Now()); err != nil {
+		t.Fatalf("reconcileTrigger: %v", err)
+	}
+	if deletes != 0 {
+		t.Errorf("a pass with nothing to fire deleted %d active session(s)", deletes)
+	}
+}
+
+func TestReconcileTrigger_ReplaceKeepsSessionItJustFired(t *testing.T) {
+	now := time.Now()
+	sch := triggerScheduleWithTemplate("fr", "obs", func(s *podtracev1alpha1.PodTraceSchedule) {
+		s.Spec.Trigger.ConcurrencyPolicy = podtracev1alpha1.ReplaceConcurrent
+	})
+	r := reconcileTriggerFixture(t, sch, interceptor.Funcs{},
+		storedAlertEvent("obs", "hog-a", "uid-a", now.Add(-time.Minute)))
+
+	if _, err := r.reconcileTrigger(context.Background(), sch, nil, nil, nil, now); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	var sessions podtracev1alpha1.PodTraceSessionList
+	if err := r.List(context.Background(), &sessions, client.InNamespace("obs")); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.Items) != 1 {
+		t.Fatalf("want 1 fired session, got %d", len(sessions.Items))
+	}
+
+	if _, err := r.reconcileTrigger(context.Background(), sch, sessions.Items, nil, nil, now.Add(5*time.Second)); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if err := r.List(context.Background(), &sessions, client.InNamespace("obs")); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.Items) != 1 {
+		t.Errorf("the resync after firing must keep the fired session, got %d", len(sessions.Items))
 	}
 }
 
@@ -230,29 +282,34 @@ func TestReconcileTrigger_ReplaceToleratesAlreadyDeletedSession(t *testing.T) {
 	}
 }
 
-func TestReconcileTrigger_SessionCreateFailureDegrades(t *testing.T) {
+func TestReconcileTrigger_SessionCreateFailureSkipsEvent(t *testing.T) {
 	now := time.Now()
 	sch := triggerScheduleWithTemplate("fr", "obs", nil)
+	creates := 0
 	r := reconcileTriggerFixture(t, sch, interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			if _, ok := obj.(*podtracev1alpha1.PodTraceSession); ok {
-				return errors.New("admission webhook rejected")
+				creates++
+				if creates == 1 {
+					return errors.New("admission webhook rejected")
+				}
 			}
 			return cl.Create(ctx, obj, opts...)
 		},
-	}, storedAlertEvent("obs", "hog-a", "uid-a", now.Add(-time.Minute)))
+	},
+		storedAlertEvent("obs", "hog-a", "uid-a", now.Add(-2*time.Minute)),
+		storedAlertEvent("obs", "hog-b", "uid-b", now.Add(-time.Minute)))
 
-	_, err := r.reconcileTrigger(context.Background(), sch, nil, nil, nil, now)
-	if err == nil {
-		t.Fatal("a failed session create must surface as a reconcile error")
-		return
-	}
-	if !strings.Contains(err.Error(), "ensure triggered session for obs/hog-a") {
-		t.Errorf("error %q should name the pod it failed to capture", err.Error())
+	if _, err := r.reconcileTrigger(context.Background(), sch, nil, nil, nil, now); err != nil {
+		t.Fatalf("one rejected event must not fail the pass: %v", err)
 	}
 	cond := findCondition(sch.Status.Conditions, ConditionDegraded)
 	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != "CreateSession" {
 		t.Errorf("want Degraded=True/CreateSession, got %+v", cond)
+	}
+	firings := triggerFirings(sch)
+	if len(firings) != 1 || firings[0].PodName != "hog-b" {
+		t.Errorf("the alert queued behind the rejected one must still fire, got %+v", firings)
 	}
 }
 
@@ -446,5 +503,42 @@ func TestTriggerNamespaces_InvalidSelectorErrors(t *testing.T) {
 
 	if _, _, err := r.triggerNamespaces(context.Background(), sch); err == nil {
 		t.Error("expected an error for a malformed namespace selector")
+	}
+}
+
+func TestReconcileTrigger_ReplaceKeepsSessionWhenFiringNotYetCached(t *testing.T) {
+	now := time.Now()
+	sch := triggerScheduleWithTemplate("fr", "obs", func(s *podtracev1alpha1.PodTraceSchedule) {
+		s.Spec.Trigger.ConcurrencyPolicy = podtracev1alpha1.ReplaceConcurrent
+	})
+	alert := storedAlertEvent("obs", "hog-a", "uid-a", now.Add(-time.Minute))
+	r := reconcileTriggerFixture(t, sch, interceptor.Funcs{}, alert)
+
+	if _, err := r.reconcileTrigger(context.Background(), sch, nil, nil, nil, now); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	var sessions podtracev1alpha1.PodTraceSessionList
+	if err := r.List(context.Background(), &sessions, client.InNamespace("obs")); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.Items) != 1 {
+		t.Fatalf("want 1 fired session, got %d", len(sessions.Items))
+	}
+	sessions.Items[0].Finalizers = []string{FinalizerCleanup}
+	if err := r.Update(context.Background(), &sessions.Items[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := sch.DeepCopy()
+	stale.Status.Trigger = nil
+	if _, err := r.reconcileTrigger(context.Background(), stale, sessions.Items, nil, nil, now.Add(time.Second)); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	var after podtracev1alpha1.PodTraceSessionList
+	if err := r.List(context.Background(), &after, client.InNamespace("obs")); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Items) != 1 || after.Items[0].DeletionTimestamp != nil {
+		t.Errorf("a pass that has not yet seen its own firing must not delete the session it started, got %+v", after.Items)
 	}
 }

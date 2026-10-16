@@ -205,6 +205,24 @@ operator's RBAC narrow.
 If you want to share one ExporterConfig across many namespaces, copy
 the CR into each namespace (the bundle is per-CR anyway).
 
+## Who may create an ExporterConfig
+
+Treat `create` on ExporterConfig as equivalent to `get` on every Secret in
+that namespace. The operator copies whichever Secret an ExporterConfig
+names, using its own access rather than its author's: every key of
+`otlp.headersFromSecret` is sent as a request header to the configured
+endpoint, `headers[].valueFrom` sends one key, and
+`reportRef.objectStore.credentialsSecretRef` on a session hands the
+uploader that Secret's cloud credentials. The `SecretMissing` and
+`SecretKeyMissing` readiness reasons also tell the author whether a Secret
+or key exists.
+
+This is by design. Only grant ExporterConfig, PodTrace and PodTraceSession
+writes to principals that may already read the namespace's Secrets, which
+is true of the built-in `edit` and `admin` roles. Where a principal may
+create workloads but must not read Secrets (Secrets managed by an external
+operator, say), do not give it podtrace write access in that namespace.
+
 ## Status reference
 
 The operator runs a dedicated reconciler that keeps an ExporterConfig's

@@ -100,18 +100,27 @@ func (r *uprobeRegistry) acquireWithHooks(site uprobeSite, attach func() (link.L
 }
 
 // release drops one handle's reference, closing the link with the last one.
+//
+// The close runs after the registry lock is released. Closing a uprobe link
+// waits for the kernel to retire the probe, which takes milliseconds, and the
+// tracer closes its links from many goroutines at once: under the lock those
+// closes ran one at a time, so an agent with a few thousand uprobes outlived
+// its termination grace period on every shutdown.
 func (r *uprobeRegistry) release(site uprobeSite) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s, ok := r.sites[site]
 	if !ok {
+		r.mu.Unlock()
 		return nil
 	}
 	s.refs--
 	if s.refs > 0 {
+		r.mu.Unlock()
 		return nil
 	}
 	delete(r.sites, site)
+	r.mu.Unlock()
+
 	err := s.link.Close()
 	if s.teardown != nil {
 		s.teardown()

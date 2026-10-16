@@ -7,11 +7,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// registerReconcilers wires every reconciler onto the manager. Order
-// does not matter — the manager starts them in parallel — but we
-// construct them in dependency order (TracerConfig first, then
-// Session, then PodTrace, then ExporterConfig) so a stack trace
-// points at the failing one.
+// registerReconcilers wires every reconciler onto the manager.
 func registerReconcilers(mgr ctrl.Manager, opts Options) error {
 	if err := registerExporterConfigIndexers(context.Background(), mgr); err != nil {
 		return fmt.Errorf("ExporterConfig indexers: %w", err)
@@ -19,6 +15,7 @@ func registerReconcilers(mgr ctrl.Manager, opts Options) error {
 
 	tcr := &TracerConfigReconciler{
 		Client:          mgr.GetClient(),
+		APIReader:       mgr.GetAPIReader(),
 		Scheme:          mgr.GetScheme(),
 		SystemNamespace: opts.SystemNamespace,
 	}

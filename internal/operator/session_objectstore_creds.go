@@ -9,7 +9,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
 )
@@ -43,22 +42,23 @@ func ensureSessionObjectStoreCredentials(ctx context.Context, c client.Client, r
 
 	dstName := SessionObjectStoreCredsName(s.UID)
 	dst := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: dstName, Namespace: systemNS},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dstName,
+			Namespace: systemNS,
+			Labels: map[string]string{
+				LabelManagedBy:   ManagedByValue,
+				LabelComponent:   "objectstore-credentials",
+				LabelSessionName: s.Name,
+				LabelSessionNS:   s.Namespace,
+			},
+			Annotations: map[string]string{
+				"podtrace.io/source-ref": s.Namespace + "/" + ref.Name,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: src.Data,
 	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, c, dst, func() error {
-		dst.Labels = mergeLabels(dst.Labels, map[string]string{
-			LabelManagedBy:   ManagedByValue,
-			LabelComponent:   "objectstore-credentials",
-			LabelSessionName: s.Name,
-			LabelSessionNS:   s.Namespace,
-		})
-		dst.Annotations = mergeLabels(dst.Annotations, map[string]string{
-			"podtrace.io/source-ref": s.Namespace + "/" + ref.Name,
-		})
-		dst.Type = corev1.SecretTypeOpaque
-		dst.Data = src.Data
-		return nil
-	}); err != nil {
+	if err := applySecret(ctx, c, reader, dst); err != nil {
 		return "", fmt.Errorf("upsert objectstore credentials in %s: %w", systemNS, err)
 	}
 	return dstName, nil

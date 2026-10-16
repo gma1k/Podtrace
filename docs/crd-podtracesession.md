@@ -73,7 +73,7 @@ end of diagnose. Mutually exclusive with itself — exactly one of:
 | Field | What it produces |
 |---|---|
 | `configMap.name` | A ConfigMap in the session's namespace. Each traced node writes its report under a per-node key `data["report-<node>.txt"]` (so multi-node sessions don't overwrite each other). The CLI patches it via a per-session Role + RoleBinding scoped to that exact name. Capped at the etcd ConfigMap limit (~1MiB). |
-| `secret.name` | A Secret in the session's namespace, same per-node `data["report-<node>.txt"]` keys as the ConfigMap sink. Use this when the report may carry sensitive data (private hostnames, paths, payloads). Same size cap as ConfigMap. |
+| `secret.name` | A Secret in the session's namespace, same per-node `data["report-<node>.txt"]` keys as the ConfigMap sink. Use this when the report may carry sensitive data (private hostnames, paths, payloads). Same size cap as ConfigMap. Each Job writes its report to a staging Secret in the system namespace, and the operator creates this Secret from them once the session completes or fails; the `ReportUploaded` condition records the outcome. The session fails with `ReportObjectConflict` if a Secret of that name exists that the session (or an earlier run of its schedule) did not create. |
 | `objectStore` | Uploads to an S3-, GCS-, or Azure-Blob–compatible bucket via a [native sidecar](object-store-reports.md). The only sink that escapes the etcd object-size limit. Requires `TracerConfig.spec.session.sidecarUploader=true` and either ambient cloud credentials (IRSA / Workload Identity / Managed Identity) or an explicit `credentialsSecretRef`. |
 
 When `reportRef` is unset, only the exporter receives event spans and
@@ -180,7 +180,12 @@ policy from a `TracerConfig`, resolved **per node**:
 So a session whose pods span a `general` pool and a `regulated` pool runs
 one Job under each pool's own policy — the `regulated` Job redacts, the
 `general` one does not. Pin with `tracerConfigRef` when a session must be
-reproducible regardless of where its pods land:
+reproducible regardless of where its pods land. A pin overrides the
+per-node policy in both directions: any namespace may pin a TracerConfig
+whose `systemNamespace` is the operator's own, including onto nodes whose
+fleet redacts more strictly. Keep configs with weaker redaction in another
+`systemNamespace` and grant them with `podtrace.io/allow-sessions-from`
+when that must not happen.
 
 ```yaml
 spec:
@@ -210,13 +215,21 @@ SA). Its grants:
 
 | Verb | Resource | Scope |
 |---|---|---|
-| `get`, `list`, `watch` | `pods` | session namespace |
-| `get`, `update` | `configmaps` or `secrets` | exact `reportRef` name only |
-| `create` | `configmaps` or `secrets` | session namespace (Kubernetes splits create from update) |
+| `get`, `list`, `watch` | `pods`, `events` | session namespace, plus each consenting namespace a cross-namespace session targets |
+| `get`, `update` | `configmaps` | exact `reportRef.configMap` name only |
+| `get`, `delete` | `secrets` | the session's own staging Secrets in the system namespace, by name (`reportRef.secret` only) |
+| `create` | `secrets` | system namespace (`reportRef.secret` only; Kubernetes cannot scope create by name) |
+
+A `reportRef.secret` session gets no access to the tenant namespace's
+Secrets at all: the operator holds `secrets update` only in its own
+namespace, and Kubernetes does not let it grant a verb it lacks, so the
+Job writes to a staging Secret and the operator publishes the result.
 
 Cluster-wide pod read, cluster-wide secret read, and access to other
 ConfigMaps in the namespace are **not** granted. The session SA cannot
-exfiltrate any sink other than its own.
+exfiltrate any sink other than its own. A pod-read grant in another
+namespace is revoked as soon as the session stops targeting it, for
+example when that namespace withdraws its consent.
 
 ## Constraints
 
@@ -241,10 +254,15 @@ kubectl describe podtracesession <name> -n <ns>
 ```
 Look at the `Conditions` block. Likely candidates:
 - `Degraded=True ExporterNotFound` — fix the `exporterRef`.
-- `Degraded=True NodeCapacity` — `TracerConfig.spec.maxConcurrentSessionsPerNode` saturated.
+- `Degraded=True NodeCapacity` — `TracerConfig.spec.maxConcurrentSessionsPerNode` saturated. A session that is still waiting for a slot 30 minutes after creation fails with `NodeCapacityDeadlineExceeded`. On a shared cluster, set `TracerConfig.spec.session.maxDuration` to bound how long one session can hold a slot; it is unset by default. For always-on tracing use a `PodTrace`, which holds no slot and has no duration.
 - No matched pods — selector matches no `Running` pods.
 
-**Phase = `Failed` immediately:**
+**Phase = `Failed` immediately:** check the `Degraded` condition first. The
+operator fails a session up front, without creating a Job, when it can never
+run: `InvalidDuration` (`spec.duration` is zero or negative) or
+`DurationTooLong` (the duration, after the node's
+`TracerConfig.spec.session.maxDuration` cap, exceeds the 24h a session Job can
+run). Otherwise read the Job's termination message:
 ```bash
 kubectl -n podtrace-system get pods -l podtrace.io/session=<name> \
   -o jsonpath='{.items[*].status.containerStatuses[0].state.terminated.message}{"\n"}'

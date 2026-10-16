@@ -38,6 +38,7 @@ applies the CR from `values.yaml` via a post-install hook Job:
 | `session.activeDeadlineOffset` | `spec.session.activeDeadlineOffset` |
 | `session.backoffLimit` | `spec.session.backoffLimit` |
 | `session.maxConcurrentSessionsPerNode` | `spec.maxConcurrentSessionsPerNode` |
+| `session.maxDuration` (default unset: no cap below the 24h Job limit) | `spec.session.maxDuration` |
 | `tracerConfig.sidecarUploader` | `spec.session.sidecarUploader` |
 | `tracerConfig.redaction` | `spec.redaction` |
 

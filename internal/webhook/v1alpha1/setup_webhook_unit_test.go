@@ -56,7 +56,7 @@ func TestSetupPodTraceWebhookWithManager(t *testing.T) {
 
 func TestSetupPodTraceScheduleWebhookWithManager(t *testing.T) {
 	mgr := newNonConnectingManager(t)
-	if err := webhookv1alpha1.SetupPodTraceScheduleWebhookWithManager(mgr); err != nil {
+	if err := webhookv1alpha1.SetupPodTraceScheduleWebhookWithManager(mgr, "podtrace-system"); err != nil {
 		t.Fatalf("SetupPodTraceScheduleWebhookWithManager: %v", err)
 	}
 }
@@ -72,5 +72,12 @@ func TestSetupTracerConfigWebhookWithManager(t *testing.T) {
 	mgr := newNonConnectingManager(t)
 	if err := webhookv1alpha1.SetupTracerConfigWebhookWithManager(mgr); err != nil {
 		t.Fatalf("SetupTracerConfigWebhookWithManager: %v", err)
+	}
+}
+
+func TestSetupApplicationTraceWebhookWithManager(t *testing.T) {
+	mgr := newNonConnectingManager(t)
+	if err := webhookv1alpha1.SetupApplicationTraceWebhookWithManager(mgr); err != nil {
+		t.Fatalf("SetupApplicationTraceWebhookWithManager: %v", err)
 	}
 }

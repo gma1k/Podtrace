@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
+	"github.com/gma1k/podtrace/internal/config"
 )
 
 // PodTraceSessionReconciler turns a PodTraceSession CR into one Job per
@@ -132,6 +133,10 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := validateManagedCRName("PodTraceSession", session.Name); err != nil {
 		return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "NameTooLong", err.Error())
 	}
+	if session.Spec.Duration.Duration <= 0 {
+		return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "InvalidDuration",
+			fmt.Sprintf("spec.duration must be greater than zero, got %s", session.Spec.Duration.Duration))
+	}
 
 	if session.Spec.ReportRef != nil && session.Spec.ReportRef.ObjectStore != nil {
 		if err := podtracev1alpha1.ValidateObjectStoreReference(session.Spec.ReportRef.ObjectStore); err != nil {
@@ -149,6 +154,9 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	session.Status.TargetNamespaces = targets.Namespaces
+	if nodes := fannedOutNodes(session.Status.Jobs); len(nodes) > 0 {
+		targets.Nodes = nodes
+	}
 	if len(targets.Nodes) == 0 {
 		reason, message := "NoMatchedPods", "selector matched zero pods"
 		if len(targets.DeniedNamespaces) > 0 {
@@ -175,6 +183,13 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	tc := resolved.primary()
 	systemNS := systemNamespaceForSession(tc, r.SystemNamespace)
+	for _, node := range targets.Nodes {
+		if d := effectiveSessionDuration(&session, resolved.forNode(node)); d > config.MaxDiagnoseDuration {
+			return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "DurationTooLong",
+				fmt.Sprintf("spec.duration %s on node %s exceeds the %s a session Job can run; lower spec.duration or set TracerConfig.spec.session.maxDuration",
+					d, node, config.MaxDiagnoseDuration))
+		}
+	}
 
 	var ec podtracev1alpha1.ExporterConfig
 	hasExporter := session.Spec.ExporterRef.Name != ""
@@ -210,6 +225,25 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 	}
+	if reportSinkIsSecret(&session) {
+		if err := checkSecretReportTarget(ctx, r.Client, &session); err != nil {
+			var conflict *reportObjectConflictError
+			if errors.As(err, &conflict) {
+				return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "ReportObjectConflict", err.Error())
+			}
+			return ctrl.Result{}, err
+		}
+		nodesByNamespace := map[string][]string{}
+		for _, node := range targets.Nodes {
+			ns := resolved.namespaceForNode(node, r.SystemNamespace)
+			nodesByNamespace[ns] = append(nodesByNamespace[ns], node)
+		}
+		if err := ensureSessionReportStaging(ctx, r.Client, &session, nodesByNamespace); err != nil {
+			r.setCondition(&session, ConditionDegraded, metav1.ConditionTrue, "SessionRBAC", err.Error())
+			_ = r.Status().Update(ctx, &session)
+			return ctrl.Result{}, err
+		}
+	}
 	if err := ensureSessionReportObject(ctx, r.Client, &session); err != nil {
 		var conflict *reportObjectConflictError
 		if errors.As(err, &conflict) {
@@ -238,8 +272,12 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		if len(exceeded) > 0 {
-			r.setCondition(&session, ConditionDegraded, metav1.ConditionTrue, "NodeCapacity",
-				fmt.Sprintf("nodes at max concurrency (%d): %v", cap, exceeded))
+			message := fmt.Sprintf("nodes at max concurrency (%d): %v", cap, exceeded)
+			if deadline := sessionPendingDeadline(&session); len(session.Status.Jobs) == 0 && !deadline.IsZero() && r.now().After(deadline) {
+				return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "NodeCapacityDeadlineExceeded",
+					fmt.Sprintf("%s; no slot freed within %s of creation", message, pendingMatchDeadline))
+			}
+			r.setCondition(&session, ConditionDegraded, metav1.ConditionTrue, "NodeCapacity", message)
 			_ = r.Status().Update(ctx, &session)
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 		}
@@ -267,6 +305,9 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if isTerminal(session.Status.State) && session.Status.CompletionTime == nil {
 		now := metav1.Now()
 		session.Status.CompletionTime = &now
+	}
+	if isTerminal(session.Status.State) {
+		r.publishSecretReport(ctx, &session)
 	}
 	reconciledMessage := fmt.Sprintf("%d Job(s) on %d node(s)", len(jobs), len(targets.Nodes))
 	if len(targets.DeniedNamespaces) > 0 {
@@ -642,7 +683,49 @@ func (r *PodTraceSessionReconciler) ensureJobs(ctx context.Context, s *podtracev
 	return owned, nil
 }
 
-// reconcileTerminalSession handles TTL-driven cleanup only.
+// publishSecretReport moves a terminal session's staged reports into its
+// reportRef Secret and records the outcome on the ReportUploaded condition,
+// which reconcileTerminalSession retries until the TTL deletes the session.
+func (r *PodTraceSessionReconciler) publishSecretReport(ctx context.Context, s *podtracev1alpha1.PodTraceSession) {
+	if !reportSinkIsSecret(s) || secretReportSettled(s) {
+		return
+	}
+	err := publishSessionSecretReport(ctx, r.Client, r.reader(), s)
+	var conflict *reportObjectConflictError
+	switch {
+	case err == nil:
+		_, name := reportRefResource(s.Spec.ReportRef)
+		r.setCondition(s, ConditionReportUploaded, metav1.ConditionTrue, "Published",
+			fmt.Sprintf("report written to Secret %s/%s", s.Namespace, name))
+	case errors.Is(err, errNothingStaged):
+		r.setCondition(s, ConditionReportUploaded, metav1.ConditionFalse, reasonNothingStaged, err.Error())
+	case errors.As(err, &conflict):
+		r.setCondition(s, ConditionReportUploaded, metav1.ConditionFalse, reasonReportObjectConflict, err.Error())
+	default:
+		log.FromContext(ctx).Error(err, "publish session report Secret")
+		r.setCondition(s, ConditionReportUploaded, metav1.ConditionFalse, "PublishFailed", err.Error())
+	}
+}
+
+const (
+	reasonNothingStaged        = "NothingStaged"
+	reasonReportObjectConflict = "ReportObjectConflict"
+)
+
+// secretReportSettled reports whether publishing is over: the report was
+// written, or it never can be. Only a failed write is retried.
+func secretReportSettled(s *podtracev1alpha1.PodTraceSession) bool {
+	for i := range s.Status.Conditions {
+		c := &s.Status.Conditions[i]
+		if c.Type == ConditionReportUploaded {
+			return c.Status == metav1.ConditionTrue || c.Reason == reasonNothingStaged || c.Reason == reasonReportObjectConflict
+		}
+	}
+	return false
+}
+
+// reconcileTerminalSession retries an unpublished Secret report and handles
+// TTL-driven cleanup.
 func (r *PodTraceSessionReconciler) reconcileTerminalSession(ctx context.Context, s *podtracev1alpha1.PodTraceSession) (ctrl.Result, error) {
 	if s.Status.CompletionTime == nil {
 		return ctrl.Result{}, nil
@@ -650,6 +733,15 @@ func (r *PodTraceSessionReconciler) reconcileTerminalSession(ctx context.Context
 	ttl := sessionTTL(s)
 	deadline := s.Status.CompletionTime.Add(time.Duration(ttl) * time.Second)
 	if time.Now().Before(deadline) {
+		if reportSinkIsSecret(s) && !secretReportSettled(s) {
+			r.publishSecretReport(ctx, s)
+			if err := r.Status().Update(ctx, s); err != nil && !apierrors.IsConflict(err) {
+				return ctrl.Result{}, fmt.Errorf("update status: %w", err)
+			}
+			if !secretReportSettled(s) {
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
+		}
 		return ctrl.Result{RequeueAfter: time.Until(deadline)}, nil
 	}
 	if err := r.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {

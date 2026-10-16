@@ -712,3 +712,44 @@ func TestChart_ArtifactHubImagesCoverRenderedImages(t *testing.T) {
 		}
 	}
 }
+
+func TestChart_SessionMaxDurationUnsetByDefault(t *testing.T) {
+	out := renderChart(t, "operator.enabled=true")
+	if bytes.Contains(out, []byte(`maxDuration: "`)) {
+		t.Error("the default TracerConfig must not cap session duration")
+	}
+	out = renderChart(t, "operator.enabled=true", "session.maxDuration=1h")
+	if !bytes.Contains(out, []byte(`maxDuration: "1h"`)) {
+		t.Error("an explicit session.maxDuration must reach the TracerConfig")
+	}
+}
+
+func TestChart_AlertWebhookFromSecret(t *testing.T) {
+	out := renderChart(t, "operator.enabled=true", "agent.alerting.enabled=true",
+		"agent.alerting.webhookURLSecretRef.name=podtrace-alert-webhook")
+	for _, marker := range []string{"webhookURLSecretRef:", `name: "podtrace-alert-webhook"`, `key: "url"`} {
+		if !bytes.Contains(out, []byte(marker)) {
+			t.Errorf("rendered TracerConfig missing %q", marker)
+		}
+	}
+	if bytes.Contains(out, []byte("webhookURL: \"")) {
+		t.Error("no plain-text webhookURL may be rendered when only the Secret is set")
+	}
+}
+
+func TestChart_WebhooksMatchGeneratedReference(t *testing.T) {
+	reference, err := os.ReadFile(filepath.Join(chartDir(t), "..", "..", "..", "hack", "reference", "manifests.yaml"))
+	if err != nil {
+		t.Fatalf("read hack/reference/manifests.yaml: %v", err)
+	}
+	rendered := renderChart(t, "webhook.enabled=true")
+	paths := regexp.MustCompile(`path: (/validate-[a-z0-9-]+)`).FindAllSubmatch(reference, -1)
+	if len(paths) == 0 {
+		t.Fatal("the generated reference lists no webhooks")
+	}
+	for _, m := range paths {
+		if !regexp.MustCompile(`path: ` + regexp.QuoteMeta(string(m[1])) + `\s`).Match(rendered) {
+			t.Errorf("the chart does not register webhook %s that the Go markers generate", m[1])
+		}
+	}
+}

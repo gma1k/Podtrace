@@ -169,8 +169,8 @@ func TestShutdown_WaitsForInFlightAndIsIdempotent(t *testing.T) {
 	}()
 
 	select {
-	case <-shutdownDone:
-		t.Fatal("Shutdown returned while a delivery was still in flight")
+	case err := <-shutdownDone:
+		t.Fatalf("Shutdown returned (%v) while a delivery was still in flight", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)

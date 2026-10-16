@@ -11,6 +11,31 @@ The alerting system monitors:
 - **Fatal Errors**: Application crashes and critical system errors
 - **Diagnostic Issues**: Problems detected during diagnostic analysis
 
+## In-cluster agents
+
+On a cluster the operator sets the agents' alerting from the TracerConfig.
+A webhook URL from Slack, PagerDuty or similar is itself a credential, so
+keep it in a Secret in the fleet's system namespace rather than in
+`webhookURL`, which anyone who can read the TracerConfig or the agent
+DaemonSet can see:
+
+```bash
+kubectl -n podtrace-system create secret generic podtrace-alert-webhook \
+  --from-literal=url=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+helm upgrade podtrace deploy/charts/podtrace -n podtrace-system --reuse-values \
+  --set agent.alerting.enabled=true \
+  --set agent.alerting.webhookURLSecretRef.name=podtrace-alert-webhook
+```
+
+This sets `spec.agent.alerting.webhookURLSecretRef: {name, key}` (key
+defaults to `url` in the chart); set at most one of it and `webhookURL`.
+The agents read the URL from the Secret through their environment, once at
+start. The operator watches the Secret and stamps a hash of the URL on the
+agent pod template, so creating or rotating it rolls the agents onto the new
+value. A missing Secret or key never stops the agents: they keep tracing
+without the webhook, and the TracerConfig's `Reconciled` condition names the
+problem until the Secret appears.
+
 ## Quick Start
 
 Alerting is disabled by default. Pick a channel below, set the variables, and run Podtrace — alerts fire automatically when issues are detected.

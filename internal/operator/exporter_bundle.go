@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
@@ -97,6 +98,9 @@ func renderBundlePayload(policy *bundlePolicyInputs, ec *podtracev1alpha1.Export
 		}
 		var credRef *podtracev1alpha1.SecretKeySelector
 		for _, h := range ec.Spec.OTLP.Headers {
+			if errs := validation.IsConfigMapKey(h.Name); len(errs) > 0 {
+				return nil, nil, nil, fmt.Errorf("spec.otlp.headers[].name %q: %s", h.Name, strings.Join(errs, "; "))
+			}
 			if h.ValueFrom != nil {
 				if credRef != nil {
 					return nil, nil, nil, fmt.Errorf(

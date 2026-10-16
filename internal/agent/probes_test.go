@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -32,7 +33,10 @@ func startProbes(t *testing.T, stall time.Duration) (string, func()) {
 	return "http://" + addr, func() {
 		cancel()
 		select {
-		case <-errCh:
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("probe server Run returned %v on shutdown", err)
+			}
 		case <-time.After(3 * time.Second):
 			t.Log("probe server did not shut down cleanly")
 		}

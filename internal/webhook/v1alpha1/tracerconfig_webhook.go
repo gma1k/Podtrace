@@ -53,6 +53,9 @@ func (v *TracerConfigCustomValidator) validate(ctx context.Context, tc *podtrace
 	if err := validateTracerConfigNameLength(tc.Name); err != nil {
 		return nil, err
 	}
+	if err := podtracev1alpha1.ValidateSystemNamespace(tc.Spec.SystemNamespace); err != nil {
+		return nil, err
+	}
 	unimplemented := warnOnUnimplementedBTFMode(tc)
 	if err := validateBTFSource(tc); err != nil {
 		return unimplemented, err

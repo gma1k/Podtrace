@@ -178,7 +178,9 @@ func TestTheBypassFollowsWhetherACRIsRouting(t *testing.T) {
 	}
 found:
 	cancel()
-	<-done
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("drainKernelMetrics returned %v on shutdown", err)
+	}
 
 	sawBypass, sawOn := false, false
 	for _, m := range agg.modeLog() {

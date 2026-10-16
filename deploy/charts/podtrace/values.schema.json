@@ -21,6 +21,17 @@
             },
             "webhookURL": {
               "type": "string"
+            },
+            "webhookURLSecretRef": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

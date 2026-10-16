@@ -318,12 +318,25 @@ type AgentMetricsLabelsSpec struct {
 }
 
 // AgentAlertingSpec configures agent-side resource-limit alert delivery.
+// +kubebuilder:validation:XValidation:rule="!(has(self.webhookURL) && size(self.webhookURL) > 0 && has(self.webhookURLSecretRef))",message="set at most one of webhookURL or webhookURLSecretRef"
 type AgentAlertingSpec struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
+	// WebhookURL is the alert webhook in plain text. A Slack or PagerDuty
+	// URL is itself a credential, readable by anyone who can read this
+	// TracerConfig or the agent DaemonSet; prefer WebhookURLSecretRef.
 	// +optional
 	WebhookURL string `json:"webhookURL,omitempty"`
+
+	// WebhookURLSecretRef reads the alert webhook URL from a key of a Secret
+	// in the fleet's system namespace. The agents receive it as an env var
+	// from the Secret, so the URL appears in neither this TracerConfig nor
+	// the DaemonSet. A missing Secret or key does not stop the agents; they
+	// run without the webhook and the TracerConfig's Reconciled condition
+	// says why.
+	// +optional
+	WebhookURLSecretRef *SecretKeySelector `json:"webhookURLSecretRef,omitempty"`
 
 	// +optional
 	AllowInsecureWebhook bool `json:"allowInsecureWebhook,omitempty"`
@@ -439,6 +452,8 @@ type TracerConfigSpec struct {
 	// +optional
 	MaxConcurrentSessionsPerNode int32 `json:"maxConcurrentSessionsPerNode,omitempty"`
 
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +optional
 	SystemNamespace string `json:"systemNamespace,omitempty"`
 

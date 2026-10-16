@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
@@ -332,12 +333,42 @@ func upsertReportSecret(ctx context.Context, client kubernetes.Interface, namesp
 		}
 		existing.Data[key] = []byte(reportText)
 		_, uerr := secrets.Update(ctx, existing, metav1.UpdateOptions{})
+		if apierrors.IsForbidden(uerr) {
+			return replaceReportSecret(ctx, secrets, existing)
+		}
 		return uerr
 	})
 	if err != nil {
 		return fmt.Errorf("upsert report Secret: %w", err)
 	}
 	return nil
+}
+
+// replaceReportSecret writes a Secret the session ServiceAccount may get,
+// delete and create but not update: the operator can only grant the verbs it
+// holds itself, and it holds secrets update in no namespace but its own. The
+// delete is pinned to the UID that was read, and the replacement keeps the
+// labels and annotations the operator put on the staging Secret.
+func replaceReportSecret(ctx context.Context, secrets typedcorev1.SecretInterface, existing *corev1.Secret) error {
+	uid := existing.UID
+	if err := secrets.Delete(ctx, existing.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	replacement := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        existing.Name,
+			Namespace:   existing.Namespace,
+			Labels:      existing.Labels,
+			Annotations: existing.Annotations,
+		},
+		Type: existing.Type,
+		Data: existing.Data,
+	}
+	_, err := secrets.Create(ctx, replacement, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return apierrors.NewConflict(corev1.Resource("secrets"), existing.Name, err)
+	}
+	return err
 }
 
 // buildInClusterClient constructs a kubernetes.Interface from the Job

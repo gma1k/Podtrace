@@ -28,7 +28,7 @@ func TestSyncExporterBundle_RenderError(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "ec", Namespace: "team-a"},
 		Spec:       podtracev1alpha1.ExporterConfigSpec{Type: podtracev1alpha1.ExporterTypeOTLP},
 	}
-	if err := r.syncExporterBundle(context.Background(), syncBundleTestPodTrace(), ec, []string{"team-a"}); err == nil {
+	if err := r.syncExporterBundle(context.Background(), syncBundleTestPodTrace(), ec, []string{"team-a"}, []string{"podtrace-system"}); err == nil {
 		t.Fatal("an OTLP ExporterConfig with a nil OTLP block must fail bundle rendering")
 	}
 }
@@ -61,7 +61,7 @@ func TestSyncExporterBundle_SecretCreateError(t *testing.T) {
 			},
 		},
 	}
-	if err := r.syncExporterBundle(context.Background(), syncBundleTestPodTrace(), ec, []string{"team-a"}); err == nil {
+	if err := r.syncExporterBundle(context.Background(), syncBundleTestPodTrace(), ec, []string{"team-a"}, []string{"podtrace-system"}); err == nil {
 		t.Fatal("a failing bundle Secret create-or-update must be surfaced")
 	}
 }
