@@ -1313,6 +1313,14 @@ spec:
                     type: boolean
                   statusReportInterval:
                     type: string
+                  uprobeMulti:
+                    default: true
+                    description: |-
+                      UprobeMulti attaches uprobes as uprobe_multi links on kernels that
+                      have them (Linux 6.6 and later), so an agent detaches its uprobes in
+                      about a second instead of about 90ms each when it stops. Set false to
+                      use classic perf-event uprobes; older kernels always do.
+                    type: boolean
                   usdt:
                     default: true
                     type: boolean

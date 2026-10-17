@@ -40,6 +40,7 @@ func TestTheBootstrappedTracerConfigRunsTheWholePlane(t *testing.T) {
 		"PODTRACE_SOCKOPS_RTT_ENABLED",
 		"PODTRACE_DNS_PACKET_CAPTURE",
 		"PODTRACE_USDT_ENABLED",
+		"PODTRACE_UPROBE_MULTI",
 		"PODTRACE_DNS_PAYLOAD_ENABLED",
 	} {
 		if env[name] != "true" {

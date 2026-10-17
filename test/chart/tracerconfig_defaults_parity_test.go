@@ -38,10 +38,10 @@ func renderedTracerConfig(t *testing.T, setFlags ...string) *podtracev1alpha1.Tr
 }
 
 type resolvedAgent struct {
-	DNSPacketCapture, DNSFullAnswers, USDT, ContinuousProfiling, SockOpsRTT bool
-	Metrics, NativeHistograms, KernelAggregation, Inspections, Alerts       bool
-	ExcludeNamespaces                                                       []string
-	Tolerations                                                             []corev1.Toleration
+	DNSPacketCapture, DNSFullAnswers, USDT, UprobeMulti, ContinuousProfiling, SockOpsRTT bool
+	Metrics, NativeHistograms, KernelAggregation, Inspections, Alerts                    bool
+	ExcludeNamespaces                                                                    []string
+	Tolerations                                                                          []corev1.Toleration
 }
 
 func resolve(tc *podtracev1alpha1.TracerConfig) resolvedAgent {
@@ -50,6 +50,7 @@ func resolve(tc *podtracev1alpha1.TracerConfig) resolvedAgent {
 		DNSPacketCapture:    a.DNSPacketCaptureEnabled(),
 		DNSFullAnswers:      a.DNSFullAnswersEnabled(),
 		USDT:                a.USDTEnabled(),
+		UprobeMulti:         a.UprobeMultiEnabled(),
 		ContinuousProfiling: a.ContinuousProfilingEnabled(),
 		SockOpsRTT:          a.SockOpsRTTEnabled(),
 		Metrics:             a.Metrics.MetricsEnabled(),

@@ -76,6 +76,7 @@ func buildAgentDaemonSetSpec(tc *podtracev1alpha1.TracerConfig, systemNS string)
 	env = append(env,
 		boolEnv("PODTRACE_DNS_PACKET_CAPTURE", agent.DNSPacketCaptureEnabled()),
 		boolEnv("PODTRACE_USDT_ENABLED", agent.USDTEnabled()),
+		boolEnv("PODTRACE_UPROBE_MULTI", agent.UprobeMultiEnabled()),
 		boolEnv("PODTRACE_DNS_PAYLOAD_ENABLED", agent.DNSFullAnswersEnabled()),
 		boolEnv("PODTRACE_CONTINUOUS_PROFILING_ENABLED", agent.ContinuousProfilingEnabled()),
 		boolEnv("PODTRACE_SOCKOPS_RTT_ENABLED", agent.SockOpsRTTEnabled()),

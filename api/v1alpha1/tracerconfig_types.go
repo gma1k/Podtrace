@@ -99,6 +99,14 @@ type AgentSpec struct {
 	// +kubebuilder:default=true
 	USDT *bool `json:"usdt,omitempty"`
 
+	// UprobeMulti attaches uprobes as uprobe_multi links on kernels that
+	// have them (Linux 6.6 and later), so an agent detaches its uprobes in
+	// about a second instead of about 90ms each when it stops. Set false to
+	// use classic perf-event uprobes; older kernels always do.
+	// +optional
+	// +kubebuilder:default=true
+	UprobeMulti *bool `json:"uprobeMulti,omitempty"`
+
 	// ContinuousProfiling builds an always-on per-workload CPU profile from
 	// the user stacks already captured on every sched_switch, served as JSON
 	// on the agent's /profile. It needs nothing exposed by the workload and

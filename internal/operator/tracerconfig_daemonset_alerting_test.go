@@ -61,3 +61,17 @@ func TestBuildAgentDaemonSetSpec_GracePeriodCoversProbeDetach(t *testing.T) {
 		t.Fatalf("terminationGracePeriodSeconds = %v; an agent with hundreds of uprobes needs about 40s to detach them, and a SIGKILL first leaves the kernel to do it far more slowly", grace)
 	}
 }
+
+func TestBuildAgentDaemonSetSpec_UprobeMultiToggle(t *testing.T) {
+	on := buildAgentDaemonSetSpec(tc(nil), "podtrace-system").Template.Spec.Containers[0].Env
+	if v, ok := envValue(on, "PODTRACE_UPROBE_MULTI"); !ok || v != "true" {
+		t.Errorf("PODTRACE_UPROBE_MULTI=%q ok=%v, want true by default", v, ok)
+	}
+	disabled := false
+	off := buildAgentDaemonSetSpec(tc(func(x *podtracev1alpha1.TracerConfig) {
+		x.Spec.Agent.UprobeMulti = &disabled
+	}), "podtrace-system").Template.Spec.Containers[0].Env
+	if v, _ := envValue(off, "PODTRACE_UPROBE_MULTI"); v != "false" {
+		t.Errorf("PODTRACE_UPROBE_MULTI=%q, want false when agent.uprobeMulti is off", v)
+	}
+}

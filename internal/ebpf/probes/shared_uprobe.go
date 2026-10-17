@@ -185,6 +185,13 @@ var (
 	openLinkExecutable = link.OpenExecutable
 	preloadSymbols     = func(exe *link.Executable) { _, _ = exe.Symbol(0) }
 	attachToExecutable = func(exe *link.Executable, symbol string, prog *ebpf.Program, opts *link.UprobeOptions, ret bool) (link.Link, error) {
+		if UprobeMultiEnabled() {
+			symbols, multiOpts := uprobeMultiArgs(symbol, opts)
+			if ret {
+				return exe.UretprobeMulti(symbols, prog, multiOpts)
+			}
+			return exe.UprobeMulti(symbols, prog, multiOpts)
+		}
 		if ret {
 			return exe.Uretprobe(symbol, prog, opts)
 		}

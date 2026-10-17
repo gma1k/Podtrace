@@ -36,6 +36,11 @@ type AgentSpecApplyConfiguration struct {
 	DNSPacketCapture     *bool                    `json:"dnsPacketCapture,omitempty"`
 	DNSFullAnswers       *bool                    `json:"dnsFullAnswers,omitempty"`
 	USDT                 *bool                    `json:"usdt,omitempty"`
+	// UprobeMulti attaches uprobes as uprobe_multi links on kernels that
+	// have them (Linux 6.6 and later), so an agent detaches its uprobes in
+	// about a second instead of about 90ms each when it stops. Set false to
+	// use classic perf-event uprobes; older kernels always do.
+	UprobeMulti *bool `json:"uprobeMulti,omitempty"`
 	// ContinuousProfiling builds an always-on per-workload CPU profile from
 	// the user stacks already captured on every sched_switch, served as JSON
 	// on the agent's /profile. It needs nothing exposed by the workload and
@@ -125,6 +130,14 @@ func (b *AgentSpecApplyConfiguration) WithDNSFullAnswers(value bool) *AgentSpecA
 // If called multiple times, the USDT field is set to the value of the last call.
 func (b *AgentSpecApplyConfiguration) WithUSDT(value bool) *AgentSpecApplyConfiguration {
 	b.USDT = &value
+	return b
+}
+
+// WithUprobeMulti sets the UprobeMulti field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UprobeMulti field is set to the value of the last call.
+func (b *AgentSpecApplyConfiguration) WithUprobeMulti(value bool) *AgentSpecApplyConfiguration {
+	b.UprobeMulti = &value
 	return b
 }
 

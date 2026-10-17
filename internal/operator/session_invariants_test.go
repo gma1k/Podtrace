@@ -93,3 +93,19 @@ func TestSessionReconcile_LongDurationCappedByFleetRuns(t *testing.T) {
 		t.Fatalf("a fleet maxDuration under the Job limit must let the session run, got %+v", got.Status.Conditions)
 	}
 }
+
+func TestBuildSessionJobSpec_FollowsUprobeMultiToggle(t *testing.T) {
+	disabled := false
+	tc := &podtracev1alpha1.TracerConfig{Spec: podtracev1alpha1.TracerConfigSpec{Image: "img"}}
+	tc.Spec.Agent.UprobeMulti = &disabled
+	spec := buildSessionJobSpec(sessMoreSession(nil), tc, "n1", sessionTargets{Nodes: []string{"n1"}})
+	for _, e := range spec.Template.Spec.Containers[0].Env {
+		if e.Name == "PODTRACE_UPROBE_MULTI" {
+			if e.Value != "false" {
+				t.Errorf("PODTRACE_UPROBE_MULTI=%q, want the fleet's false", e.Value)
+			}
+			return
+		}
+	}
+	t.Error("the session Job must follow the fleet's uprobeMulti setting")
+}

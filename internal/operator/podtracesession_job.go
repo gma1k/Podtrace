@@ -150,6 +150,7 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 			usdtEnabled = *u
 		}
 		mainEnv = append(mainEnv, corev1.EnvVar{Name: "PODTRACE_USDT_ENABLED", Value: strconv.FormatBool(usdtEnabled)})
+		mainEnv = append(mainEnv, corev1.EnvVar{Name: "PODTRACE_UPROBE_MULTI", Value: strconv.FormatBool(tc.Spec.Agent.UprobeMultiEnabled())})
 		dnsFull := true
 		if d := tc.Spec.Agent.DNSFullAnswers; d != nil {
 			dnsFull = *d

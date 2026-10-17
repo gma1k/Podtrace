@@ -811,11 +811,13 @@ func NewTracer(tracerOpts ...Option) (*Tracer, error) {
 
 	HaveSkStorageCrossContext()
 
-	coll, err := ebpf.NewCollectionWithOptions(spec, opts)
+	coll, uprobeMulti, err := newCollectionForUprobeMode(spec, opts, ebpf.NewCollectionWithOptions)
 	if err != nil {
 		logVerifierFailure(err)
 		return nil, NewCollectionError(err)
 	}
+	probes.SetUprobeMulti(uprobeMulti)
+	logger.Info("Uprobe attach mode", zap.Bool("uprobe_multi", uprobeMulti))
 
 	if threshMap, ok := coll.Maps["alert_thresholds"]; ok && threshMap != nil {
 		thresholds := []uint32{

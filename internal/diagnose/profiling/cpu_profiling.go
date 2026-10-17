@@ -87,15 +87,32 @@ func GenerateProcessCPUReport(allEvents []*events.Event, duration time.Duration,
 		return kernelProcesses[i].cpuPercent > kernelProcesses[j].cpuPercent
 	})
 
+	if len(podProcesses) > config.TopProcessesLimit*2 {
+		podProcesses = podProcesses[:config.TopProcessesLimit*2]
+	}
+	shownKernel := kernelProcesses
+	if len(shownKernel) > config.TopProcessesLimit {
+		shownKernel = shownKernel[:config.TopProcessesLimit]
+	}
+	labelWidth, percentWidth := 0, 0
+	for _, rows := range [][]cpuUsageInfo{podProcesses, shownKernel} {
+		for _, info := range rows {
+			labelWidth = max(labelWidth, len(processLabel(info.pid, info.name)))
+			percentWidth = max(percentWidth, len(formatCPUPercent(info.cpuPercent)))
+		}
+	}
+	row := func(info cpuUsageInfo) string {
+		return fmt.Sprintf("    %-*s  %*s CPU (%s / %.2fs)\n",
+			labelWidth, processLabel(info.pid, info.name),
+			percentWidth, formatCPUPercent(info.cpuPercent),
+			formatCPUTime(info.cpuTimeSec), durationSec)
+	}
+
 	podCPUPercent := 0.0
 	if len(podProcesses) > 0 {
 		report += "  Pod Processes:\n"
-		for i, info := range podProcesses {
-			if i >= config.TopProcessesLimit*2 {
-				break
-			}
-			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%s / %.2fs)\n",
-				info.pid, info.name, info.cpuPercent, formatCPUTime(info.cpuTimeSec), durationSec)
+		for _, info := range podProcesses {
+			report += row(info)
 			podCPUPercent += info.cpuPercent
 		}
 		report += "\n"
@@ -104,12 +121,8 @@ func GenerateProcessCPUReport(allEvents []*events.Event, duration time.Duration,
 	if len(kernelProcesses) > 0 {
 		kernelCPUPercent := 0.0
 		report += "  System/Kernel Processes:\n"
-		for i, info := range kernelProcesses {
-			if i >= config.TopProcessesLimit {
-				break
-			}
-			report += fmt.Sprintf("    PID %d (%s):      %5.1f%% CPU (%s / %.2fs)\n",
-				info.pid, info.name, info.cpuPercent, formatCPUTime(info.cpuTimeSec), durationSec)
+		for _, info := range shownKernel {
+			report += row(info)
 			kernelCPUPercent += info.cpuPercent
 		}
 		if extra := len(kernelProcesses) - config.TopProcessesLimit; extra > 0 {
@@ -125,12 +138,34 @@ func GenerateProcessCPUReport(allEvents []*events.Event, duration time.Duration,
 	if idlePercent < 0 {
 		idlePercent = 0
 	}
-	report += fmt.Sprintf("\n  Total CPU usage: %.1f%% (%.2fs / %.2fs)\n",
-		totalCPUPercent, totalCPUPercent*durationSec/100.0, durationSec)
-	report += fmt.Sprintf("  Idle time: %.1f%% (%.2fs / %.2fs)\n\n",
-		idlePercent, idlePercent*durationSec/100.0, durationSec)
+	report += fmt.Sprintf("\n  Total CPU usage: %s (%s / %.2fs)\n",
+		formatCPUPercent(totalCPUPercent), formatCPUTime(totalCPUPercent*durationSec/100.0), durationSec)
+	report += fmt.Sprintf("  Idle time: %s (%.2fs / %.2fs)\n\n",
+		formatCPUPercent(idlePercent), idlePercent*durationSec/100.0, durationSec)
 
 	return report
+}
+
+// processLabel is a report row's "PID n (name):" column.
+func processLabel(pid uint32, name string) string {
+	return fmt.Sprintf("PID %d (%s):", pid, name)
+}
+
+// formatCPUPercent keeps a small share of the window visible instead of
+// rounding it to 0.0%: a short-lived process that ran for a few milliseconds
+// of a 15s diagnose is a few hundredths of a percent, and one decimal hid
+// every one of them.
+func formatCPUPercent(p float64) string {
+	switch {
+	case p <= 0:
+		return "0%"
+	case p < 0.01:
+		return "<0.01%"
+	case p < 1:
+		return fmt.Sprintf("%.2f%%", p)
+	default:
+		return fmt.Sprintf("%.1f%%", p)
+	}
 }
 
 // formatCPUTime keeps a short-lived process's few milliseconds readable

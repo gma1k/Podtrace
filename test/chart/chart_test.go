@@ -437,6 +437,7 @@ func TestChart_AgentAndSessionKnobsPropagate(t *testing.T) {
 		"operator.enabled=true",
 		"agent.logLevel=warn",
 		"agent.usdt=false",
+		"agent.uprobeMulti=false",
 		"agent.dnsFullAnswers=false",
 		"agent.dnsPacketCapture=false",
 		"agent.alerting.enabled=true",
@@ -447,6 +448,7 @@ func TestChart_AgentAndSessionKnobsPropagate(t *testing.T) {
 	for _, marker := range []string{
 		`logLevel: "warn"`,
 		"usdt: false",
+		"uprobeMulti: false",
 		"dnsFullAnswers: false",
 		"dnsPacketCapture: false",
 		"alerting:",

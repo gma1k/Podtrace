@@ -256,6 +256,11 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.UprobeMulti != nil {
+		in, out := &in.UprobeMulti, &out.UprobeMulti
+		*out = new(bool)
+		**out = **in
+	}
 	if in.ContinuousProfiling != nil {
 		in, out := &in.ContinuousProfiling, &out.ContinuousProfiling
 		*out = new(bool)

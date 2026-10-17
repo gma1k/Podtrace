@@ -14,6 +14,7 @@ const (
 	DefaultDNSPacketCapture       = true
 	DefaultDNSFullAnswers         = true
 	DefaultUSDT                   = true
+	DefaultUprobeMulti            = true
 	DefaultContinuousProfiling    = true
 	DefaultSockOpsRTT             = true
 	DefaultMetricsEnabled         = true
@@ -44,6 +45,12 @@ func (a *AgentSpec) DNSFullAnswersEnabled() bool {
 // USDTEnabled reports whether USDT probes are attached.
 func (a *AgentSpec) USDTEnabled() bool {
 	return boolOr(a.USDT, DefaultUSDT)
+}
+
+// UprobeMultiEnabled reports whether uprobes may be attached as uprobe_multi
+// links.
+func (a *AgentSpec) UprobeMultiEnabled() bool {
+	return boolOr(a.UprobeMulti, DefaultUprobeMulti)
 }
 
 // ContinuousProfilingEnabled reports whether the agent serves /profile.

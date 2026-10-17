@@ -91,6 +91,9 @@
         "usdt": {
           "type": "boolean"
         },
+        "uprobeMulti": {
+          "type": "boolean"
+        },
         "metrics": {
           "type": "object",
           "description": "Continuous metrics plane. See docs/continuous-metrics.md.",

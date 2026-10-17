@@ -98,6 +98,11 @@ agent:
 
   usdt: true
 
+  # Attach uprobes as uprobe_multi links on Linux 6.6+, so an agent stops in
+  # about a second instead of tens of seconds on a busy node. false falls back
+  # to classic uprobes; older kernels always use them.
+  uprobeMulti: true
+
   # Always-on per-workload CPU profile built from the user stacks already
   # captured on every sched_switch, served as JSON on the agent's /profile.
   # Needs nothing exposed by the workload and works for any language.

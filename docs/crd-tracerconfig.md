@@ -152,6 +152,7 @@ the agent runs with:
 | `agent.continuousProfiling` | The always-on profile on `/profile` |
 | `agent.sockOpsRTT` | Kernel smoothed RTT via `sock_ops` |
 | `agent.dnsPacketCapture`, `agent.dnsFullAnswers`, `agent.usdt` | Packet DNS capture, full DNS answers, USDT probes |
+| `agent.uprobeMulti` | Attach uprobes as `uprobe_multi` links on Linux 6.6+ (default `true`); `false` uses classic uprobes |
 
 Leaving out a whole block counts the same: a TracerConfig with no `agent` or
 no `agent.metrics` gets every toggle above. To turn one off, write `false`:

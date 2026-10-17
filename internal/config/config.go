@@ -128,6 +128,7 @@ var (
 
 	GRPCPort            = getIntEnvOrDefault("PODTRACE_GRPC_PORT", 50051)
 	USDTEnabled         = getBoolEnvOrDefault("PODTRACE_USDT_ENABLED", true)
+	UprobeMultiEnabled  = getBoolEnvOrDefault("PODTRACE_UPROBE_MULTI", true)
 	DNSPayloadEnabled   = getBoolEnvOrDefault("PODTRACE_DNS_PAYLOAD_ENABLED", true)
 	RedactPII           = getBoolEnvOrDefault("PODTRACE_REDACT_PII", false)
 	RedactCustomRules   = getEnvOrDefault("PODTRACE_REDACT_CUSTOM_RULES", "")

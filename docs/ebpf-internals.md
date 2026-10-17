@@ -216,6 +216,42 @@ Uprobes attach to user-space functions:
   capture on, the metrics count the packets and leave the libc call out, since
   it is the same lookup.
 
+#### How uprobes are attached
+
+On Linux 6.6 and later every uprobe is attached as a `uprobe_multi` link;
+older kernels, and fleets with `agent.uprobeMulti: false`, use classic
+perf-event uprobes. The behaviour traced is the same either way; what changes
+is how fast an agent lets go of its probes.
+
+A classic uprobe link is a perf event. Closing one unregisters the uprobe and
+waits out an RCU grace period while the kernel holds its global
+`event_mutex`, so an agent's uprobes detach one at a time, about 90ms each,
+however many are closed in parallel. A `uprobe_multi` link releases its
+uprobes without that lock, so a stopping agent's links detach together.
+Measured on kind with Linux 7.1, an agent holding 692 links (544 of them
+uprobes) shut down in 50s with classic uprobes and in about 1s with
+`uprobe_multi`. Other probe types are not affected: kprobes, tracepoints and
+the rest detach in well under a second.
+
+How the mode is chosen:
+
+- At load, the tracer asks the kernel whether it can create `uprobe_multi`
+  links (`PODTRACE_UPROBE_MULTI`, set from `agent.uprobeMulti`, can switch it
+  off). If it can, every `uprobe*` and `uretprobe*` program is loaded with the
+  `uprobe_multi` attach type, since the kernel binds a program to its attach
+  type at load. A collection that fails to load that way is loaded again with
+  classic uprobes, so a kernel that refuses the programs still gets an agent.
+- At attach, each site gets a link of its own, at the same address, with the
+  same reference-counter offset (USDT semaphores), cookie and PID filter it
+  would have had as a classic uprobe. Sites are still shared between holders
+  of the same file, and reference-counted, exactly as before.
+- The agent logs which path it took: `Uprobe attach mode` with
+  `uprobe_multi: true|false`.
+
+The agent's termination grace period is 120s, so even classic uprobes
+always finish detaching before the kubelet's SIGKILL, which would leave the
+kernel to release the rest one by one as the process exits.
+
 ### Tracepoints
 
 Tracepoints are kernel instrumentation points:
