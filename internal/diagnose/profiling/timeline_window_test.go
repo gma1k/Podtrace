@@ -1,7 +1,6 @@
 package profiling
 
 import (
-	"math/rand/v2"
 	"strings"
 	"testing"
 	"time"
@@ -11,10 +10,9 @@ import (
 )
 
 func TestWindowCountsMatchesAScanPerWindow(t *testing.T) {
-	r := rand.New(rand.NewPCG(1, 2))
 	evs := make([]*events.Event, 5000)
 	for i := range evs {
-		evs[i] = &events.Event{Timestamp: 1_000 + uint64(r.IntN(30_000))}
+		evs[i] = &events.Event{Timestamp: 1_000 + uint64(i*7919%30_000)}
 	}
 	origin := minEventTimestamp(evs)
 	const windowNS, n = 1_000, 25

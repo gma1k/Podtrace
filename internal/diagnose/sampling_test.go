@@ -1,7 +1,6 @@
 package diagnose
 
 import (
-	"math/rand/v2"
 	"testing"
 
 	"github.com/gma1k/podtrace/internal/config"
@@ -11,11 +10,6 @@ import (
 
 func admit(int) int    { return 0 }
 func reject(n int) int { return n - 1 }
-func seeded(seed uint64) func(int) int {
-	r := rand.New(rand.NewPCG(seed, seed))
-	return r.IntN
-}
-
 func TestRareEventTypesAreAlwaysKept(t *testing.T) {
 	for _, typ := range []events.EventType{events.EventOOMKill, events.EventPageFault, events.EventNetDevError, events.EventRequestDone} {
 		if !shouldSampleEvent(&events.Event{Type: typ}, reject) {
@@ -64,7 +58,6 @@ func TestNilEventIsNotSampled(t *testing.T) {
 func TestAFullBufferKeepsTheConnectionFailureRate(t *testing.T) {
 	d := NewDiagnostician()
 	d.maxEvents = 2000
-	d.sampleIntN = seeded(7)
 
 	for i := range 400_000 {
 		ev := &events.Event{Type: events.EventConnectResult, Timestamp: uint64(i + 1), Target: "10.0.0.1:80"}
@@ -101,7 +94,6 @@ func TestAFullBufferKeepsTheConnectionFailureRate(t *testing.T) {
 func TestAnAlternatingStreamKeepsBothSides(t *testing.T) {
 	d := NewDiagnostician()
 	d.maxEvents = 1000
-	d.sampleIntN = seeded(11)
 
 	for i := range 200_000 {
 		typ := events.EventTCPSend
@@ -117,5 +109,25 @@ func TestAnAlternatingStreamKeepsBothSides(t *testing.T) {
 	}
 	if ratio := float64(send) / float64(recv); ratio < 0.7 || ratio > 1.4 {
 		t.Errorf("send/recv = %.2f, want about 1", ratio)
+	}
+}
+
+func TestDrawsStayInRangeAcrossRefills(t *testing.T) {
+	var draws sampleDraws
+	seen := make([]int, 20)
+	for range 10_000 {
+		v := draws.intN(20)
+		if v < 0 || v >= 20 {
+			t.Fatalf("intN(20) = %d", v)
+		}
+		seen[v]++
+	}
+	for v, n := range seen {
+		if n < 300 || n > 700 {
+			t.Errorf("value %d drawn %d times in 10000, want about 500", v, n)
+		}
+	}
+	if got := draws.intN(1); got != 0 {
+		t.Errorf("intN(1) = %d, want 0", got)
 	}
 }

@@ -1,6 +1,9 @@
 package diagnose
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+
 	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/events"
 )
@@ -49,7 +52,7 @@ func alwaysKept(t events.EventType) bool {
 // up to rate times (1% becomes about 17% at 1-in-20), and the report and the
 // issue rules both divide one by the other. The draw is random rather than every rate-th event, so a
 // stream that alternates (send, receive, send, ...) cannot alias with the
-// rate and lose one kind entirely. intn is rand.IntN.
+// rate and lose one kind entirely. intn draws uniformly from [0, n).
 func shouldSampleEvent(event *events.Event, intn func(int) int) bool {
 	if event == nil {
 		return false
@@ -62,4 +65,26 @@ func shouldSampleEvent(event *events.Event, intn func(int) int) bool {
 		rate = config.EventSamplingRate
 	}
 	return rate <= 1 || intn(rate) == 0
+}
+
+// sampleDraws hands out uniform draws from crypto/rand, read a block at a
+// time so a full buffer does not cost a read per event.
+type sampleDraws struct {
+	buf  [512]byte
+	left int
+}
+
+// intN returns a uniform integer in [0, n). The modulo bias of a 64-bit draw
+// over a rate of at most a few hundred is far below anything a report shows.
+func (s *sampleDraws) intN(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	if s.left < 8 {
+		_, _ = rand.Read(s.buf[:])
+		s.left = len(s.buf)
+	}
+	at := len(s.buf) - s.left
+	s.left -= 8
+	return int(binary.LittleEndian.Uint64(s.buf[at:]) % uint64(n))
 }

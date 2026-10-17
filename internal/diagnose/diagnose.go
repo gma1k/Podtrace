@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -48,6 +47,7 @@ type Diagnostician struct {
 	eventCount         int
 	droppedEvents      int
 	sampleIntN         func(int) int
+	draws              sampleDraws
 	evHead             int
 	wrapped            bool
 	podCommTracker     *tracker.PodCommunicationTracker
@@ -133,7 +133,7 @@ func (d *Diagnostician) AddEventWithContext(event *events.Event, k8sContext map[
 
 	intn := d.sampleIntN
 	if intn == nil {
-		intn = rand.IntN
+		intn = d.draws.intN
 	}
 	if !shouldSampleEvent(event, intn) {
 		d.droppedEvents++
