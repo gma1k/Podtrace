@@ -1,127 +1,121 @@
 package diagnose
 
 import (
+	"math/rand/v2"
 	"testing"
 
 	"github.com/gma1k/podtrace/internal/config"
+	"github.com/gma1k/podtrace/internal/diagnose/detector"
 	"github.com/gma1k/podtrace/internal/events"
 )
 
-func TestGetEventPriority_Critical(t *testing.T) {
-	event := &events.Event{Type: events.EventDNS, Error: 1}
-	priority := getEventPriority(event)
-	if priority != config.PriorityCritical {
-		t.Errorf("Expected PriorityCritical for error event, got %d", priority)
-	}
+func admit(int) int    { return 0 }
+func reject(n int) int { return n - 1 }
+func seeded(seed uint64) func(int) int {
+	r := rand.New(rand.NewPCG(seed, seed))
+	return r.IntN
+}
 
-	event = &events.Event{Type: events.EventOOMKill}
-	priority = getEventPriority(event)
-	if priority != config.PriorityCritical {
-		t.Errorf("Expected PriorityCritical for OOMKill, got %d", priority)
-	}
-
-	event = &events.Event{Type: events.EventPageFault}
-	priority = getEventPriority(event)
-	if priority != config.PriorityCritical {
-		t.Errorf("Expected PriorityCritical for PageFault, got %d", priority)
+func TestRareEventTypesAreAlwaysKept(t *testing.T) {
+	for _, typ := range []events.EventType{events.EventOOMKill, events.EventPageFault, events.EventNetDevError, events.EventRequestDone} {
+		if !shouldSampleEvent(&events.Event{Type: typ}, reject) {
+			t.Errorf("%v was sampled out", typ)
+		}
 	}
 }
 
-func TestGetEventPriority_High(t *testing.T) {
-	event := &events.Event{Type: events.EventTCPRetrans}
-	priority := getEventPriority(event)
-	if priority != config.PriorityHigh {
-		t.Errorf("Expected PriorityHigh for TCPRetrans, got %d", priority)
-	}
-
-	event = &events.Event{Type: events.EventLockContention}
-	priority = getEventPriority(event)
-	if priority != config.PriorityHigh {
-		t.Errorf("Expected PriorityHigh for LockContention, got %d", priority)
-	}
-}
-
-func TestGetEventPriority_Normal(t *testing.T) {
-	event := &events.Event{Type: events.EventDNS}
-	priority := getEventPriority(event)
-	if priority != config.PriorityNormal {
-		t.Errorf("Expected PriorityNormal for DNS, got %d", priority)
-	}
-
-	event = &events.Event{Type: events.EventConnect}
-	priority = getEventPriority(event)
-	if priority != config.PriorityNormal {
-		t.Errorf("Expected PriorityNormal for Connect, got %d", priority)
+func TestAFailureIsSampledAtItsTypesRateLikeASuccess(t *testing.T) {
+	for _, ev := range []*events.Event{
+		{Type: events.EventConnect, Error: -111},
+		{Type: events.EventTCPRecv, Error: -11},
+		{Type: events.EventDNS, Error: 1},
+	} {
+		if shouldSampleEvent(ev, reject) {
+			t.Errorf("%v with error %d was admitted unconditionally", ev.Type, ev.Error)
+		}
+		if !shouldSampleEvent(ev, admit) {
+			t.Errorf("%v with error %d was not admitted on a winning draw", ev.Type, ev.Error)
+		}
 	}
 }
 
-func TestGetEventPriority_Low(t *testing.T) {
-	event := &events.Event{Type: events.EventRead}
-	priority := getEventPriority(event)
-	if priority != config.PriorityLow {
-		t.Errorf("Expected PriorityLow for Read, got %d", priority)
-	}
-
-	event = &events.Event{Type: events.EventWrite}
-	priority = getEventPriority(event)
-	if priority != config.PriorityLow {
-		t.Errorf("Expected PriorityLow for Write, got %d", priority)
-	}
-}
-
-func TestGetEventPriority_NilEvent(t *testing.T) {
-	priority := getEventPriority(nil)
-	if priority != config.PriorityLow {
-		t.Errorf("Expected PriorityLow for nil event, got %d", priority)
+func TestTheDrawUsesTheTypesRate(t *testing.T) {
+	for typ, want := range map[events.EventType]int{
+		events.EventDNS:           10,
+		events.EventTCPSend:       50,
+		events.EventRead:          100,
+		events.EventType(9999):    config.EventSamplingRate,
+		events.EventConnectResult: 20,
+	} {
+		var got int
+		shouldSampleEvent(&events.Event{Type: typ}, func(n int) int { got = n; return 1 })
+		if got != want {
+			t.Errorf("%v drew from %d, want %d", typ, got, want)
+		}
 	}
 }
 
-func TestShouldSampleEvent_CriticalAlwaysKept(t *testing.T) {
-	event := &events.Event{Type: events.EventDNS, Error: 1}
-	if !shouldSampleEvent(event, 1) {
-		t.Error("Expected critical event to always be sampled")
-	}
-
-	if !shouldSampleEvent(event, 100) {
-		t.Error("Expected critical event to always be sampled regardless of count")
+func TestNilEventIsNotSampled(t *testing.T) {
+	if shouldSampleEvent(nil, admit) {
+		t.Error("nil event was sampled")
 	}
 }
 
-func TestShouldSampleEvent_TypeSpecificRates(t *testing.T) {
-	event := &events.Event{Type: events.EventDNS}
-	if !shouldSampleEvent(event, 10) {
-		t.Error("Expected DNS event to be sampled at count 10 (1 in 10)")
-	}
-	if shouldSampleEvent(event, 11) {
-		t.Error("Expected DNS event not to be sampled at count 11")
+func TestAFullBufferKeepsTheConnectionFailureRate(t *testing.T) {
+	d := NewDiagnostician()
+	d.maxEvents = 2000
+	d.sampleIntN = seeded(7)
+
+	for i := range 400_000 {
+		ev := &events.Event{Type: events.EventConnectResult, Timestamp: uint64(i + 1), Target: "10.0.0.1:80"}
+		if i%100 == 0 {
+			ev.Error = -111
+		}
+		d.AddEvent(ev)
 	}
 
-	event = &events.Event{Type: events.EventTCPSend}
-	if !shouldSampleEvent(event, 50) {
-		t.Error("Expected TCPSend event to be sampled at count 50 (1 in 50)")
+	if d.EventsSampledOut() == 0 {
+		t.Fatal("the buffer never filled")
 	}
-	if shouldSampleEvent(event, 51) {
-		t.Error("Expected TCPSend event not to be sampled at count 51")
+	var failed, total int
+	for _, e := range d.GetEvents() {
+		if e.Type != events.EventConnectResult {
+			continue
+		}
+		total++
+		if e.Error != 0 {
+			failed++
+		}
 	}
-
-	event = &events.Event{Type: events.EventRead}
-	if !shouldSampleEvent(event, 100) {
-		t.Error("Expected Read event to be sampled at count 100 (1 in 100)")
+	rate := float64(failed) / float64(total) * 100
+	if rate > 3 {
+		t.Errorf("retained failure rate = %.1f%% (%d/%d), want about 1%%", rate, failed, total)
 	}
-	if shouldSampleEvent(event, 101) {
-		t.Error("Expected Read event not to be sampled at count 101")
+	for _, issue := range detector.DetectIssues(d.GetEvents(), config.DefaultErrorRateThreshold, config.DefaultRTTThreshold) {
+		if issue.ID == detector.IDConnectionFailureRate {
+			t.Errorf("a 1%% failure rate raised %q once the buffer wrapped", issue.Message)
+		}
 	}
 }
 
-func TestShouldSampleEvent_DefaultRate(t *testing.T) {
-	event := &events.Event{Type: events.EventType(9999)}
-	if !shouldSampleEvent(event, config.EventSamplingRate) {
-		t.Errorf("Expected unknown event type to use default sampling rate %d", config.EventSamplingRate)
-	}
-}
+func TestAnAlternatingStreamKeepsBothSides(t *testing.T) {
+	d := NewDiagnostician()
+	d.maxEvents = 1000
+	d.sampleIntN = seeded(11)
 
-func TestShouldSampleEvent_NilEvent(t *testing.T) {
-	if shouldSampleEvent(nil, 1) {
-		t.Error("Expected nil event not to be sampled")
+	for i := range 200_000 {
+		typ := events.EventTCPSend
+		if i%2 == 1 {
+			typ = events.EventTCPRecv
+		}
+		d.AddEvent(&events.Event{Type: typ, Timestamp: uint64(i + 1)})
+	}
+
+	send, recv := len(d.FilterEvents(events.EventTCPSend)), len(d.FilterEvents(events.EventTCPRecv))
+	if send == 0 || recv == 0 {
+		t.Fatalf("send=%d recv=%d: one side of an alternating stream vanished", send, recv)
+	}
+	if ratio := float64(send) / float64(recv); ratio < 0.7 || ratio > 1.4 {
+		t.Errorf("send/recv = %.2f, want about 1", ratio)
 	}
 }

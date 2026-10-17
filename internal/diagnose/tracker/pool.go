@@ -119,7 +119,10 @@ func (pt *PoolTracker) GetPoolSummary() []PoolSummary {
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].AcquireCount > summaries[j].AcquireCount
+		if summaries[i].AcquireCount != summaries[j].AcquireCount {
+			return summaries[i].AcquireCount > summaries[j].AcquireCount
+		}
+		return summaries[i].PoolID < summaries[j].PoolID
 	})
 
 	return summaries
@@ -218,7 +221,7 @@ func determinePoolHealthFromSummary(summary PoolSummary) string {
 		}
 	}
 
-	if summary.ReleaseRatio < 0.5 {
+	if summary.AcquireCount > 0 && summary.ReleaseRatio < 0.5 {
 		return "WARNING - Under half of acquired connections released (<50%, possible leak)"
 	}
 

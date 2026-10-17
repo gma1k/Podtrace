@@ -417,7 +417,7 @@ func acquireLatencyRule() Rule {
 				issues = append(issues, detector.Issue{
 					ID:       detector.IDDBAcquireSlow,
 					Severity: alerting.SeverityWarning,
-					Subject:  subjectOf(s),
+					Subject:  detector.Subject{Namespace: s.Namespace, Workload: s.Workload},
 					Evidence: []detector.Evidence{
 						detector.NewEvidence("mean_acquire_time", mean.Seconds(),
 							t.AcquireMean.Seconds(), "s"),

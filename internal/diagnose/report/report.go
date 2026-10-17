@@ -31,6 +31,13 @@ type Diagnostician interface {
 	FastFilesystemOps() analyzer.FSKernelCounts
 }
 
+// bufferSampler is a Diagnostician whose event buffer may have filled and
+// started sampling.
+type bufferSampler interface {
+	EventsSeen() int
+	EventsSampledOut() int
+}
+
 func GenerateSummarySection(d Diagnostician, duration time.Duration) string {
 	events := d.GetEvents()
 	eventsPerSec := d.CalculateRate(len(events), duration)
@@ -38,6 +45,12 @@ func GenerateSummarySection(d Diagnostician, duration time.Duration) string {
 	report += fmt.Sprintf("=== Diagnostic Report (collected over %v) ===\n\n", duration)
 	report += "Summary:\n"
 	report += fmt.Sprintf("  Total events: %d\n", len(events))
+	if s, ok := d.(bufferSampler); ok {
+		if out := s.EventsSampledOut(); out > 0 {
+			report += fmt.Sprintf("  Events seen: %d; the buffer filled and sampled out %d, so the counts below "+
+				"are a sample (ratios within each event type still hold)\n", s.EventsSeen(), out)
+		}
+	}
 	report += fmt.Sprintf("  Events per second: %.1f\n", eventsPerSec)
 	report += fmt.Sprintf("  Collection period: %v to %v\n\n", d.StartTime().Format("15:04:05"), d.EndTime().Format("15:04:05"))
 	return report
@@ -203,6 +216,22 @@ func GenerateTCPSection(d Diagnostician, duration time.Duration) string {
 	return report
 }
 
+// errnosByCount returns the error codes of counts, most frequent first and by
+// code among equal counts, so the breakdown reads the same on every run.
+func errnosByCount(counts map[int32]int) []int32 {
+	codes := make([]int32, 0, len(counts))
+	for code := range counts {
+		codes = append(codes, code)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		if counts[codes[i]] != counts[codes[j]] {
+			return counts[codes[i]] > counts[codes[j]]
+		}
+		return codes[i] < codes[j]
+	})
+	return codes
+}
+
 func calculateThroughput(totalBytes uint64, duration time.Duration) uint64 {
 	if duration.Seconds() > 0 {
 		return uint64(float64(totalBytes) / duration.Seconds())
@@ -230,8 +259,8 @@ func GenerateConnectionSection(d Diagnostician, duration time.Duration) string {
 	}
 	if len(errorBreakdown) > 0 {
 		report += "  Error breakdown:\n"
-		for errCode, count := range errorBreakdown {
-			report += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, count)
+		for _, errCode := range errnosByCount(errorBreakdown) {
+			report += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, errorBreakdown[errCode])
 		}
 	}
 	report += formatter.TopTargets(topTargets, config.TopTargetsLimit, "connection targets", "connections")
@@ -619,7 +648,10 @@ func formatStateDistribution(stateCounts map[string]int) string {
 		states = append(states, stateInfo{state: state, count: count})
 	}
 	sort.Slice(states, func(i, j int) bool {
-		return states[i].count > states[j].count
+		if states[i].count != states[j].count {
+			return states[i].count > states[j].count
+		}
+		return states[i].state < states[j].state
 	})
 	var result string
 	result += "  State distribution:\n"
@@ -658,8 +690,8 @@ func formatPageFaults(pageFaultEvents []*events.Event, duration time.Duration, d
 	errorCounts := buildErrorCounts(pageFaultEvents)
 	if len(errorCounts) > 0 {
 		result += "  Page fault error codes:\n"
-		for errCode, count := range errorCounts {
-			result += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, count)
+		for _, errCode := range errnosByCount(errorCounts) {
+			result += fmt.Sprintf("    - Error %d: %d occurrences\n", errCode, errorCounts[errCode])
 		}
 	}
 	return result
@@ -799,7 +831,7 @@ func GeneratePoolSection(d Diagnostician, duration time.Duration) string {
 		report += fmt.Sprintf("  Total releases: %d (%.1f/sec)\n", stats.TotalReleases, releaseRate)
 		report += fmt.Sprintf("  Release ratio: %.2f%% (releases/acquires)\n", stats.ReleaseRatio*100)
 		report += fmt.Sprintf("  Peak connections: %d\n", stats.PeakConnections)
-		report += fmt.Sprintf("  Average connections: %.1f\n", stats.AvgConnections)
+		report += fmt.Sprintf("  Average connections in use: %.1f\n", stats.AvgConnections)
 		report += fmt.Sprintf("  Status: %s\n", determinePoolHealth(stats))
 	}
 
@@ -885,7 +917,7 @@ func determinePoolHealth(stats analyzer.PoolStats) string {
 		}
 	}
 
-	if stats.ReleaseRatio < 0.5 {
+	if stats.TotalAcquires > 0 && stats.ReleaseRatio < 0.5 {
 		return "WARNING - Under half of acquired connections released (<50%, possible leak)"
 	}
 
@@ -906,7 +938,7 @@ func determinePoolHealthFromSummary(summary tracker.PoolSummary) string {
 		}
 	}
 
-	if summary.ReleaseRatio < 0.5 {
+	if summary.AcquireCount > 0 && summary.ReleaseRatio < 0.5 {
 		return "WARNING - Under half of acquired connections released (<50%, possible leak)"
 	}
 
@@ -964,7 +996,8 @@ func GenerateResourceSection(d Diagnostician) string {
 		count       int
 		maxUtil     uint32
 		avgUtil     float64
-		totalUsage  uint64
+		lastUsage   uint64
+		lastAt      uint64
 		totalLimit  uint64
 		alertCounts map[string]int
 	})
@@ -980,7 +1013,8 @@ func GenerateResourceSection(d Diagnostician) string {
 				count       int
 				maxUtil     uint32
 				avgUtil     float64
-				totalUsage  uint64
+				lastUsage   uint64
+				lastAt      uint64
 				totalLimit  uint64
 				alertCounts map[string]int
 			}{
@@ -993,7 +1027,9 @@ func GenerateResourceSection(d Diagnostician) string {
 			stats.maxUtil = utilization
 		}
 		stats.avgUtil = (stats.avgUtil*float64(stats.count-1) + float64(utilization)) / float64(stats.count)
-		stats.totalUsage += usage
+		if e.Timestamp >= stats.lastAt {
+			stats.lastUsage, stats.lastAt = usage, e.Timestamp
+		}
 
 		if utilization >= 95 {
 			stats.alertCounts["EMERGENCY"]++
@@ -1012,7 +1048,13 @@ func GenerateResourceSection(d Diagnostician) string {
 		2: "I/O",
 	}
 
-	for resourceType, stats := range resourceStats {
+	types := make([]uint32, 0, len(resourceStats))
+	for resourceType := range resourceStats {
+		types = append(types, resourceType)
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
+	for _, resourceType := range types {
+		stats := resourceStats[resourceType]
 		resourceName := resourceNames[resourceType]
 		if resourceName == "" {
 			resourceName = fmt.Sprintf("Resource-%d", resourceType)
@@ -1023,14 +1065,16 @@ func GenerateResourceSection(d Diagnostician) string {
 		report += fmt.Sprintf("    Max utilization: %d%%\n", stats.maxUtil)
 		report += fmt.Sprintf("    Average utilization: %.1f%%\n", stats.avgUtil)
 
-		if stats.totalUsage > 0 {
-			report += fmt.Sprintf("    Current usage: %s\n", analyzer.FormatBytes(stats.totalUsage))
+		if stats.lastUsage > 0 {
+			report += fmt.Sprintf("    Current usage: %s\n", analyzer.FormatBytes(stats.lastUsage))
 		}
 
 		if len(stats.alertCounts) > 0 {
 			report += "    Alerts:\n"
-			for severity, count := range stats.alertCounts {
-				report += fmt.Sprintf("      - %s: %d\n", severity, count)
+			for _, severity := range []string{"EMERGENCY", "CRITICAL", "WARNING"} {
+				if count := stats.alertCounts[severity]; count > 0 {
+					report += fmt.Sprintf("      - %s: %d\n", severity, count)
+				}
 			}
 		}
 

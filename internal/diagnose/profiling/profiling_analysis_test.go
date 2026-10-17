@@ -82,6 +82,7 @@ func TestGenerateCPUUsageReport_CapsCPUPercent(t *testing.T) {
 	defer func() { config.ProcBasePath = orig }()
 	defer cache.ResetCPUTimes()
 	config.ProcBasePath = dir
+	_ = os.WriteFile(dir+"/uptime", []byte("1.00 1.00\n"), 0644)
 
 	pid := uint32(515151)
 	_ = os.MkdirAll(fmt.Sprintf("%s/%d", dir, pid), 0755)

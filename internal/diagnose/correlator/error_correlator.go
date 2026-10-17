@@ -31,10 +31,11 @@ const maxRetainedErrors = 10000
 
 type ErrorCorrelator struct {
 	mu         sync.Mutex
+	seen       int
 	errors     []*ErrorEvent
 	chains     []*ErrorChain
 	timeWindow time.Duration
-	dirty      bool // chains need rebuilding before the next read
+	dirty      bool
 }
 
 func NewErrorCorrelator(timeWindow time.Duration) *ErrorCorrelator {
@@ -77,6 +78,7 @@ func (ec *ErrorCorrelator) AddEvent(event *events.Event, k8sContext interface{})
 		}
 	}
 
+	ec.seen++
 	ec.errors = append(ec.errors, errorEvent)
 	if len(ec.errors) > maxRetainedErrors {
 		drop := len(ec.errors) - maxRetainedErrors
@@ -266,7 +268,13 @@ func (ec *ErrorCorrelator) generateSuggestions(chain []*ErrorEvent) []string {
 		}
 	}
 
-	for code, count := range errorCodes {
+	codes := make([]int32, 0, len(errorCodes))
+	for code := range errorCodes {
+		codes = append(codes, code)
+	}
+	sort.Slice(codes, func(i, j int) bool { return codes[i] > codes[j] })
+	for _, code := range codes {
+		count := errorCodes[code]
 		switch code {
 		case -11:
 			if count > 5 {
@@ -289,12 +297,12 @@ func (ec *ErrorCorrelator) generateSuggestions(chain []*ErrorEvent) []string {
 
 	targetPod := chain[0].Context["target_pod"]
 	if targetPod != "" {
-		suggestions = append(suggestions, fmt.Sprintf("Errors related to pod %s - check pod health and resource limits", targetPod))
+		suggestions = append(suggestions, fmt.Sprintf("Errors related to pod %s - check pod health and resource limits", sanitize.Terminal(targetPod)))
 	}
 
 	targetService := chain[0].Context["target_service"]
 	if targetService != "" {
-		suggestions = append(suggestions, fmt.Sprintf("Errors related to service %s - check service endpoints and health", targetService))
+		suggestions = append(suggestions, fmt.Sprintf("Errors related to service %s - check service endpoints and health", sanitize.Terminal(targetService)))
 	}
 
 	return suggestions
@@ -331,7 +339,10 @@ func (ec *ErrorCorrelator) GetErrorSummary() string {
 	ec.ensureChains()
 
 	report := "Error Correlation & Root Cause Analysis:\n"
-	report += fmt.Sprintf("  Total errors: %d\n", len(ec.errors))
+	report += fmt.Sprintf("  Total errors: %d\n", ec.seen)
+	if ec.seen > len(ec.errors) {
+		report += fmt.Sprintf("  Correlated below: the most recent %d (older errors are not retained)\n", len(ec.errors))
+	}
 	report += errorBreakdown(ec.errors)
 	report += fmt.Sprintf("  Error chains: %d\n", len(ec.chains))
 

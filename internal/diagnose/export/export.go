@@ -37,6 +37,13 @@ type Diagnostician interface {
 	FastFilesystemOps() analyzer.FSKernelCounts
 }
 
+// bufferSampler is a Diagnostician whose event buffer may have filled and
+// started sampling.
+type bufferSampler interface {
+	EventsSeen() int
+	EventsSampledOut() int
+}
+
 func calculateRate(count int, duration time.Duration) float64 {
 	if duration.Seconds() > 0 {
 		return float64(count) / duration.Seconds()
@@ -57,6 +64,12 @@ func ExportJSON(d Diagnostician) ExportData {
 			"end_time":          d.EndTime().Format(time.RFC3339),
 			"duration_seconds":  duration.Seconds(),
 		},
+	}
+	if s, ok := d.(bufferSampler); ok {
+		if out := s.EventsSampledOut(); out > 0 {
+			data.Summary["events_seen"] = s.EventsSeen()
+			data.Summary["events_sampled_out"] = out
+		}
 	}
 
 	dnsQueries := d.FilterEvents(events.EventDNSQuery)

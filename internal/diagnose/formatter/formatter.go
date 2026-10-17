@@ -100,7 +100,10 @@ func TopItems(items map[string]int, limit int, headerLabel, itemLabel string) st
 		itemCounts = append(itemCounts, itemCount{name: name, count: count})
 	}
 	sort.Slice(itemCounts, func(i, j int) bool {
-		return itemCounts[i].count > itemCounts[j].count
+		if itemCounts[i].count != itemCounts[j].count {
+			return itemCounts[i].count > itemCounts[j].count
+		}
+		return itemCounts[i].name < itemCounts[j].name
 	})
 	var result string
 	result += fmt.Sprintf("  Top %s:\n", headerLabel)
@@ -128,7 +131,10 @@ func TopItemsWithRate(items map[string]int, limit int, headerLabel, itemLabel st
 		itemCounts = append(itemCounts, itemCount{name: name, count: count})
 	}
 	sort.Slice(itemCounts, func(i, j int) bool {
-		return itemCounts[i].count > itemCounts[j].count
+		if itemCounts[i].count != itemCounts[j].count {
+			return itemCounts[i].count > itemCounts[j].count
+		}
+		return itemCounts[i].name < itemCounts[j].name
 	})
 	secs := duration.Seconds()
 	var result string

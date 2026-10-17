@@ -77,7 +77,12 @@ func AnalyzePool(acquireEvents, releaseEvents, exhaustedEvents []*events.Event) 
 	}
 	sort.SliceStable(timeline, func(i, j int) bool { return timeline[i].ts < timeline[j].ts })
 
-	for _, ev := range timeline {
+	var held int
+	var heldNS float64
+	for i, ev := range timeline {
+		if i > 0 {
+			heldNS += float64(held) * float64(ev.ts-timeline[i-1].ts)
+		}
 		poolID := ev.target
 		if poolID == "" {
 			poolID = "default"
@@ -85,27 +90,27 @@ func AnalyzePool(acquireEvents, releaseEvents, exhaustedEvents []*events.Event) 
 		pool := poolTracker[poolID]
 		if ev.acq {
 			pool.current++
+			held++
 			if pool.current > pool.peak {
 				pool.peak = pool.current
 			}
 		} else if pool.current > 0 {
 			pool.current--
+			held--
 		}
 		poolTracker[poolID] = pool
 	}
 
 	totalPeak := 0
-	totalCurrent := 0
 	for _, pool := range poolTracker {
 		if pool.peak > totalPeak {
 			totalPeak = pool.peak
 		}
-		totalCurrent += pool.current
 	}
 
 	stats.PeakConnections = totalPeak
-	if len(poolTracker) > 0 {
-		stats.AvgConnections = float64(totalCurrent) / float64(len(poolTracker))
+	if n := len(timeline); n > 1 && timeline[n-1].ts > timeline[0].ts {
+		stats.AvgConnections = heldNS / float64(timeline[n-1].ts-timeline[0].ts)
 	}
 
 	return stats

@@ -9,6 +9,7 @@ import (
 func TestAddEvent_BoundedPastCap(t *testing.T) {
 	d := NewDiagnostician()
 	d.maxEvents = 5
+	d.sampleIntN = admit
 
 	const total = 18
 	for i := 0; i < total; i++ {
@@ -30,6 +31,7 @@ func TestAddEvent_BoundedPastCap(t *testing.T) {
 func TestAddEvent_ContextsStayAligned(t *testing.T) {
 	d := NewDiagnostician()
 	d.maxEvents = 4
+	d.sampleIntN = admit
 	for i := 0; i < 11; i++ {
 		id := uint64(i)
 		d.AddEventWithContext(

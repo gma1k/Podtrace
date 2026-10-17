@@ -3,26 +3,48 @@
 // view in a terminal.
 package sanitize
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 const Replacement = '�'
 
-// Terminal returns s with every terminal-unsafe rune replaced by
-// Replacement.
+// Terminal returns s with every terminal-unsafe rune, and every byte that is
+// not valid UTF-8, replaced by Replacement. A stray byte is unsafe because a
+// terminal that is not decoding UTF-8 reads 0x9b as an 8-bit CSI.
 func Terminal(s string) string {
-	if strings.IndexFunc(s, unsafeRune) < 0 {
+	if clean(s) {
 		return s
 	}
 	var b strings.Builder
 	b.Grow(len(s))
-	for _, r := range s {
-		if unsafeRune(r) {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		if unsafeRune(r) || (r == utf8.RuneError && size == 1) {
 			b.WriteRune(Replacement)
 			continue
 		}
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// clean reports whether s needs no replacement.
+func clean(s string) bool {
+	for i := 0; i < len(s); {
+		if c := s[i]; c >= 0x20 && c < 0x7f {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if unsafeRune(r) || (r == utf8.RuneError && size == 1) {
+			return false
+		}
+		i += size
+	}
+	return true
 }
 
 // unsafeRune reports whether r can manipulate a terminal or forge report

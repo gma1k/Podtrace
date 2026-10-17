@@ -714,6 +714,8 @@ func TestDeterminePoolHealth_WarningExhaustion(t *testing.T) {
 
 func TestDeterminePoolHealth_LowReleaseRatio(t *testing.T) {
 	stats := analyzer.PoolStats{
+		TotalAcquires:  10,
+		TotalReleases:  3,
 		ExhaustedCount: 0,
 		ReleaseRatio:   0.3,
 	}
@@ -763,6 +765,8 @@ func TestDeterminePoolHealthFromSummary_Critical(t *testing.T) {
 
 func TestDeterminePoolHealthFromSummary_LowReuse(t *testing.T) {
 	s := tracker.PoolSummary{
+		AcquireCount:   10,
+		ReleaseCount:   2,
 		ExhaustedCount: 0,
 		ReleaseRatio:   0.2,
 	}

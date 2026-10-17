@@ -37,7 +37,7 @@ func GenerateProcessCPUReport(allEvents []*events.Event, duration time.Duration,
 	for _, info := range pidActivity {
 		deltaNS := kernelNS[info.Pid]
 		if deltaNS == 0 {
-			deltaNS = procCPUDeltaNS(info.Pid)
+			deltaNS = procCPUDeltaNS(info.Pid, duration)
 		}
 		if deltaNS > 0 {
 			cpuPercent := (float64(deltaNS) / 1e9) / durationSec * 100.0
@@ -178,13 +178,52 @@ func formatCPUTime(sec float64) string {
 }
 
 // procCPUDeltaNS is the CPU time /proc shows for pid since the tracer first
-// saw it, in whole scheduler ticks; zero once the process has exited.
-func procCPUDeltaNS(pid uint32) uint64 {
+// sampled it.
+func procCPUDeltaNS(pid uint32, duration time.Duration) uint64 {
 	totalNS := getProcessCPUTime(pid).totalNS
-	if base := cache.GetCPUTime(pid).BaselineNS; base > 0 && totalNS >= base {
-		return totalNS - base
+	if cached, seen := cache.LookupCPUTime(pid); seen && totalNS >= cached.BaselineNS {
+		return totalNS - cached.BaselineNS
 	}
-	return totalNS
+	if startedWithin(pid, duration) {
+		return totalNS
+	}
+	return 0
+}
+
+// startedWithin reports whether pid started no longer than window (plus a
+// second of slack) ago.
+func startedWithin(pid uint32, window time.Duration) bool {
+	stat, err := procfs.ReadFile(fmt.Sprintf("%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	raw := string(stat)
+	rparen := strings.LastIndex(raw, ")")
+	if rparen < 0 {
+		return false
+	}
+	fields := strings.Fields(raw[rparen+1:])
+	if len(fields) < 20 {
+		return false
+	}
+	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return false
+	}
+	uptimeRaw, err := procfs.ReadFile("uptime")
+	if err != nil {
+		return false
+	}
+	up := strings.Fields(string(uptimeRaw))
+	if len(up) == 0 {
+		return false
+	}
+	uptime, err := strconv.ParseFloat(up[0], 64)
+	if err != nil {
+		return false
+	}
+	age := uptime - float64(startTicks)/float64(clockTicksPerSecond())
+	return age <= window.Seconds()+1
 }
 
 // cpuUnavailable says why no process got a CPU figure, instead of repeating
@@ -244,25 +283,13 @@ func getProcessCPUTime(pid uint32) cpuTimeInfo {
 	utime, _ := strconv.ParseUint(fields[11], 10, 64)
 	stime, _ := strconv.ParseUint(fields[12], 10, 64)
 
-	clockTicks := uint64(100)
-	if data, err := procfs.ReadFile("self/auxv"); err == nil {
-		for i := 0; i < len(data)-8; i += 16 {
-			key := uint64(data[i]) | uint64(data[i+1])<<8 | uint64(data[i+2])<<16 | uint64(data[i+3])<<24 |
-				uint64(data[i+4])<<32 | uint64(data[i+5])<<40 | uint64(data[i+6])<<48 | uint64(data[i+7])<<56
-			if key == 11 {
-				clockTicks = uint64(data[i+8]) | uint64(data[i+9])<<8 | uint64(data[i+10])<<16 | uint64(data[i+11])<<24 |
-					uint64(data[i+12])<<32 | uint64(data[i+13])<<40 | uint64(data[i+14])<<48 | uint64(data[i+15])<<56
-				break
-			}
-		}
-	}
-
-	if clockTicks == 0 {
-		clockTicks = 100
-	}
-
-	totalNS := (utime + stime) * (1e9 / clockTicks)
+	totalNS := (utime + stime) * (1e9 / clockTicksPerSecond())
 	return cpuTimeInfo{totalNS: totalNS}
+}
+
+// clockTicksPerSecond is the unit of /proc/<pid>/stat's times.
+func clockTicksPerSecond() uint64 {
+	return cache.ClockTicks()
 }
 
 func IsKernelThread(pid uint32, name string) bool {

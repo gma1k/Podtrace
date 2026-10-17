@@ -51,9 +51,7 @@ func AnalyzeTLS(events []*events.Event) (
 	for target, count := range targetMap {
 		topTargets = append(topTargets, TargetCount{target, count})
 	}
-	sort.Slice(topTargets, func(i, j int) bool {
-		return topTargets[i].Count > topTargets[j].Count
-	})
+	sortTargetCounts(topTargets)
 
 	return
 }

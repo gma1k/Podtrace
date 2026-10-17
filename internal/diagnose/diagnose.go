@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -46,6 +47,7 @@ type Diagnostician struct {
 	maxEvents          int
 	eventCount         int
 	droppedEvents      int
+	sampleIntN         func(int) int
 	evHead             int
 	wrapped            bool
 	podCommTracker     *tracker.PodCommunicationTracker
@@ -129,7 +131,11 @@ func (d *Diagnostician) AddEventWithContext(event *events.Event, k8sContext map[
 		return
 	}
 
-	if !shouldSampleEvent(event, d.eventCount) {
+	intn := d.sampleIntN
+	if intn == nil {
+		intn = rand.IntN
+	}
+	if !shouldSampleEvent(event, intn) {
 		d.droppedEvents++
 		if d.droppedEvents == 1 || d.droppedEvents%config.DroppedEventsLogRate == 0 {
 			logger.Warn("Event buffer at capacity; sampling and evicting oldest events",
@@ -258,7 +264,24 @@ func (d *Diagnostician) CriticalPath() criticalpath.Summary {
 }
 
 func (d *Diagnostician) Finish() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.endTime = time.Now()
+}
+
+// EventsSeen counts every event added, including those the full buffer
+// sampled out.
+func (d *Diagnostician) EventsSeen() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.eventCount
+}
+
+// EventsSampledOut counts the events a full buffer did not keep.
+func (d *Diagnostician) EventsSampledOut() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.droppedEvents
 }
 
 // EventContexts returns the per-event enrichment contexts, index-aligned with
@@ -319,10 +342,14 @@ func (d *Diagnostician) FilterEvents(eventType events.EventType) []*events.Event
 }
 
 func (d *Diagnostician) StartTime() time.Time {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	return d.startTime
 }
 
 func (d *Diagnostician) EndTime() time.Time {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	return d.endTime
 }
 
@@ -356,7 +383,7 @@ func (d *Diagnostician) GenerateReportWithContext(ctx context.Context) string {
 	default:
 	}
 
-	duration := d.endTime.Sub(d.startTime)
+	duration := d.EndTime().Sub(d.StartTime())
 	var result string
 
 	result += report.GenerateSummarySection(d, duration)

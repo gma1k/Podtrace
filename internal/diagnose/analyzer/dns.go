@@ -23,8 +23,7 @@ func DNSLookups(responses []*events.Event, packetCapture bool) []*events.Event {
 }
 
 // AnalyzeDNS aggregates DNS activity. Names and per-name lookup counts come
-// from queries (every lookup, reliable even without a response); latency,
-// errors and percentiles come from responses.
+// from queries (every lookup, reliable even without a response).
 func AnalyzeDNS(queries, responses []*events.Event) (avgLatency, maxLatency float64, errors int, p50, p95, p99 float64, topTargets []TargetCount) {
 	var totalLatency float64
 	var latencies []float64
@@ -67,9 +66,7 @@ func AnalyzeDNS(queries, responses []*events.Event) (avgLatency, maxLatency floa
 	for target, count := range targetMap {
 		topTargets = append(topTargets, TargetCount{target, count})
 	}
-	sort.Slice(topTargets, func(i, j int) bool {
-		return topTargets[i].Count > topTargets[j].Count
-	})
+	sortTargetCounts(topTargets)
 
 	return
 }
@@ -134,13 +131,19 @@ func sortedNameCounts(counts map[string]int) []TargetCount {
 	for name, count := range counts {
 		out = append(out, TargetCount{Target: name, Count: count})
 	}
+	sortTargetCounts(out)
+	return out
+}
+
+// sortTargetCounts orders targets by count, most first, and by name among
+// equal counts so the top-N cut is the same on every run.
+func sortTargetCounts(out []TargetCount) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count
 		}
 		return out[i].Target < out[j].Target
 	})
-	return out
 }
 
 // TargetAddrs pairs a DNS name with the distinct addresses it resolved to.

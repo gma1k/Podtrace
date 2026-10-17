@@ -37,7 +37,15 @@ type Span struct {
 	Events       []*events.Event
 	Attributes   map[string]string
 	Error        bool
+
+	firstSeen        time.Time
+	awaitingResponse bool
+	droppedEvents    int
 }
+
+const maxEventsPerSpan = 128
+
+const maxOpenSpanHold = time.Minute
 
 type ServiceInfo struct {
 	Name      string
@@ -96,11 +104,7 @@ func (tt *TraceTracker) ProcessEvent(event *events.Event, k8sContext interface{}
 		return
 	}
 
-	span.Events = append(span.Events, event)
-	span.UpdateDuration()
-	if event.IsError() {
-		span.Error = true
-	}
+	span.addEvent(event)
 
 	if k8sContext != nil {
 		tt.updateServiceInfo(trace, span, k8sContext)
@@ -126,6 +130,7 @@ func (tt *TraceTracker) findOrCreateSpan(trace *Trace, event *events.Event) *Spa
 		Events:       make([]*events.Event, 0),
 		Attributes:   make(map[string]string),
 		Operation:    event.TypeString(),
+		firstSeen:    time.Now(),
 	}
 
 	if event.ProcessName != "" {
@@ -240,11 +245,15 @@ func (tt *TraceTracker) SnapshotForExport(settle time.Duration, force bool, expo
 			continue
 		}
 		sent := trace.exportedSpans[exporter]
-		if sent >= len(trace.Spans) {
+		ready := len(trace.Spans)
+		if !force {
+			ready = settledPrefix(trace.Spans, sent, now)
+		}
+		if sent >= ready {
 			trace.mu.Unlock()
 			continue
 		}
-		snapshot := cloneTraceLocked(trace, sent)
+		snapshot := cloneTraceLocked(trace, sent, ready)
 		trace.mu.Unlock()
 		out = append(out, snapshot)
 	}
@@ -286,21 +295,34 @@ func (tt *TraceTracker) SnapshotAll() []*Trace {
 	out := make([]*Trace, 0, len(live))
 	for _, trace := range live {
 		trace.mu.RLock()
-		out = append(out, cloneTraceLocked(trace, 0))
+		out = append(out, cloneTraceLocked(trace, 0, len(trace.Spans)))
 		trace.mu.RUnlock()
 	}
 	return out
 }
 
-// cloneTraceLocked deep-copies a trace, including only spans from index
-// fromSpan on.
-func cloneTraceLocked(trace *Trace, fromSpan int) *Trace {
+// settledPrefix returns the end of the run of spans from index from on that
+// can be exported now: it stops at the first span still waiting for its
+// response, unless that span has waited maxOpenSpanHold.
+func settledPrefix(spans []*Span, from int, now time.Time) int {
+	for i := from; i < len(spans); i++ {
+		s := spans[i]
+		if s.awaitingResponse && now.Sub(s.firstSeen) < maxOpenSpanHold {
+			return i
+		}
+	}
+	return len(spans)
+}
+
+// cloneTraceLocked deep-copies a trace, including only spans in
+// [fromSpan, toSpan).
+func cloneTraceLocked(trace *Trace, fromSpan, toSpan int) *Trace {
 	out := &Trace{
 		TraceID:   trace.TraceID,
 		StartTime: trace.StartTime,
 		EndTime:   trace.EndTime,
 		Services:  make(map[string]*ServiceInfo, len(trace.Services)),
-		Spans:     make([]*Span, 0, len(trace.Spans)-fromSpan),
+		Spans:     make([]*Span, 0, toSpan-fromSpan),
 	}
 	for k, v := range trace.Services {
 		info := *v
@@ -312,7 +334,7 @@ func cloneTraceLocked(trace *Trace, fromSpan int) *Trace {
 		}
 		out.Services[k] = &info
 	}
-	for _, span := range trace.Spans[fromSpan:] {
+	for _, span := range trace.Spans[fromSpan:toSpan] {
 		s := &Span{
 			TraceID:      span.TraceID,
 			SpanID:       span.SpanID,
@@ -353,6 +375,44 @@ func (tt *TraceTracker) GetTraceCount() int {
 	tt.mu.RLock()
 	defer tt.mu.RUnlock()
 	return len(tt.traces)
+}
+
+// addEvent records e on the span: it widens the span to cover e, in constant
+// time, and keeps e itself while the span holds fewer than maxEventsPerSpan.
+func (s *Span) addEvent(e *events.Event) {
+	hi := e.TimestampTime()
+	lo := hi.Add(-e.Latency())
+	if len(s.Events) == 0 && s.droppedEvents == 0 {
+		s.StartTime, s.Duration = lo, hi.Sub(lo)
+	} else {
+		start, end := s.StartTime, s.StartTime.Add(s.Duration)
+		if lo.Before(start) {
+			start = lo
+		}
+		if hi.After(end) {
+			end = hi
+		}
+		s.StartTime, s.Duration = start, end.Sub(start)
+	}
+	if e.IsError() {
+		s.Error = true
+	}
+	switch {
+	case e.Type == events.EventHTTPReq && e.CorrelationID != 0:
+		s.awaitingResponse = true
+	case e.Type == events.EventHTTPResp:
+		s.awaitingResponse = false
+	}
+
+	if len(s.Events) < maxEventsPerSpan {
+		s.Events = append(s.Events, e)
+		return
+	}
+	s.droppedEvents++
+	if s.Attributes == nil {
+		s.Attributes = make(map[string]string)
+	}
+	s.Attributes["podtrace.dropped_events"] = strconv.Itoa(s.droppedEvents)
 }
 
 // UpdateDuration recomputes the span's start and duration from its events.

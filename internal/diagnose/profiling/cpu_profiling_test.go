@@ -52,7 +52,7 @@ func TestGenerateCPUUsageReport(t *testing.T) {
 	}
 	if strings.Contains(report, "Pod Processes") || strings.Contains(report, "System/Kernel Processes") {
 	} else {
-		if !strings.Contains(report, "No CPU events") && !strings.Contains(report, "Total CPU usage") {
+		if !strings.Contains(report, "No CPU events") && !strings.Contains(report, "Total CPU usage") && !strings.Contains(report, "CPU time unavailable") {
 			t.Error("Report should contain either process information or indicate no events")
 		}
 	}
@@ -81,7 +81,7 @@ func TestCPUUsageReportWithKernelThreads(t *testing.T) {
 		t.Error("Report should contain 'CPU Usage by Process'")
 	}
 	if !strings.Contains(report, "Pod Processes") && !strings.Contains(report, "System/Kernel Processes") {
-		if !strings.Contains(report, "Total CPU usage") {
+		if !strings.Contains(report, "Total CPU usage") && !strings.Contains(report, "CPU time unavailable") {
 			t.Error("Report should contain process information or total CPU usage")
 		}
 	}

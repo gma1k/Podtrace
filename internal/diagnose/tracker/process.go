@@ -10,6 +10,7 @@ import (
 	"github.com/gma1k/podtrace/internal/events"
 	"github.com/gma1k/podtrace/internal/logger"
 	"github.com/gma1k/podtrace/internal/procfs"
+	"github.com/gma1k/podtrace/internal/sanitize"
 	"github.com/gma1k/podtrace/internal/validation"
 )
 
@@ -100,7 +101,7 @@ func AnalyzeProcessActivity(events []*events.Event) []PidInfo {
 		}
 		pidInfos = append(pidInfos, PidInfo{
 			Pid:        pid,
-			Name:       name,
+			Name:       sanitize.Terminal(name),
 			Count:      count,
 			Percentage: percentage,
 			Pod:        pidPod[pid],
@@ -118,7 +119,10 @@ func AnalyzeProcessActivity(events []*events.Event) []PidInfo {
 	}
 
 	sort.Slice(pidInfos, func(i, j int) bool {
-		return pidInfos[i].Count > pidInfos[j].Count
+		if pidInfos[i].Count != pidInfos[j].Count {
+			return pidInfos[i].Count > pidInfos[j].Count
+		}
+		return pidInfos[i].Pid < pidInfos[j].Pid
 	})
 
 	return pidInfos

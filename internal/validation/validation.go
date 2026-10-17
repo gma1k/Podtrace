@@ -131,13 +131,10 @@ func ValidateContainerID(containerID string) bool {
 	return containerIDRegex.MatchString(containerID)
 }
 
+// SanitizeCSVField defuses a field a spreadsheet would run as a formula.
 func SanitizeCSVField(field string) string {
 	if field != "" && strings.IndexByte("=+-@\t\r", field[0]) >= 0 {
-		field = "'" + field
-	}
-	if strings.ContainsAny(field, ",\"\n\r") {
-		field = strings.ReplaceAll(field, "\"", "\"\"")
-		return "\"" + field + "\""
+		return "'" + field
 	}
 	return field
 }

@@ -42,6 +42,8 @@ func (s Sample) Label(name string) string { return s.Labels[name] }
 type Snapshot struct {
 	At       time.Time
 	families map[string][]Sample
+
+	partial bool
 }
 
 func (s Snapshot) Family(name string) []Sample { return s.families[name] }
@@ -80,7 +82,9 @@ func Take(g prometheus.Gatherer, now time.Time) (Snapshot, error) {
 			return Snapshot{}, err
 		}
 	}
-	return TakeFamilies(families, now), err
+	snap := TakeFamilies(families, now)
+	snap.partial = err != nil
+	return snap, err
 }
 
 // TakeFamilies builds a snapshot from families already gathered, such as a

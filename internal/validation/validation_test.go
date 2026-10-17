@@ -230,19 +230,16 @@ func TestSanitizeCSVField(t *testing.T) {
 		expected string
 	}{
 		{"normal field", "nginx", "nginx"},
-		{"with comma", "nginx,worker", `"nginx,worker"`},
-		{"with quote", `nginx"worker`, `"nginx""worker"`},
-		{"with newline", "nginx\nworker", `"nginx
-worker"`},
-		{"with carriage return", "nginx\rworker", `"nginx` + "\r" + `worker"`}, // \r is quoted
+		{"with comma", "nginx,worker", "nginx,worker"},
+		{"with quote", `nginx"worker`, `nginx"worker`},
+		{"with newline", "nginx\nworker", "nginx\nworker"},
 		{"empty", "", ""},
-		{"all special chars", `a,b"c\nd`, `"a,b""c\nd"`}, // Backslash is preserved
 		{"formula equals", "=cmd|'/c calc'!A1", "'=cmd|'/c calc'!A1"},
 		{"formula plus", "+1+1", "'+1+1"},
 		{"formula minus", "-2+3", "'-2+3"},
 		{"formula at", "@SUM(A1)", "'@SUM(A1)"},
 		{"formula leading tab", "\t=1+1", "'\t=1+1"},
-		{"formula with comma", "=1,2", `"'=1,2"`},
+		{"formula with comma", "=1,2", "'=1,2"},
 	}
 
 	for _, tt := range tests {

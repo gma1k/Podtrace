@@ -177,9 +177,12 @@ func walkToRoots(symptom IssueRef, direct func(IssueRef) []IssueRef) []Cause {
 	}
 
 	var causes []Cause
+	var visited []IssueRef
+	links := map[IssueRef][]IssueRef{}
 	for len(queue) > 0 {
 		node := queue[0]
 		queue = queue[1:]
+		visited = append(visited, node)
 
 		var open []IssueRef
 		for _, c := range direct(node) {
@@ -191,6 +194,7 @@ func walkToRoots(symptom IssueRef, direct func(IssueRef) []IssueRef) []Cause {
 			causes = append(causes, Cause{IssueRef: node, Via: pathTo(node)})
 			continue
 		}
+		links[node] = open
 		for _, c := range open {
 			if _, seen := depth[c]; seen {
 				continue
@@ -200,7 +204,43 @@ func walkToRoots(symptom IssueRef, direct func(IssueRef) []IssueRef) []Cause {
 			queue = append(queue, c)
 		}
 	}
-	return causes
+	return append(causes, closedLoops(symptom, visited, links, causes, pathTo)...)
+}
+
+// closedLoops returns the issues the walk passed through whose every cause
+// leads back among themselves, never to a root: two issues that each list the
+// other.
+func closedLoops(symptom IssueRef, visited []IssueRef, links map[IssueRef][]IssueRef, roots []Cause, pathTo func(IssueRef) []IssueRef) []Cause {
+	explainedBy := map[IssueRef][]IssueRef{}
+	for from, to := range links {
+		for _, c := range to {
+			explainedBy[c] = append(explainedBy[c], from)
+		}
+	}
+	reaches := map[IssueRef]bool{}
+	var queue []IssueRef
+	for _, r := range roots {
+		reaches[r.IssueRef] = true
+		queue = append(queue, r.IssueRef)
+	}
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		for _, p := range explainedBy[node] {
+			if !reaches[p] {
+				reaches[p] = true
+				queue = append(queue, p)
+			}
+		}
+	}
+
+	var out []Cause
+	for _, node := range visited {
+		if node != symptom && !reaches[node] {
+			out = append(out, Cause{IssueRef: node, Via: pathTo(node)})
+		}
+	}
+	return out
 }
 
 func sortRefs(refs []IssueRef) {

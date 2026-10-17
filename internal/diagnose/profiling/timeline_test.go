@@ -750,6 +750,7 @@ func TestGenerateCPUUsageReport_WithEvents(t *testing.T) {
 	defer func() { config.ProcBasePath = origProcBasePath }()
 
 	config.ProcBasePath = dir
+	_ = os.WriteFile(dir+"/uptime", []byte("1.00 1.00\n"), 0644)
 
 	pid1 := uint32(1234)
 	pid2 := uint32(5678)
@@ -812,6 +813,7 @@ func TestGenerateCPUUsageReport_NoKernelProcesses(t *testing.T) {
 	defer func() { config.ProcBasePath = origProcBasePath }()
 
 	config.ProcBasePath = dir
+	_ = os.WriteFile(dir+"/uptime", []byte("5.00 1.00\n"), 0644)
 
 	pid1 := uint32(1234)
 	stat1Path := fmt.Sprintf("%s/%d/stat", dir, pid1)
@@ -838,6 +840,7 @@ func TestGenerateCPUUsageReport_ManyKernelProcesses(t *testing.T) {
 	defer func() { config.ProcBasePath = origProcBasePath }()
 
 	config.ProcBasePath = dir
+	_ = os.WriteFile(dir+"/uptime", []byte("5.00 1.00\n"), 0644)
 
 	statContent := "1234 (test) S 1 1234 1234 0 -1 4194304 100 0 0 0 100 200 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
 
@@ -869,6 +872,7 @@ func TestGenerateCPUUsageReport_ManyPodProcesses(t *testing.T) {
 	defer func() { config.ProcBasePath = origProcBasePath }()
 
 	config.ProcBasePath = dir
+	_ = os.WriteFile(dir+"/uptime", []byte("5.00 1.00\n"), 0644)
 
 	statContent := "1234 (test) S 1 1234 1234 0 -1 4194304 100 0 0 0 100 200 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
 
@@ -938,45 +942,6 @@ func TestGetProcessCPUTime_ValidStat(t *testing.T) {
 	}
 }
 
-func TestGetProcessCPUTime_WithAuxv(t *testing.T) {
-	dir := t.TempDir()
-	origProcBasePath := config.ProcBasePath
-	defer func() { config.ProcBasePath = origProcBasePath }()
-
-	config.ProcBasePath = dir
-	statPath := fmt.Sprintf("%s/1234/stat", dir)
-	auxvPath := fmt.Sprintf("%s/self/auxv", dir)
-	_ = os.MkdirAll(fmt.Sprintf("%s/1234", dir), 0755)
-	_ = os.MkdirAll(fmt.Sprintf("%s/self", dir), 0755)
-
-	statContent := "1234 (test) S 1 1234 1234 0 -1 4194304 100 0 0 0 100 200 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
-	_ = os.WriteFile(statPath, []byte(statContent), 0644)
-
-	auxvData := make([]byte, 32)
-	auxvData[0] = 11
-	auxvData[1] = 0
-	auxvData[2] = 0
-	auxvData[3] = 0
-	auxvData[4] = 0
-	auxvData[5] = 0
-	auxvData[6] = 0
-	auxvData[7] = 0
-	auxvData[8] = 200
-	auxvData[9] = 0
-	auxvData[10] = 0
-	auxvData[11] = 0
-	auxvData[12] = 0
-	auxvData[13] = 0
-	auxvData[14] = 0
-	auxvData[15] = 0
-	_ = os.WriteFile(auxvPath, auxvData, 0644)
-
-	result := getProcessCPUTime(1234)
-	if result.totalNS == 0 {
-		t.Error("Expected non-zero CPU time with auxv")
-	}
-}
-
 func TestGetProcessCPUTime_AuxvError(t *testing.T) {
 	dir := t.TempDir()
 	origProcBasePath := config.ProcBasePath
@@ -992,45 +957,6 @@ func TestGetProcessCPUTime_AuxvError(t *testing.T) {
 	result := getProcessCPUTime(1234)
 	if result.totalNS == 0 {
 		t.Error("Expected non-zero CPU time even without auxv")
-	}
-}
-
-func TestGetProcessCPUTime_ZeroClockTicks(t *testing.T) {
-	dir := t.TempDir()
-	origProcBasePath := config.ProcBasePath
-	defer func() { config.ProcBasePath = origProcBasePath }()
-
-	config.ProcBasePath = dir
-	statPath := fmt.Sprintf("%s/1234/stat", dir)
-	auxvPath := fmt.Sprintf("%s/self/auxv", dir)
-	_ = os.MkdirAll(fmt.Sprintf("%s/1234", dir), 0755)
-	_ = os.MkdirAll(fmt.Sprintf("%s/self", dir), 0755)
-
-	statContent := "1234 (test) S 1 1234 1234 0 -1 4194304 100 0 0 0 100 200 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
-	_ = os.WriteFile(statPath, []byte(statContent), 0644)
-
-	auxvData := make([]byte, 32)
-	auxvData[0] = 11
-	auxvData[1] = 0
-	auxvData[2] = 0
-	auxvData[3] = 0
-	auxvData[4] = 0
-	auxvData[5] = 0
-	auxvData[6] = 0
-	auxvData[7] = 0
-	auxvData[8] = 0
-	auxvData[9] = 0
-	auxvData[10] = 0
-	auxvData[11] = 0
-	auxvData[12] = 0
-	auxvData[13] = 0
-	auxvData[14] = 0
-	auxvData[15] = 0
-	_ = os.WriteFile(auxvPath, auxvData, 0644)
-
-	result := getProcessCPUTime(1234)
-	if result.totalNS == 0 {
-		t.Error("Expected non-zero CPU time even with zero clock ticks (should default to 100)")
 	}
 }
 

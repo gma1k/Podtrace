@@ -188,6 +188,9 @@ func (c *Collector) Feed(e *events.Event) {
 		c.finish(e)
 		return
 	case events.EventHTTPReq, events.EventHTTPResp:
+		if _, done := c.finished[e.CorrelationID]; done {
+			return
+		}
 		if e.Target != "" {
 			c.rememberEndpoint(e.CorrelationID, endpointOf(e))
 		}
@@ -346,7 +349,7 @@ func (c *Collector) rememberEndpoint(id uint64, endpoint string) {
 	if _, ok := c.endpoints[id]; ok {
 		return
 	}
-	if len(c.endpoints) >= maxEndpoints {
+	for len(c.endpoints) >= maxEndpoints && len(c.endpointOrder) > 0 {
 		oldest := c.endpointOrder[0]
 		c.endpointOrder = c.endpointOrder[1:]
 		delete(c.endpoints, oldest)
@@ -376,15 +379,24 @@ func (c *Collector) markFinished(id uint64) {
 		c.finishedNext = (c.finishedNext + 1) % recentlyFinishedSize
 	}
 	c.finished[id] = struct{}{}
-	if len(c.openOrder) > 2*maxOpenRequests {
-		live := c.openOrder[:0]
-		for _, k := range c.openOrder {
-			if _, ok := c.open[k]; ok {
-				live = append(live, k)
-			}
-		}
-		c.openOrder = live
+	c.openOrder = compactOrder(c.openOrder, maxOpenRequests, func(k uint64) bool { _, ok := c.open[k]; return ok })
+	c.endpointOrder = compactOrder(c.endpointOrder, maxEndpoints, func(k uint64) bool { _, ok := c.endpoints[k]; return ok })
+}
+
+// compactOrder drops the ids that are no longer live from an insertion-order
+// slice once it holds twice the live bound: finished requests leave their ids
+// behind, and a long collection would otherwise keep every one.
+func compactOrder(order []uint64, bound int, live func(uint64) bool) []uint64 {
+	if len(order) <= 2*bound {
+		return order
 	}
+	kept := order[:0]
+	for _, k := range order {
+		if live(k) {
+			kept = append(kept, k)
+		}
+	}
+	return kept
 }
 
 // breakdown divides [start, end] between the categories of the intervals

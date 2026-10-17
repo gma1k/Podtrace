@@ -278,13 +278,6 @@ const (
 )
 
 const (
-	PriorityCritical = 1
-	PriorityHigh     = 2
-	PriorityNormal   = 3
-	PriorityLow      = 4
-)
-
-const (
 	ErrorCategoryTransient   = 1
 	ErrorCategoryRecoverable = 2
 	ErrorCategoryPermanent   = 3

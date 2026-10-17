@@ -68,7 +68,7 @@ func TestExeMappings_SkipsRangeWithoutDash(t *testing.T) {
 func TestStackResolver_Addr2lineMissing(t *testing.T) {
 	t.Setenv("PATH", "")
 	r := &stackResolver{cache: map[string]string{}}
-	got := r.resolve(context.Background(), uint32(os.Getpid()), 0x1234)
+	got := r.resolve(context.Background(), processOfTheTestBinary(t), 0x1234)
 	if !strings.Contains(got, "@0x1234") {
 		t.Errorf("resolve() = %q, want the base@0x<addr> fallback when addr2line is not on PATH", got)
 	}

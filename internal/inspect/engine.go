@@ -253,7 +253,7 @@ func (e *Engine) applyHoldTime(firing map[string]detector.Issue, forDuration map
 
 		since, tracked := e.pending[key]
 		if !tracked {
-			if _, alreadyActive := e.active[key]; !alreadyActive && len(e.pending)+len(e.active) >= e.budget {
+			if _, alreadyActive := e.active[key]; !alreadyActive && len(e.pending) >= e.budget {
 				e.budgetDropped.Inc()
 				continue
 			}

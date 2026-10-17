@@ -139,7 +139,10 @@ func (pct *PodCommunicationTracker) GetSummary() []PodCommunicationSummary {
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].ConnectionCount > summaries[j].ConnectionCount
+		if summaries[i].ConnectionCount != summaries[j].ConnectionCount {
+			return summaries[i].ConnectionCount > summaries[j].ConnectionCount
+		}
+		return summaries[i].Target < summaries[j].Target
 	})
 
 	return summaries

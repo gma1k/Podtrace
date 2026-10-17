@@ -108,8 +108,12 @@ func (w Window) Deltas(family string) []Delta {
 
 	out := make([]Delta, 0, len(cur))
 	for _, s := range cur {
+		before, ok := previous[seriesKey(s)]
+		if !ok && w.Prev.partial {
+			continue
+		}
 		d := Delta{Sample: s, Value: s.Value, Count: s.Count, Sum: s.Sum, Buckets: s.Buckets}
-		if before, ok := previous[seriesKey(s)]; ok {
+		if ok {
 			if s.Value < before.Value || s.Count < before.Count {
 				d.Reset = true
 			} else {

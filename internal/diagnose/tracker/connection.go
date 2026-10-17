@@ -96,7 +96,10 @@ func (ct *ConnectionTracker) GetConnectionSummary() []ConnectionSummary {
 		})
 	}
 	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].TotalOps > summaries[j].TotalOps
+		if summaries[i].TotalOps != summaries[j].TotalOps {
+			return summaries[i].TotalOps > summaries[j].TotalOps
+		}
+		return summaries[i].Target < summaries[j].Target
 	})
 	return summaries
 }

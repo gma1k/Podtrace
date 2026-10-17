@@ -857,14 +857,11 @@ func runDiagnoseModeWithSource(ctx context.Context, eventChan <-chan *events.Eve
 	} else {
 		diagnostician = diagnose.NewDiagnosticianWithThresholds(errorRateThreshold, rttSpikeThreshold, fsSlowThreshold)
 	}
+	openKernelCountWindow()
 	timeout := time.After(duration)
 	batchTicker := time.NewTicker(config.BatchProcessingInterval)
 	defer batchTicker.Stop()
 	eventBatch := make([]*events.Event, 0, config.EventBatchSize)
-	// flushBatch feeds every pending event to the diagnostician (and the
-	// tracing manager). The terminal paths MUST flush too: finishing the
-	// run with a partially-filled batch systematically undercounted the
-	// tail of every diagnose run.
 	flushBatch := func() {
 		if len(eventBatch) == 0 {
 			return
@@ -1217,6 +1214,21 @@ func takeFastFilesystemOps(agg *diagnose.Diagnostician) {
 }
 
 var processCPU func() (map[uint32]uint64, error)
+
+// openKernelCountWindow discards what the kernel counted between attaching
+// and the diagnose window opening.
+func openKernelCountWindow() {
+	if drain := processCPU; drain != nil {
+		if _, err := drain(); err != nil {
+			logger.Debug("Could not reset the kernel's per-process CPU time", zap.Error(err))
+		}
+	}
+	if drain := fastFilesystemOps; drain != nil {
+		if _, err := drain(); err != nil {
+			logger.Debug("Could not reset the kernel's filesystem counts", zap.Error(err))
+		}
+	}
+}
 
 type processCPUCounter interface {
 	CountProcessCPU() error

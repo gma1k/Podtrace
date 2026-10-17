@@ -10,12 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"go.uber.org/zap"
-
 	"github.com/gma1k/podtrace/internal/config"
+	"github.com/gma1k/podtrace/internal/ebpf/safeelf"
 	"github.com/gma1k/podtrace/internal/events"
 	"github.com/gma1k/podtrace/internal/hostfs"
-	"github.com/gma1k/podtrace/internal/logger"
 	"github.com/gma1k/podtrace/internal/procfs"
 	"github.com/gma1k/podtrace/internal/procmaps"
 	"github.com/gma1k/podtrace/internal/safeconv"
@@ -45,7 +43,7 @@ func NewResolver() *Resolver {
 
 // Resolve renders one instruction pointer captured in pid's address space.
 func (r *Resolver) Resolve(ctx context.Context, pid uint32, addr uint64) string {
-	return r.inner.resolve(ctx, pid, addr)
+	return sanitize.Terminal(r.inner.resolve(ctx, pid, addr))
 }
 
 type stackResolver struct {
@@ -54,6 +52,7 @@ type stackResolver struct {
 	cache    map[string]string
 	segments map[string][]loadSegment
 	mappings map[string][]exeMapping
+	allMaps  map[uint32][]procmaps.Entry
 }
 
 // loadSegment is a PT_LOAD program header: the file-offset range it covers and
@@ -91,13 +90,12 @@ func (r *stackResolver) resolve(ctx context.Context, pid uint32, addr uint64) st
 		}
 		return fmt.Sprintf("0x%x", addr)
 	}
-	exePath, err := procfs.Readlink(fmt.Sprintf("%d/exe", pid))
-	if err != nil || exePath == "" {
+	mapsPath, err := procfs.Readlink(fmt.Sprintf("%d/exe", pid))
+	if err != nil || mapsPath == "" {
 		return fmt.Sprintf("0x%x", addr)
 	}
-	mapsPath := exePath
-	exePath, err = exeInTargetRoot(pid, exePath)
-	if err != nil {
+	exePath := exeLink(pid)
+	if !hostfs.IsRegularFile(exePath) {
 		return fmt.Sprintf("0x%x", addr)
 	}
 	key := exePath + "|" + fmt.Sprintf("%x", addr)
@@ -107,6 +105,13 @@ func (r *stackResolver) resolve(ctx context.Context, pid uint32, addr uint64) st
 	symAddrForTable := addr
 	if v, ok := r.translateAddr(pid, mapsPath, exePath, addr); ok {
 		symAddrForTable = v
+	} else if other, unmapped := r.otherMappedFile(pid, mapsPath, addr); other != "" || unmapped {
+		v := fmt.Sprintf("0x%x", addr)
+		if other != "" {
+			v = fmt.Sprintf("%s@0x%x", other, addr)
+		}
+		r.cache[key] = v
+		return v
 	}
 	if name := r.symbolTables().get(exePath).lookupAt(exePath, symAddrForTable); name != "" {
 		r.cache[key] = name
@@ -117,22 +122,22 @@ func (r *stackResolver) resolve(ctx context.Context, pid uint32, addr uint64) st
 	defer cancel()
 	addr2lineBin, err := exec.LookPath("addr2line")
 	if err != nil {
-		v := fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
+		v := fmt.Sprintf("%s@0x%x", filepath.Base(mapsPath), addr)
 		r.cache[key] = v
 		return v
 	}
-	cmd := exec.CommandContext(timeoutCtx, addr2lineBin, "-e", exePath, fmt.Sprintf("%#x", symAddrForTable)) // #nosec G204 -- LookPath-resolved binary; exePath validated via hostfs.Stat; address is %#x-formatted
+	cmd := exec.CommandContext(timeoutCtx, addr2lineBin, "-e", exePath, fmt.Sprintf("%#x", symAddrForTable)) // #nosec G204 -- LookPath-resolved binary; exePath is the fixed /proc/<pid>/exe link; address is %#x-formatted
 	out, err := cmd.Output()
 	if err != nil {
-		v := fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
+		v := fmt.Sprintf("%s@0x%x", filepath.Base(mapsPath), addr)
 		r.cache[key] = v
 		return v
 	}
 	line := strings.TrimSpace(string(out))
 	if line == "" || line == "??:0" || line == "??:?" {
-		line = fmt.Sprintf("%s@0x%x", filepath.Base(exePath), addr)
+		line = fmt.Sprintf("%s@0x%x", filepath.Base(mapsPath), addr)
 	} else {
-		line = filepath.Base(exePath) + ":" + line
+		line = filepath.Base(mapsPath) + ":" + line
 	}
 	r.cache[key] = line
 	return line
@@ -145,20 +150,12 @@ func (r *stackResolver) symbolTables() *symbolTableCache {
 	return sharedSymbolTables
 }
 
-// exeInTargetRoot turns the exe path /proc/<pid>/exe reports into one this
-// process can actually open.
-func exeInTargetRoot(pid uint32, exePath string) (string, error) {
-	viaRoot := filepath.Join(config.ProcBasePath, strconv.FormatUint(uint64(pid), 10),
-		"root", strings.TrimPrefix(exePath, "/"))
-	if _, err := hostfs.Stat(viaRoot); err == nil {
-		return viaRoot, nil
-	}
-	if _, err := hostfs.Stat(exePath); err == nil {
-		return exePath, nil
-	}
-	logger.Debug("stack symbolisation: executable not reachable",
-		zap.Uint32("pid", pid), zap.String("via_root", viaRoot), zap.String("bare", exePath))
-	return "", fmt.Errorf("executable for pid %d not reachable at %s or %s", pid, viaRoot, exePath)
+// exeLink is the kernel's link to the file pid is executing. Opening it
+// reaches that exact inode without walking the name readlink reports, which
+// the traced process controls: it may since have been replaced by a FIFO
+// that blocks the open, or by a symlink that leads out of the container.
+func exeLink(pid uint32) string {
+	return filepath.Join(config.ProcBasePath, strconv.FormatUint(uint64(pid), 10), "exe")
 }
 
 // translateAddr converts a runtime instruction pointer into the ELF virtual
@@ -197,11 +194,12 @@ func (r *stackResolver) exeMappings(pid uint32, exePath string) []exeMapping {
 		return m
 	}
 
+	want := strings.TrimSuffix(exePath, deletedSuffix)
 	var out []exeMapping
 	data, err := procfs.ReadFile(fmt.Sprintf("%d/maps", pid))
 	if err == nil {
 		for _, e := range procmaps.Parse(data) {
-			if e.Path != exePath {
+			if e.Path != want {
 				continue
 			}
 			out = append(out, exeMapping{start: e.Start, end: e.End, pgoff: e.Offset})
@@ -209,6 +207,34 @@ func (r *stackResolver) exeMappings(pid uint32, exePath string) []exeMapping {
 	}
 	r.mappings[key] = out
 	return out
+}
+
+const deletedSuffix = " (deleted)"
+
+// otherMappedFile names the file other than the executable mapped at addr in
+// pid, such as libc.so.6 or [vdso]; "" when addr is in the executable, in an
+// anonymous mapping, or the maps cannot be read.
+func (r *stackResolver) otherMappedFile(pid uint32, exePath string, addr uint64) (name string, unmapped bool) {
+	if r.allMaps == nil {
+		r.allMaps = make(map[uint32][]procmaps.Entry)
+	}
+	entries, ok := r.allMaps[pid]
+	if !ok {
+		if data, err := procfs.ReadFile(fmt.Sprintf("%d/maps", pid)); err == nil {
+			entries = procmaps.Parse(data)
+		}
+		r.allMaps[pid] = entries
+	}
+	exe := strings.TrimSuffix(exePath, deletedSuffix)
+	for _, e := range entries {
+		if addr >= e.Start && addr < e.End {
+			if e.Path == "" || e.Path == exe {
+				return "", false
+			}
+			return filepath.Base(e.Path), false
+		}
+	}
+	return "", len(entries) > 0
 }
 
 // loadSegments returns exePath's PT_LOAD program headers, parsing the ELF once
@@ -221,18 +247,27 @@ func (r *stackResolver) loadSegments(exePath string) []loadSegment {
 		return s
 	}
 
-	var out []loadSegment
-	if f, err := hostfs.Open(exePath); err == nil {
-		if ef, eerr := elf.NewFile(f); eerr == nil {
-			for _, p := range ef.Progs {
-				if p.Type == elf.PT_LOAD {
-					out = append(out, loadSegment{off: p.Off, vaddr: p.Vaddr, filesz: p.Filesz})
-				}
-			}
-		}
-		_ = f.Close()
-	}
+	out := readLoadSegments(exePath)
 	r.segments[exePath] = out
+	return out
+}
+
+func readLoadSegments(exePath string) (out []loadSegment) {
+	defer safeelf.RecoverParse("stacktrace.loadSegments")
+	f, _, err := safeelf.OpenRegular(exePath)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	ef, err := elf.NewFile(f)
+	if err != nil {
+		return nil
+	}
+	for _, p := range ef.Progs {
+		if p.Type == elf.PT_LOAD {
+			out = append(out, loadSegment{off: p.Off, vaddr: p.Vaddr, filesz: p.Filesz})
+		}
+	}
 	return out
 }
 
@@ -309,8 +344,10 @@ func GenerateStackTraceSectionWithContext(d Diagnostician, ctx context.Context) 
 			maxFrames = len(e.Stack)
 		}
 		for j := 0; j < maxFrames; j++ {
-			addr := e.Stack[j]
-			frame := resolver.Resolve(ctx, e.PID, addr)
+			frame := resolver.Resolve(ctx, e.PID, e.Stack[j])
+			if frame == "" {
+				break
+			}
 			report += fmt.Sprintf("    #%d %s\n", j, frame)
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/gma1k/podtrace/internal/ebpf/safeelf"
 	"github.com/gma1k/podtrace/internal/hostfs"
 )
 
@@ -60,7 +61,7 @@ func (t *symbolTable) lookupAt(path string, addr uint64) string {
 // pclnName opens path and reads one name, refusing a file that is no longer
 // the one the index describes: offsets from one build are garbage in another.
 func (t *symbolTable) pclnName(path string, addr uint64) string {
-	f, err := hostfs.Open(path)
+	f, _, err := safeelf.OpenRegular(path)
 	if err != nil {
 		return ""
 	}
@@ -83,7 +84,8 @@ func (t *symbolTable) elfSymbols(path string) []elf.Symbol {
 // loadELFSymbolsLocked reads the symbols from path if it is still the indexed
 // executable.
 func (t *symbolTable) loadELFSymbolsLocked(path string) {
-	raw, err := hostfs.Open(path)
+	defer safeelf.RecoverParse("stacktrace.loadELFSymbols")
+	raw, _, err := safeelf.OpenRegular(path)
 	if err != nil {
 		return
 	}
@@ -159,6 +161,14 @@ type symbolTableCache struct {
 	maxBytes int64
 	statID   func(path string) (fileID, bool)
 	load     func(path string) *symbolTable
+	loading  map[fileID]*pendingTable
+}
+
+// pendingTable is a table one caller is parsing; others wanting the same
+// file wait for it instead of parsing it again.
+type pendingTable struct {
+	done  chan struct{}
+	table *symbolTable
 }
 
 func (c *symbolTableCache) get(exePath string) *symbolTable {
@@ -177,7 +187,6 @@ func (c *symbolTableCache) get(exePath string) *symbolTable {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	for i, e := range c.entries {
 		if e.id == id {
 			if i > 0 {
@@ -185,14 +194,32 @@ func (c *symbolTableCache) get(exePath string) *symbolTable {
 				c.entries[0] = e
 			}
 			c.trimLocked()
+			c.mu.Unlock()
 			return e.table
 		}
 	}
+	if p, ok := c.loading[id]; ok {
+		c.mu.Unlock()
+		<-p.done
+		return p.table
+	}
+	if c.loading == nil {
+		c.loading = make(map[fileID]*pendingTable)
+	}
+	p := &pendingTable{done: make(chan struct{})}
+	c.loading[id] = p
+	c.mu.Unlock()
 
-	t := load(exePath)
-	c.entries = append([]cachedTable{{id: id, table: t}}, c.entries...)
-	c.trimLocked()
-	return t
+	defer func() {
+		c.mu.Lock()
+		delete(c.loading, id)
+		c.entries = append([]cachedTable{{id: id, table: p.table}}, c.entries...)
+		c.trimLocked()
+		c.mu.Unlock()
+		close(p.done)
+	}()
+	p.table = load(exePath)
+	return p.table
 }
 
 // trimLocked evicts from the least recently used end until both bounds hold,
@@ -226,15 +253,14 @@ func (c *symbolTableCache) len() int {
 	return len(c.entries)
 }
 
-// indexPCLN is loadPCLNIndex, replaceable so the debug/gosym fallback for
-// pre-1.18 binaries can be exercised with a modern one.
 var indexPCLN = loadPCLNIndex
 
 // loadSymbolTable reads whichever symbol source the binary carries, preferring
 // Go's pclntab because it survives -ldflags=-s and names generics and methods
 // the ELF symbol table renders less usefully.
 func loadSymbolTable(exePath string) *symbolTable {
-	raw, err := hostfs.Open(exePath)
+	defer safeelf.RecoverParse("stacktrace.loadSymbolTable")
+	raw, _, err := safeelf.OpenRegular(exePath)
 	if err != nil {
 		return nil
 	}
@@ -255,7 +281,7 @@ func loadSymbolTable(exePath string) *symbolTable {
 
 	if pclntab := f.Section(".gopclntab"); pclntab != nil {
 		if text := f.Section(".text"); text != nil {
-			if pclnData, derr := pclntab.Data(); derr == nil {
+			if pclnData, derr := safeelf.SectionData(pclntab); derr == nil {
 				if tbl, terr := gosym.NewTable(nil, gosym.NewLineTable(pclnData, text.Addr)); terr == nil {
 					t.goTable = tbl
 					t.goBytes = goTableBytesPerPCLNByte * int64(len(pclnData))
@@ -274,6 +300,9 @@ func loadSymbolTable(exePath string) *symbolTable {
 
 // functionSymbols returns f's named function symbols, sorted by address.
 func functionSymbols(f *elf.File) []elf.Symbol {
+	if !safeelf.SymbolSectionWithinCap(f, ".symtab") {
+		return nil
+	}
 	syms, err := f.Symbols()
 	if err != nil {
 		return nil

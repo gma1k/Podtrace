@@ -44,9 +44,8 @@ func TestEveryConstructorHasACriticalPath(t *testing.T) {
 }
 
 func TestARequestDoneIsNeverSampledOut(t *testing.T) {
-	for count := 1; count <= 500; count++ {
-		if !shouldSampleEvent(&events.Event{Type: events.EventRequestDone}, count) {
-			t.Fatalf("a request-done event was sampled out at event %d", count)
-		}
+	never := func(n int) int { return n - 1 }
+	if !shouldSampleEvent(&events.Event{Type: events.EventRequestDone}, never) {
+		t.Fatal("a request-done event was sampled out")
 	}
 }

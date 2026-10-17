@@ -120,11 +120,26 @@ func GetCPUTime(pid uint32) ProcessCPUTime {
 	return t.ProcessCPUTime
 }
 
+// LookupCPUTime returns the cached snapshot for pid and whether there is one,
+// so a baseline of zero can be told apart from no baseline at all.
+func LookupCPUTime(pid uint32) (ProcessCPUTime, bool) {
+	cpuTimeMu.RLock()
+	t, ok := cpuTimes[pid]
+	cpuTimeMu.RUnlock()
+	return t.ProcessCPUTime, ok
+}
+
 // ResetCPUTimes clears the cache. Tests use it; production code does not.
 func ResetCPUTimes() {
 	cpuTimeMu.Lock()
 	cpuTimes = map[uint32]cpuTimeEntry{}
 	cpuTimeMu.Unlock()
+}
+
+// ClockTicks is AT_CLKTCK, the unit of /proc/<pid>/stat's CPU times, read
+// once from the auxiliary vector and defaulting to 100.
+func ClockTicks() uint64 {
+	return loadClockTicks()
 }
 
 func loadClockTicks() uint64 {

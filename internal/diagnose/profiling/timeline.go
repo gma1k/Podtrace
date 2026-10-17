@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/gma1k/podtrace/internal/clock"
 	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/events"
 	"github.com/gma1k/podtrace/internal/safeconv"
@@ -38,6 +39,35 @@ func eventOffsetNS(e *events.Event, origin uint64) int64 {
 	return safeconv.Uint64ToInt64(e.Timestamp) - safeconv.Uint64ToInt64(origin)
 }
 
+// labelOrigin is the wall-clock time of origin, the timestamp the buckets are
+// measured from, so a bucket's label names the time its events happened.
+func labelOrigin(origin uint64, startTime time.Time, duration time.Duration) time.Time {
+	at := clock.BPFTimestampToWall(origin)
+	if at.Before(startTime.Add(-time.Second)) || at.After(startTime.Add(duration)) {
+		return startTime
+	}
+	return at
+}
+
+// windowCounts counts the events in each of n consecutive windows of
+// windowNS starting at origin, in one pass.
+func windowCounts(evs []*events.Event, origin uint64, windowNS int64, n int) []int {
+	counts := make([]int, n)
+	if windowNS <= 0 {
+		return counts
+	}
+	for _, e := range evs {
+		off := eventOffsetNS(e, origin)
+		if off < 0 {
+			continue
+		}
+		if i := off / windowNS; i < int64(n) {
+			counts[i]++
+		}
+	}
+	return counts
+}
+
 func AnalyzeTimeline(events []*events.Event, startTime time.Time, duration time.Duration) []TimelineBucket {
 	if len(events) == 0 {
 		return nil
@@ -65,9 +95,10 @@ func AnalyzeTimeline(events []*events.Event, startTime time.Time, duration time.
 
 	var timeline []TimelineBucket
 	totalEvents := len(events)
+	labelStart := labelOrigin(origin, startTime, duration)
 	for i, count := range buckets {
-		bucketStart := startTime.Add(time.Duration(i) * bucketDuration)
-		bucketEnd := startTime.Add(time.Duration(i+1) * bucketDuration)
+		bucketStart := labelStart.Add(time.Duration(i) * bucketDuration)
+		bucketEnd := labelStart.Add(time.Duration(i+1) * bucketDuration)
 		period := fmt.Sprintf("%s-%s", bucketStart.Format("15:04:05"), bucketEnd.Format("15:04:05"))
 		percentage := float64(count) / float64(totalEvents) * 100
 		timeline = append(timeline, TimelineBucket{
@@ -101,23 +132,15 @@ func DetectBursts(events []*events.Event, startTime time.Time, duration time.Dur
 
 	origin := minEventTimestamp(events)
 	windowNS := int64(windowDuration)
+	labelStart := labelOrigin(origin, startTime, duration)
 
 	var bursts []BurstInfo
-	for i := 0; i < numWindows; i++ {
-		lo := int64(i) * windowNS
-		hi := lo + windowNS
-		count := 0
-		for _, e := range events {
-			off := eventOffsetNS(e, origin)
-			if off >= lo && off < hi {
-				count++
-			}
-		}
+	for i, count := range windowCounts(events, origin, windowNS, numWindows) {
 		rate := float64(count) / windowDuration.Seconds()
 		if rate > avgRate*2.0 {
 			multiplier := rate / avgRate
 			bursts = append(bursts, BurstInfo{
-				Time:       startTime.Add(time.Duration(lo)),
+				Time:       labelStart.Add(time.Duration(int64(i) * windowNS)),
 				Rate:       rate,
 				Multiplier: multiplier,
 			})
@@ -159,35 +182,18 @@ func AnalyzeConnectionPattern(connectEvents []*events.Event, startTime, endTime 
 		numWindows = 1
 	}
 	origin := minEventTimestamp(connectEvents)
-	windowNS := int64(windowDuration)
+	counts := windowCounts(connectEvents, origin, int64(windowDuration), numWindows)
 
-	windowCounts := make([]int, 0, numWindows)
-	for i := 0; i < numWindows; i++ {
-		lo := int64(i) * windowNS
-		hi := lo + windowNS
-		count := 0
-		for _, e := range connectEvents {
-			off := eventOffsetNS(e, origin)
-			if off >= lo && off < hi {
-				count++
-			}
-		}
-		windowCounts = append(windowCounts, count)
-	}
-
-	if len(windowCounts) == 0 {
+	if len(counts) == 0 {
 		return ConnectionPattern{Pattern: "steady"}
 	}
 	var sum, sumSq float64
-	for _, count := range windowCounts {
+	for _, count := range counts {
 		sum += float64(count)
 		sumSq += float64(count) * float64(count)
 	}
-	var mean float64
-	if len(windowCounts) > 0 {
-		mean = sum / float64(len(windowCounts))
-	}
-	variance := (sumSq / float64(len(windowCounts))) - (mean * mean)
+	mean := sum / float64(len(counts))
+	variance := (sumSq / float64(len(counts))) - (mean * mean)
 	if variance < 0 {
 		variance = 0
 	}
@@ -203,7 +209,7 @@ func AnalyzeConnectionPattern(connectEvents []*events.Event, startTime, endTime 
 	}
 
 	peakRate := 0.0
-	for _, count := range windowCounts {
+	for _, count := range counts {
 		rate := float64(count) / windowDuration.Seconds()
 		if rate > peakRate {
 			peakRate = rate
@@ -261,17 +267,7 @@ func AnalyzeIOPattern(tcpEvents []*events.Event, startTime time.Time, duration t
 	peakThroughput := 0.0
 	if len(tcpEvents) > 0 {
 		origin := minEventTimestamp(tcpEvents)
-		windowNS := int64(windowDuration)
-		for i := 0; i < numWindows; i++ {
-			lo := int64(i) * windowNS
-			hi := lo + windowNS
-			count := 0
-			for _, e := range tcpEvents {
-				off := eventOffsetNS(e, origin)
-				if off >= lo && off < hi {
-					count++
-				}
-			}
+		for _, count := range windowCounts(tcpEvents, origin, int64(windowDuration), numWindows) {
 			rate := float64(count) / windowDuration.Seconds()
 			if rate > peakThroughput {
 				peakThroughput = rate
