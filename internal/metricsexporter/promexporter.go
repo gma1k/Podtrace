@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -509,6 +510,19 @@ func HandleEvents(ch <-chan *events.Event) {
 // poisoned event killed metrics consumption permanently — the gauges froze
 // and every producer blocked on the full channel.
 func handleEventRecovered(e *events.Event) {
+	HandleEventWithContextRecovered(e, nil)
+}
+
+func HandleEvent(e *events.Event) {
+	HandleEventWithContext(e, nil)
+}
+
+// HandleEventWithContextRecovered is HandleEventWithContext with the panic
+// isolated to the one event, for consumers that loop over a channel.
+func HandleEventWithContextRecovered(e *events.Event, k8sContext map[string]interface{}) {
+	if e == nil {
+		return
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("Panic in metrics event handler; event skipped",
@@ -517,21 +531,19 @@ func handleEventRecovered(e *events.Event) {
 				zap.ByteString("stack", debug.Stack()))
 		}
 	}()
-	HandleEvent(e)
+	HandleEventWithContext(e, k8sContext)
 }
 
-func HandleEvent(e *events.Event) {
-	HandleEventWithContext(e, nil)
+// validLabelValue replaces bytes that are not valid UTF-8. Prometheus panics
+// on such a label value, and comm, Redis command words, gRPC paths and Kafka
+// topics all arrive as raw bytes from the traced process or the wire.
+func validLabelValue(v string) string {
+	if utf8.ValidString(v) {
+		return v
+	}
+	return strings.ToValidUTF8(v, "\uFFFD")
 }
 
-// labelCardinalityLimiter caps the number of distinct values a
-// traffic-derived label can mint. Labels like command/method/topic come
-// straight off the traced wire (arbitrary URL paths, Redis command words,
-// Kafka topics) and target_pod/pod_ip churn with the cluster — and Prometheus
-// keeps one series (x 20 histogram buckets) per distinct value forever, since
-// nothing here ever calls DeleteLabelValues. Without a cap a long-lived agent
-// is a textbook exporter memory explosion. Values beyond the cap collapse
-// into "other"; bounded staleness in exchange for bounded memory.
 type labelCardinalityLimiter struct {
 	mu    sync.Mutex
 	seen  map[string]struct{}
@@ -546,6 +558,7 @@ func (l *labelCardinalityLimiter) bound(value string) string {
 	if value == "" {
 		return value
 	}
+	value = validLabelValue(value)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, ok := l.seen[value]; ok {

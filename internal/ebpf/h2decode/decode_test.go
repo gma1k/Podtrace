@@ -83,7 +83,7 @@ func TestSimpleRequest(t *testing.T) {
 	if ev.Target != "GET /api/orders" {
 		t.Fatalf("target = %q, want %q", ev.Target, "GET /api/orders")
 	}
-	if ev.TCPState != events.HTTPTransportH2C {
+	if ev.HTTPTransport() != events.HTTPTransportH2C {
 		t.Fatalf("transport = %d, want h2c", ev.TCPState)
 	}
 }
@@ -340,7 +340,7 @@ func TestParseAndIngestEndToEnd(t *testing.T) {
 	if ev.Type != events.EventHTTPReq || ev.Target != "GET /healthz" {
 		t.Fatalf("end-to-end decode wrong: type=%v target=%q", ev.Type, ev.Target)
 	}
-	if ev.TCPState != events.HTTPTransportH2TLS {
+	if ev.HTTPTransport() != events.HTTPTransportH2TLS {
 		t.Fatalf("transport = %d, want h2-tls", ev.TCPState)
 	}
 	if ev.CgroupID != 314 || ev.PID != 1234 || ev.Timestamp != 5000 {

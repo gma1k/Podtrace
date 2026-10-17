@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -287,6 +288,20 @@ func (e *engine) reportAttachErrors(errs []attachError) {
 	}
 }
 
+// exportRecovered hands one batch to one exporter, turning a panic into a
+// failed export.
+func (e *engine) exportRecovered(ctx context.Context, ex Exporter, batch []*events.Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("exporter %s panicked: %v", ex.Name(), r)
+			if po, ok := e.cfg.Observer.(ExporterPanicObserver); ok {
+				po.OnExporterPanic(ex.Name(), r, debug.Stack())
+			}
+		}
+	}()
+	return ex.Export(ctx, batch)
+}
+
 func (e *engine) dispatchLoop(ctx context.Context, eventCh <-chan *events.Event) {
 	batch := make([]*events.Event, 0, e.cfg.ExportBatchSize)
 	flush := func(flushCtx context.Context) {
@@ -295,7 +310,7 @@ func (e *engine) dispatchLoop(ctx context.Context, eventCh <-chan *events.Event)
 		}
 		delivered := len(e.exporters) == 0
 		for _, ex := range e.exporters {
-			if err := ex.Export(flushCtx, batch); err != nil {
+			if err := e.exportRecovered(flushCtx, ex, batch); err != nil {
 				e.mu.Lock()
 				e.exporterFailure++
 				e.mu.Unlock()

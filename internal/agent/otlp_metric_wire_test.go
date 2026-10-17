@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -106,9 +107,10 @@ func (wireProducer) Produce(context.Context) ([]metricdata.ScopeMetrics, error) 
 				Unit: "",
 				Data: metricdata.Sum[float64]{
 					DataPoints: []metricdata.DataPoint[float64]{{
-						StartTime: now.Add(-time.Minute),
-						Time:      now,
-						Value:     42,
+						Attributes: attribute.NewSet(attribute.String("namespace", "ns")),
+						StartTime:  now.Add(-time.Minute),
+						Time:       now,
+						Value:      42,
 					}},
 					Temporality: metricdata.CumulativeTemporality,
 					IsMonotonic: true,
@@ -119,6 +121,7 @@ func (wireProducer) Produce(context.Context) ([]metricdata.ScopeMetrics, error) 
 				Unit: "s",
 				Data: metricdata.Histogram[float64]{
 					DataPoints: []metricdata.HistogramDataPoint[float64]{{
+						Attributes:   attribute.NewSet(attribute.String("k8s.namespace.name", "ns")),
 						StartTime:    now.Add(-time.Minute),
 						Time:         now,
 						Count:        3,
@@ -148,7 +151,7 @@ func TestMetricsActuallyReachAnOTLPReceiver(t *testing.T) {
 		t.Fatal("destinationFromBundle refused a metrics bundle")
 	}
 
-	release, err := pool.acquire(dest)
+	release, err := pool.acquire(dest, []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}

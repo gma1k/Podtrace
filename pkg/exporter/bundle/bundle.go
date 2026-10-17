@@ -118,6 +118,8 @@ type Payload struct {
 	SecretHeaders map[string]string `yaml:"-"`
 
 	ResourceVer string `yaml:"-"`
+
+	SamplingKey string `yaml:"-"`
 }
 
 // FromConfigMapData parses the flat ConfigMap data written by the

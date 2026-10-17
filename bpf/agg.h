@@ -18,7 +18,8 @@ struct agg_key {
 	u8  event_type;
 	u8  variant;
 	u16 bucket;
-	u8  pad[6];
+	u8  role;
+	u8  pad[5];
 };
 
 struct agg_value {
@@ -116,7 +117,7 @@ static __always_inline u16 agg_bucket(u64 ns)
 }
 
 static __always_inline int agg_record_in(void *map, u64 cgroup_id, u8 event_type, u8 variant,
-					 u32 peer_ip, u16 peer_port,
+					 u8 role, u32 peer_ip, u16 peer_port,
 					 u64 latency_ns, u64 bytes, int bucketed)
 {
 	struct agg_key key = {};
@@ -131,6 +132,7 @@ static __always_inline int agg_record_in(void *map, u64 cgroup_id, u8 event_type
 	key.peer_port = peer_port;
 	key.event_type = event_type;
 	key.variant = variant;
+	key.role = role;
 	key.bucket = bucketed ? agg_bucket(agg_scale(latency_ns)) : AGG_BUCKET_NONE;
 
 	val = bpf_map_lookup_elem(map, &key);
@@ -150,13 +152,13 @@ static __always_inline int agg_record_in(void *map, u64 cgroup_id, u8 event_type
 }
 
 static __always_inline int agg_record(u64 cgroup_id, u8 event_type, u8 variant,
-				      u32 peer_ip, u16 peer_port,
+				      u8 role, u32 peer_ip, u16 peer_port,
 				      u64 latency_ns, u64 bytes, int bucketed)
 {
 	if (!agg_is_enabled())
 		return 0;
 	return agg_record_in(&agg_metrics, cgroup_id, event_type, variant,
-			     peer_ip, peer_port, latency_ns, bytes, bucketed);
+			     role, peer_ip, peer_port, latency_ns, bytes, bucketed);
 }
 
 #define AGG_VARIANT(proto, status_class, is_error) \
@@ -165,6 +167,7 @@ static __always_inline int agg_record(u64 cgroup_id, u8 event_type, u8 variant,
 static __always_inline int agg_from_event(struct event *e, s32 status_num)
 {
 	u8 variant = 0;
+	u8 role = 0;
 	int bucketed = 1;
 	u64 bytes = 0;
 	u32 status_class = 0;
@@ -250,6 +253,8 @@ static __always_inline int agg_from_event(struct event *e, s32 status_num)
 		if (status_class >= 5)
 			is_error = 1;
 		variant = AGG_VARIANT(e->tcp_state, status_class, is_error);
+		if (e->type == EVENT_HTTP_RESP || e->type == EVENT_GRPC_METHOD)
+			role = (u8)(e->tcp_state & HTTP_ROLE_MASK);
 		break;
 
 	default:
@@ -260,7 +265,7 @@ static __always_inline int agg_from_event(struct event *e, s32 status_num)
 		variant = AGG_VARIANT(0, status_class, is_error);
 
 	return agg_record(e->cgroup_id, (u8)e->type, variant,
-			  e->peer_daddr, e->peer_dport,
+			  role, e->peer_daddr, e->peer_dport,
 			  e->latency_ns, bytes, bucketed);
 }
 

@@ -120,7 +120,7 @@ static __always_inline int grpc_pair_key_build(struct grpc_pair_key *k, u32 stre
 	return 1;
 }
 
-static __always_inline void grpc_go_process(void *ctx, u64 fields, u64 n, u32 stream)
+static __always_inline void grpc_go_process(void *ctx, u64 fields, u64 n, u32 stream, u8 inbound)
 {
 	if (!fields || n == 0)
 		return;
@@ -161,7 +161,7 @@ static __always_inline void grpc_go_process(void *ctx, u64 fields, u64 n, u32 st
 			e->latency_ns = 0;
 			e->error = 0;
 			e->bytes = 0;
-			e->tcp_state = HTTP_TRANSPORT_H2_TLS;
+			e->tcp_state = HTTP_TRANSPORT_H2_TLS | HTTP_ROLE_KNOWN | (inbound ? HTTP_ROLE_SERVER : 0);
 			e->correlation_id = start_ns;
 			bpf_probe_read_kernel_str(e->target, sizeof(e->target), s->path);
 			fill_event_peer(e);
@@ -178,7 +178,7 @@ static __always_inline void grpc_go_process(void *ctx, u64 fields, u64 n, u32 st
 			s32 code = http_parse_status3(s->status);
 			e->error = code >= 500 ? code : 0;
 			e->bytes = 0;
-			e->tcp_state = HTTP_TRANSPORT_H2_TLS;
+			e->tcp_state = HTTP_TRANSPORT_H2_TLS | HTTP_ROLE_KNOWN | (inbound ? 0 : HTTP_ROLE_SERVER);
 			bpf_probe_read_kernel_str(e->details, sizeof(e->details), s->status);
 			if (have_key) {
 				struct grpc_pair_val *v = bpf_map_lookup_elem(&grpc_go_pairs, &pk);
@@ -207,7 +207,7 @@ static __always_inline u32 grpc_go_stream_from_frame(u64 frame)
 	return sid;
 }
 
-static __always_inline void grpc_go_process_frame(void *ctx, u64 frame)
+static __always_inline void grpc_go_process_frame(void *ctx, u64 frame, u8 inbound)
 {
 	if (!frame)
 		return;
@@ -216,7 +216,7 @@ static __always_inline void grpc_go_process_frame(void *ctx, u64 frame)
 		return;
 	if (bpf_probe_read_user(&flen, sizeof(flen), (void *)(frame + GRPC_METAFRAME_FIELDS_LEN)) != 0)
 		return;
-	grpc_go_process(ctx, fptr, flen, grpc_go_stream_from_frame(frame));
+	grpc_go_process(ctx, fptr, flen, grpc_go_stream_from_frame(frame), inbound);
 }
 
 SEC("uprobe/grpc_go_write_header")
@@ -224,7 +224,7 @@ int uprobe_grpc_go_write_header(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	grpc_go_process(ctx, GRPC_GO_HF_PTR(ctx), GRPC_GO_HF_LEN(ctx), GRPC_GO_WH_STREAM(ctx));
+	grpc_go_process(ctx, GRPC_GO_HF_PTR(ctx), GRPC_GO_HF_LEN(ctx), GRPC_GO_WH_STREAM(ctx), 0);
 	return 0;
 }
 
@@ -233,7 +233,7 @@ int uprobe_grpc_go_server_headers(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	grpc_go_process_frame(ctx, GRPC_GO_SRV_FRAME(ctx));
+	grpc_go_process_frame(ctx, GRPC_GO_SRV_FRAME(ctx), 1);
 	return 0;
 }
 
@@ -242,7 +242,7 @@ int uprobe_grpc_go_client_headers(struct pt_regs *ctx)
 {
 	if (!http_should_trace())
 		return 0;
-	grpc_go_process_frame(ctx, GRPC_GO_CLI_FRAME(ctx));
+	grpc_go_process_frame(ctx, GRPC_GO_CLI_FRAME(ctx), 1);
 	return 0;
 }
 

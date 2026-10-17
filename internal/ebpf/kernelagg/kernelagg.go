@@ -39,7 +39,8 @@ type Key struct {
 	EventType uint8
 	Variant   uint8
 	Bucket    uint16
-	_         [6]byte
+	Role      uint8
+	_         [5]byte
 }
 
 // Value mirrors struct agg_value in bpf/agg.h.

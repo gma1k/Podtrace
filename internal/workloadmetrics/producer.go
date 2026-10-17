@@ -416,3 +416,115 @@ func saturatingSub(a, b uint64) uint64 {
 }
 
 var _ sdkmetric.Producer = (*Producer)(nil)
+
+const (
+	namespaceAttribute        = attribute.Key("namespace")
+	semconvNamespaceAttribute = attribute.Key("k8s.namespace.name")
+)
+
+// FilterNamespaces keeps only the data points whose namespace is allowed,
+// so one tenant's push never carries another tenant's series.
+func FilterNamespaces(scopeMetrics []metricdata.ScopeMetrics, allowed func(string) bool) []metricdata.ScopeMetrics {
+	if len(scopeMetrics) == 0 || allowed == nil {
+		return nil
+	}
+	keep := func(set attribute.Set) bool {
+		if value, ok := set.Value(namespaceAttribute); ok {
+			return allowed(value.AsString())
+		}
+		if value, ok := set.Value(semconvNamespaceAttribute); ok {
+			return allowed(value.AsString())
+		}
+		return false
+	}
+
+	var out []metricdata.ScopeMetrics
+	for _, scope := range scopeMetrics {
+		var metrics []metricdata.Metrics
+		for _, m := range scope.Metrics {
+			data, ok := filterAggregation(m.Data, keep)
+			if !ok {
+				continue
+			}
+			m.Data = data
+			metrics = append(metrics, m)
+		}
+		if len(metrics) == 0 {
+			continue
+		}
+		scope.Metrics = metrics
+		out = append(out, scope)
+	}
+	return out
+}
+
+// filterAggregation applies keep to every data point of one metric,
+// reporting false when nothing survives or the aggregation is unknown.
+func filterAggregation(data metricdata.Aggregation, keep func(attribute.Set) bool) (metricdata.Aggregation, bool) {
+	switch d := data.(type) {
+	case metricdata.Sum[float64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.DataPoint[float64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.Sum[int64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.DataPoint[int64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.Gauge[float64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.DataPoint[float64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.Gauge[int64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.DataPoint[int64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.Histogram[float64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.HistogramDataPoint[float64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.Histogram[int64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.HistogramDataPoint[int64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.ExponentialHistogram[float64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.ExponentialHistogramDataPoint[float64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	case metricdata.ExponentialHistogram[int64]:
+		d.DataPoints = filterPoints(d.DataPoints, func(p metricdata.ExponentialHistogramDataPoint[int64]) attribute.Set { return p.Attributes }, keep)
+		return d, len(d.DataPoints) > 0
+	default:
+		return nil, false
+	}
+}
+
+func filterPoints[P any](points []P, attributes func(P) attribute.Set, keep func(attribute.Set) bool) []P {
+	var out []P
+	for _, point := range points {
+		if keep(attributes(point)) {
+			out = append(out, point)
+		}
+	}
+	return out
+}
+
+// NamespaceScopedProducer wraps a producer so that only the namespaces
+// allowed at Produce time reach the caller. allowed is consulted on every
+// point, so it must be safe for concurrent use.
+type NamespaceScopedProducer struct {
+	inner   sdkmetric.Producer
+	allowed func(string) bool
+}
+
+// NewNamespaceScopedProducer builds a NamespaceScopedProducer over inner.
+func NewNamespaceScopedProducer(inner sdkmetric.Producer, allowed func(string) bool) *NamespaceScopedProducer {
+	return &NamespaceScopedProducer{inner: inner, allowed: allowed}
+}
+
+// Produce returns the inner producer's metrics restricted to the allowed
+// namespaces.
+func (p *NamespaceScopedProducer) Produce(ctx context.Context) ([]metricdata.ScopeMetrics, error) {
+	if p == nil || p.inner == nil {
+		return nil, nil
+	}
+	scopeMetrics, err := p.inner.Produce(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return FilterNamespaces(scopeMetrics, p.allowed), nil
+}
+
+var _ sdkmetric.Producer = (*NamespaceScopedProducer)(nil)

@@ -214,6 +214,16 @@ not.
 | `podtrace_workload_l7_requests_total` | Counter | `protocol`, `status_class`, `outcome` |
 | `podtrace_workload_l7_request_duration_seconds` | Histogram | `protocol` |
 
+For HTTP (every version) and gRPC these families count the requests the
+workload **served**. When the workload makes a call, the response it reads
+belongs to the caller's side of the exchange: it is recorded on the
+[service map](#the-service-map) edge families, and not here, so a call
+between two traced workloads is counted once as served (on the callee) and
+once as an edge (on the caller), and a caller's latency never includes its
+upstream's. A probe that cannot tell which side the process was on records
+the response in both places, as before. Other L7 protocols (FastCGI, Redis,
+Memcached, Kafka, databases) carry no role and are recorded in both places.
+
 `protocol` is one of `http`, `http2`, `http3`, `grpc`, `fastcgi`, `redis`,
 `memcached`, `kafka`, `database`, `unknown`. HTTP/2 and HTTP/3 keep their own
 values rather than collapsing into `http`, because distinguishing them is the
@@ -243,6 +253,9 @@ inside a stack you already run rather than a second dialect to learn.
 | `http_server_request_duration_seconds` | `http_request_method`, `http_response_status_code`, `network_protocol_name` |
 | `rpc_server_duration_seconds` | `rpc_system`, `rpc_method` |
 | `db_client_operation_duration_seconds` | `db_system_name`, `db_operation_name` |
+
+The two server families follow the native L7 families: they hold requests
+the workload served, never the responses to calls it made.
 
 These carry **no `podtrace_` prefix** — the names belong to the convention,
 and prefixing them would make them invisible to the dashboards they exist to
@@ -303,7 +316,10 @@ one fixed label set and cannot omit a label, so `0` is the sentinel.
 ### The service map
 
 Every L7 call and every TCP and UDP transfer records **both ends** of the
-edge, so the topology is a PromQL expression rather than a datastore:
+edge, so the topology is a PromQL expression rather than a datastore. An
+HTTP or gRPC call is drawn from the caller's side only: the served side of
+the same call is on the L7 families, and its far end is a client's
+ephemeral port, not a Service.
 
 ```promql
 sum by (workload, target_service) (
@@ -822,7 +838,7 @@ internals in [metrics.md](metrics.md).
 
 | Metric | Description |
 |---|---|
-| `podtrace_workload_metrics_events_total` | Events reaching the plane, labeled `outcome`: `aggregated`, `unattributed`, or `ignored` |
+| `podtrace_workload_metrics_events_total` | Events reaching the plane, labeled `outcome`: `aggregated`, `unattributed`, `excluded` (namespace in `excludeNamespaces`), or `ignored` |
 | `podtrace_workload_metrics_series_dropped_total` | Observations refused because a new series would exceed the budget, labeled `family` |
 | `podtrace_workload_metrics_series_active` | Distinct label combinations currently held, counted against the budget |
 | `podtrace_workload_metrics_series_reaped_total` | Series removed after their workload stopped being observed, freeing budget |
@@ -905,10 +921,30 @@ buckets cross as explicit-bucket histograms.
 
 Spans are per-CR: a span belongs to the trace some CR asked for. A counter
 does not. So several PodTraces pointing at one collector share a single
-metric stream — pushing one per CR would send the same node-wide counters
-two or three times and make every sum across them wrong. Two CRs pointing
-at *different* collectors get one stream each, which is fan-out and
-correct.
+metric stream — pushing one per CR would send the same counters two or
+three times and make every sum across them wrong. Two CRs pointing at
+*different* collectors get one stream each, which is fan-out and correct.
+
+### The push is scoped to the CR's namespaces
+
+The agent holds the series of every namespace on its node, but a push
+carries only the namespaces its CRs are entitled to: the PodTrace's own
+namespace, or — when it sets `spec.namespaceSelector` — exactly the target
+namespaces the operator resolved for it, which only ever includes
+namespaces that consented through `podtrace.io/allow-tracing-from`. A
+selector that matched nothing pushes nothing. When several CRs share a
+collector, the shared stream carries the union of their namespaces, and a
+namespace leaves the stream when the last CR that contributed it goes away.
+
+A series belongs to the namespace in its `namespace` attribute, or
+`k8s.namespace.name` on the convention families. Service-map edges are
+judged by their source `namespace` only: an edge from another namespace
+into yours is that namespace's series and is not pushed to you. Node-wide
+self-observability series (`metrics_events_total`,
+`metrics_series_active`, `metrics_series_dropped_total`,
+`metrics_series_reaped_total`, …) carry no namespace and are never pushed;
+they remain available to cluster operators on the agent's `/metrics`
+endpoint.
 
 A metrics receiver that cannot be reached does not take tracing down with
 it: spans keep flowing and the failure is reported through the exporter's
@@ -1108,6 +1144,15 @@ a single chokepoint that every observation passes through. When it is
 reached, new series are refused and counted in
 `podtrace_workload_metrics_series_dropped_total`; series already admitted keep
 recording. A documented cap that is not enforced is not a cap.
+
+The budget is shared by every namespace on the node, first come, first
+served, with one exception: once it is spent, a namespace still holding less
+than an equal share of it may draw on a reserve of a quarter of the budget.
+Without that, one tenant with many small workloads, or a server answering
+with many distinct status codes, could take the whole budget and blind every
+namespace scheduled onto the node after it. A node running a single
+namespace never touches the reserve, so the cap there is exactly
+`seriesBudget`; across namespaces the ceiling is `1.25 × seriesBudget`.
 
 The `40000` default is derived rather than guessed. Roughly 20 workloads ×
 1.5 containers × 3 per-family variants is about 90 label combinations per

@@ -26,7 +26,7 @@ func syntheticEvent(row *kernelagg.Row) *events.Event {
 		Type:        events.EventType(row.Key.EventType),
 		CgroupID:    row.Key.CgroupID,
 		Bytes:       row.Value.Bytes,
-		TCPState:    uint32(variant.Transport),
+		TCPState:    uint32(variant.Transport) | uint32(row.Key.Role)&events.HTTPRoleMask,
 		PeerDstIP:   events.PeerIP(peerFamilyV4, row.Key.PeerIP, [16]byte{}),
 		PeerDstPort: row.Key.PeerPort,
 	}
@@ -65,6 +65,8 @@ type kernelHistogram struct {
 	count       uint64
 	sum         float64
 	buckets     map[uint16]int64
+	created     time.Time
+	exemplar    *prometheus.Exemplar
 }
 
 // kernelHistograms collects the histogram families fed from the kernel.
@@ -72,12 +74,15 @@ type kernelHistograms struct {
 	mu     sync.Mutex
 	descs  map[string]*prometheus.Desc
 	series map[string]map[string]*kernelHistogram
+
+	now func() time.Time
 }
 
 func newKernelHistograms(base []string, withEdges bool) *kernelHistograms {
 	k := &kernelHistograms{
 		descs:  map[string]*prometheus.Desc{},
 		series: map[string]map[string]*kernelHistogram{},
+		now:    time.Now,
 	}
 	add := func(family string, labels []string) {
 		k.descs[family] = prometheus.NewDesc(metricPrefix+family, kernelHelp[family], labels, nil)
@@ -150,12 +155,36 @@ func (k *kernelHistograms) observeBucket(family string, labelValues []string, bu
 		entry = &kernelHistogram{
 			labelValues: append([]string(nil), labelValues...),
 			buckets:     map[uint16]int64{},
+			created:     k.now(),
 		}
 		byLabels[id] = entry
 	}
 	entry.count += count
 	entry.sum += sumSeconds
 	entry.buckets[bucket] += safeconv.Uint64ToInt64(count)
+}
+
+// holdExemplar keeps the latest traced observation of one series, so the
+// histogram the kernel fills can still link to a trace.
+func (k *kernelHistograms) holdExemplar(family string, labelValues []string, seconds float64, labels prometheus.Labels, at time.Time) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	byLabels, ok := k.series[family]
+	if !ok {
+		return
+	}
+	id := kernelSeriesKey(family, labelValues)
+	entry := byLabels[id]
+	if entry == nil {
+		entry = &kernelHistogram{
+			labelValues: append([]string(nil), labelValues...),
+			buckets:     map[uint16]int64{},
+			created:     k.now(),
+		}
+		byLabels[id] = entry
+	}
+	entry.exemplar = &prometheus.Exemplar{Value: seconds, Labels: labels, Timestamp: at}
 }
 
 // Describe implements prometheus.Collector.
@@ -192,11 +221,16 @@ func (k *kernelHistograms) collectFamilyLocked(family string, ch chan<- promethe
 		}
 		metric, err := prometheus.NewConstNativeHistogram(
 			desc, entry.count, entry.sum, buckets, nil, 0,
-			kernelagg.Schema, kernelZeroThreshold, time.Time{},
+			kernelagg.Schema, kernelZeroThreshold, entry.created,
 			entry.labelValues...,
 		)
 		if err != nil {
 			continue
+		}
+		if entry.exemplar != nil {
+			if withExemplar, err := prometheus.NewMetricWithExemplars(metric, *entry.exemplar); err == nil {
+				metric = withExemplar
+			}
 		}
 		ch <- metric
 	}
@@ -256,6 +290,9 @@ func (s *Sink) IngestKernel(rows []kernelagg.Row) int {
 
 func (s *Sink) ingestKernelRow(row *kernelagg.Row) bool {
 	e := syntheticEvent(row)
+	if s.excludes(e) {
+		return true
+	}
 	base, ok := s.baseLabelValues(e)
 	if !ok {
 		return false
@@ -333,12 +370,18 @@ func (s *Sink) ingestKernelRow(row *kernelagg.Row) bool {
 	case events.EventHTTPResp, events.EventGRPCMethod,
 		events.EventFastCGIResp, events.EventRedisCmd, events.EventMemcachedCmd,
 		events.EventKafkaProduce, events.EventKafkaFetch, events.EventDBQuery:
+		if e.IsClientL7Response() {
+			s.ingestKernelEdge(e, row, "", true, seconds, count)
+			return true
+		}
 		variant := kernelagg.DecodeVariant(row.Key.Variant)
 		protocol := protocolLabel(e)
 		s.add(s.c.l7Requests, "l7_requests_total",
 			appendLabels(base, protocol, kernelStatusClass(variant), kernelOutcome(variant)), count)
 		s.kernelObserve("l7_request_duration_seconds", appendLabels(base, protocol), row, seconds)
-		s.ingestKernelEdge(e, row, "", true, seconds, count)
+		if !e.IsServerL7Response() {
+			s.ingestKernelEdge(e, row, "", true, seconds, count)
+		}
 
 	default:
 		return false

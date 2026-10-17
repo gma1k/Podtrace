@@ -75,7 +75,7 @@ func (w *StatusWriter) emitOnce(ctx context.Context) error {
 	for _, rule := range rules {
 		entry := buildNodeStatusEntry(w.NodeName, &rule, stats[rule.Key], agentReady, w.BackendErr, time.Now())
 		if w.KernelDropped != nil {
-			entry.DroppedEvents += w.KernelDropped()
+			entry.KernelDroppedEvents = w.KernelDropped()
 		}
 		if err := w.patchCRStatus(ctx, rule.Key, entry); err != nil && firstErr == nil {
 			firstErr = err
@@ -87,8 +87,11 @@ func (w *StatusWriter) emitOnce(ctx context.Context) error {
 		if _, stillActive := current[key]; stillActive {
 			continue
 		}
-		if err := w.retractCRStatus(ctx, key); err != nil && firstErr == nil {
-			firstErr = err
+		if err := w.retractCRStatus(ctx, key); err != nil {
+			current[key] = struct{}{}
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	w.reportedKeys = current
@@ -148,6 +151,7 @@ func (w *StatusWriter) patchCRStatus(ctx context.Context, key CRKey, entry podtr
 		WithActiveCgroups(entry.ActiveCgroups).
 		WithTotalEvents(entry.TotalEvents).
 		WithDroppedEvents(entry.DroppedEvents).
+		WithKernelDroppedEvents(entry.KernelDroppedEvents).
 		WithLastHeartbeat(entry.LastHeartbeat).
 		WithPolicyHash(entry.PolicyHash)
 	if entry.Message != "" {

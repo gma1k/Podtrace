@@ -561,9 +561,10 @@ func TestSDKEventExporter_ErrorRateRollingWindowBreach(t *testing.T) {
 	batch := make([]*events.Event, 30)
 	for i := range batch {
 		batch[i] = &events.Event{
-			Type:      events.EventTCPSend,
+			Type:      events.EventHTTPResp,
 			Timestamp: uint64(time.Now().UnixNano()),
-			Error:     -5,
+			Error:     503,
+			Details:   "503",
 		}
 	}
 	if err := exp.Export(context.Background(), batch); err != nil {

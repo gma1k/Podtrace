@@ -59,7 +59,7 @@ func (c *grpcDecodeCoverage) noteDecoded(ev *events.Event, now time.Time) {
 // suppresses reports whether an event is a grpc-go uprobe event for a
 // process whose calls the decoder has seen within grpcCoverageTTL.
 func (c *grpcDecodeCoverage) suppresses(ev *events.Event, now time.Time) bool {
-	if c == nil || ev == nil || ev.TCPState != grpcGoProbeTransport {
+	if c == nil || ev == nil || ev.HTTPTransport() != grpcGoProbeTransport {
 		return false
 	}
 	if ev.Type != events.EventHTTPReq && ev.Type != events.EventHTTPResp {

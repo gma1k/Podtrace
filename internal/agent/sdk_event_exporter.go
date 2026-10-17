@@ -72,7 +72,7 @@ func newSDKEventExporter(name string, cr CRKey, b *BundlePayload, spanExporter s
 
 	sampler := sdktrace.AlwaysSample()
 	if b.Sample != nil && *b.Sample < 1 {
-		sampler = sdktrace.TraceIDRatioBased(*b.Sample)
+		sampler = newKeyedRatioSampler(*b.Sample, b.SamplingKey)
 	}
 
 	res, err := buildResource(ctx,
@@ -84,6 +84,9 @@ func newSDKEventExporter(name string, cr CRKey, b *BundlePayload, spanExporter s
 		),
 	)
 	if err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), exporterCloseTimeout)
+		_ = spanExporter.Shutdown(shutdownCtx)
+		shutdownCancel()
 		return nil, fmt.Errorf("build resource: %w", err)
 	}
 
@@ -307,7 +310,7 @@ func (e *sdkEventExporter) appendThresholdAttributes(attrs []attribute.KeyValue,
 			)
 			e.recordTrip("error_rate")
 		}
-		if e.metrics != nil {
+		if e.metrics != nil && events.IsL7Response(ev.Type) && !ev.IsClientL7Response() {
 			if justBreached := e.metrics.ObserveErrorRate(e.cr, *t.ErrorRatePercent, isErr); justBreached {
 				attrs = append(attrs,
 					attribute.Bool("podtrace.threshold.error_rate.breached", true),

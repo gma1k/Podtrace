@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
@@ -25,7 +26,10 @@ func (f *fakeProducer) Produce(context.Context) ([]metricdata.ScopeMetrics, erro
 		Metrics: []metricdata.Metrics{{
 			Name: "podtrace_workload_l7_requests_total",
 			Data: metricdata.Sum[float64]{
-				DataPoints:  []metricdata.DataPoint[float64]{{Value: 1}},
+				DataPoints: []metricdata.DataPoint[float64]{{
+					Attributes: attribute.NewSet(attribute.String("namespace", "ns")),
+					Value:      1,
+				}},
 				Temporality: metricdata.CumulativeTemporality,
 				IsMonotonic: true,
 			},
@@ -92,11 +96,11 @@ func testDestination(endpoint string) destination {
 func TestOneCollectorGetsOnePusherHoweverManyCRsPointAtIt(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
 
-	releaseA, err := probe.pool.acquire(testDestination("collector:4318"))
+	releaseA, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	releaseB, err := probe.pool.acquire(testDestination("collector:4318"))
+	releaseB, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -128,10 +132,10 @@ func TestOneCollectorGetsOnePusherHoweverManyCRsPointAtIt(t *testing.T) {
 func TestDifferentCollectorsGetTheirOwnPusher(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
 
-	if _, err := probe.pool.acquire(testDestination("a:4318")); err != nil {
+	if _, err := probe.pool.acquire(testDestination("a:4318"), []string{"ns"}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if _, err := probe.pool.acquire(testDestination("b:4318")); err != nil {
+	if _, err := probe.pool.acquire(testDestination("b:4318"), []string{"ns"}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
@@ -183,11 +187,11 @@ func TestHeaderOrderDoesNotChangeTheDestinationKey(t *testing.T) {
 func TestReleaseIsIdempotent(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
 
-	release, err := probe.pool.acquire(testDestination("collector:4318"))
+	release, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	shared, err := probe.pool.acquire(testDestination("collector:4318"))
+	shared, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -211,14 +215,14 @@ func TestReleaseIsIdempotent(t *testing.T) {
 
 func TestReleaseAfterTheEntryIsGoneIsSafe(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
-	release, err := probe.pool.acquire(testDestination("collector:4318"))
+	release, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if err := release(context.Background()); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	other, err := probe.pool.acquire(testDestination("collector:4318"))
+	other, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -233,7 +237,7 @@ func TestReleaseAfterTheEntryIsGoneIsSafe(t *testing.T) {
 func TestReleaseFlushesBeforeShuttingDown(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
 
-	release, err := probe.pool.acquire(testDestination("collector:4318"))
+	release, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -256,7 +260,7 @@ func TestAReaderFailureDoesNotLeaveAHalfRegisteredPusher(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
 	probe.fail = errors.New("no route to collector")
 
-	release, err := probe.pool.acquire(testDestination("collector:4318"))
+	release, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err == nil {
 		t.Fatal("acquire hid the reader failure")
 	}
@@ -279,7 +283,7 @@ func TestNoProducerMeansNoPusher(t *testing.T) {
 		return sdkmetric.NewManualReader(), nil
 	}
 
-	release, err := pool.acquire(testDestination("collector:4318"))
+	release, err := pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -293,7 +297,7 @@ func TestNoProducerMeansNoPusher(t *testing.T) {
 
 func TestNilPoolIsInert(t *testing.T) {
 	var pool *metricPusherPool
-	release, err := pool.acquire(testDestination("collector:4318"))
+	release, err := pool.acquire(testDestination("collector:4318"), []string{"ns"})
 	if err != nil {
 		t.Fatalf("acquire on a nil pool: %v", err)
 	}
@@ -311,7 +315,7 @@ func TestConcurrentAcquireAndReleaseIsSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 25; j++ {
-				release, err := probe.pool.acquire(testDestination("collector:4318"))
+				release, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"})
 				if err != nil {
 					t.Errorf("acquire: %v", err)
 					return
@@ -331,7 +335,7 @@ func TestTheProducerReachesTheReader(t *testing.T) {
 	producer := &fakeProducer{}
 	probe := newPoolProbe(t, producer)
 
-	if _, err := probe.pool.acquire(testDestination("collector:4318")); err != nil {
+	if _, err := probe.pool.acquire(testDestination("collector:4318"), []string{"ns"}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
@@ -531,6 +535,7 @@ func TestAMetricPushFailureStillYieldsAWorkingSpanExporter(t *testing.T) {
 
 	exporter, err := attachMetricPusher(
 		mustSDKExporter(t),
+		CRKey{Namespace: "ns", Name: "cr"},
 		&BundlePayload{Type: bundle.TypeOTLP, Endpoint: "http://collector:4318", Metrics: true},
 		withMetricPushers(probe.pool),
 	)
@@ -548,7 +553,7 @@ func TestAMetricPushFailureStillYieldsAWorkingSpanExporter(t *testing.T) {
 
 func TestAttachIsANoOpWithoutAPool(t *testing.T) {
 	exporter := mustSDKExporter(t)
-	got, err := attachMetricPusher(exporter,
+	got, err := attachMetricPusher(exporter, CRKey{Namespace: "ns", Name: "cr"},
 		&BundlePayload{Type: bundle.TypeOTLP, Endpoint: "http://collector:4318", Metrics: true})
 	if err != nil {
 		t.Fatalf("attachMetricPusher: %v", err)
@@ -571,7 +576,7 @@ func mustSDKExporter(t *testing.T) tracer.Exporter {
 
 func TestReleasingAKeyThePoolNeverHeldIsSafe(t *testing.T) {
 	probe := newPoolProbe(t, &fakeProducer{})
-	if err := probe.pool.releaseFor("a-key-never-acquired")(context.Background()); err != nil {
+	if err := probe.pool.releaseFor("a-key-never-acquired", []string{"ns"})(context.Background()); err != nil {
 		t.Errorf("releasing an unknown key returned %v, want nil", err)
 	}
 	if got := probe.pool.size(); got != 0 {

@@ -47,20 +47,52 @@ func TestMetrics_RemovedCRDropsLabels(t *testing.T) {
 	router.Publish([]CRRule{
 		mkRule("ns", "goes", []uint64{1}, []events.EventType{events.EventDNS}, &recExp{name: "x"}),
 	})
-	router.Stats().incr(CRKey{"ns", "goes"}, 7)
+	key := CRKey{"ns", "goes"}
+	router.Stats().incr(key, 7)
+	router.Stats().incrDropped(key, 2)
 	m.RefreshFromRouter(router)
+	m.ObserveSpanBatched(key, 4)
+	m.ObserveExportDelivery(key, 3, nil)
+	m.ObserveExportDelivery(key, 1, errors.New("connection refused"))
+	m.RecordThresholdTripped(key, "latency")
 
-	body := scrape(t, m)
-	if !strings.Contains(body, `cr_name="goes"`) {
-		t.Fatal("pre-removal: metric should have cr_name=goes")
+	for _, family := range []string{
+		"events_exported_total", "events_dropped_total", "spans_batched_total",
+		"spans_delivered_total", "export_delivery_dropped_total", "threshold_tripped_total",
+	} {
+		if scrapeMetric(t, m, family+`{cr_namespace="ns",cr_name="goes"}`) == 0 {
+			t.Fatalf("pre-removal: %s has no cr_name=goes series", family)
+		}
 	}
 
 	router.Publish(nil)
 	m.RefreshFromRouter(router)
 
-	body = scrape(t, m)
-	if strings.Contains(body, `active_cgroups{cr_namespace="ns",cr_name="goes"}`) {
-		t.Error("post-removal: active_cgroups gauge still emits stale CR label")
+	body := scrape(t, m)
+	if strings.Contains(body, `cr_name="goes"`) {
+		t.Errorf("post-removal: series still carry cr_name=goes:\n%s", body)
+	}
+
+	m.ObserveExportDelivery(key, 5, nil)
+	m.ObserveExportDelivery(key, 5, errors.New("connection refused"))
+	m.ObserveSpanBatched(key, 5)
+	m.RecordThresholdTripped(key, "latency")
+	m.ObserveErrorRate(key, 10, true)
+	if body = scrape(t, m); strings.Contains(body, `cr_name="goes"`) {
+		t.Errorf("late observations resurrected a removed CR:\n%s", body)
+	}
+
+	router.Publish([]CRRule{
+		mkRule("ns", "goes", []uint64{1}, []events.EventType{events.EventDNS}, &recExp{name: "x"}),
+	})
+	m.RefreshFromRouter(router)
+	m.ObserveExportDelivery(key, 2, nil)
+	m.ObserveSpanBatched(key, 2)
+	if got := scrapeMetric(t, m, `spans_delivered_total{cr_namespace="ns",cr_name="goes"}`); got != 2 {
+		t.Errorf("re-added CR spans_delivered_total = %d, want 2", got)
+	}
+	if got := scrapeMetric(t, m, `spans_batched_total{cr_namespace="ns",cr_name="goes"}`); got != 2 {
+		t.Errorf("re-added CR spans_batched_total = %d, want 2", got)
 	}
 }
 

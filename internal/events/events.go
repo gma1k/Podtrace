@@ -174,6 +174,19 @@ func (e *Event) IsError() bool {
 	}
 }
 
+// IsL7Response reports whether t is a decoded application-protocol response:
+// one event per request, the unit an L7 request or error rate counts.
+func IsL7Response(t EventType) bool {
+	switch t {
+	case EventHTTPResp, EventGRPCMethod,
+		EventFastCGIResp, EventRedisCmd, EventMemcachedCmd,
+		EventKafkaProduce, EventKafkaFetch, EventDBQuery:
+		return true
+	default:
+		return false
+	}
+}
+
 // CountsAsConnectionAttempt decides which connect events score an attempt, so that
 // each one is counted exactly once.
 func CountsAsConnectionAttempt(t EventType, failed bool) bool {
@@ -244,9 +257,9 @@ func (e *Event) TimestampTime() time.Time {
 	return clock.BPFTimestampToWall(e.Timestamp)
 }
 
-// HTTP transport for EventHTTPReq/EventHTTPResp, carried in TCPState (unused
-// for HTTP events otherwise). Encoded as a bitfield: bit 0 = TLS (encrypted),
-// bit 1 = HTTP/2.
+// HTTP transport for EventHTTPReq/EventHTTPResp, carried in TCPState bits
+// 0-2: bit 0 = TLS (encrypted), bit 1 = HTTP/2, bit 2 = HTTP/3. Bits 3-4 carry
+// the role (see HTTPRoleKnownBit).
 const (
 	HTTPTransportPlaintext uint32 = 0 // HTTP/1.x cleartext sockets
 	HTTPTransportTLS       uint32 = 1 // HTTP/1.x over TLS (OpenSSL/GnuTLS/Go)
@@ -257,7 +270,80 @@ const (
 	httpTransportTLSBit uint32 = 1
 	httpTransportH2Bit  uint32 = 2
 	httpTransportH3Bit  uint32 = 4
+	httpTransportMask   uint32 = 0x7
 )
+
+// HTTP role bits, carried in TCPState above the transport bits for
+// EventHTTPReq, EventHTTPResp and EventGRPCMethod. HTTPRoleKnownBit says the
+// producer knew which side of the exchange the traced process was on.
+const (
+	HTTPRoleKnownBit  uint32 = 0x08
+	HTTPRoleServerBit uint32 = 0x10
+	HTTPRoleMask             = HTTPRoleKnownBit | HTTPRoleServerBit
+)
+
+type HTTPRole uint8
+
+const (
+	HTTPRoleUnknown HTTPRole = iota
+	HTTPRoleClient
+	HTTPRoleServer
+)
+
+func (r HTTPRole) String() string {
+	switch r {
+	case HTTPRoleClient:
+		return "client"
+	case HTTPRoleServer:
+		return "server"
+	default:
+		return "unknown"
+	}
+}
+
+// HTTPRoleBits returns the TCPState bits that record a known role.
+func HTTPRoleBits(server bool) uint32 {
+	if server {
+		return HTTPRoleKnownBit | HTTPRoleServerBit
+	}
+	return HTTPRoleKnownBit
+}
+
+// HTTPRole returns the side of the exchange an HTTP or gRPC event was
+// observed on.
+func (e *Event) HTTPRole() HTTPRole {
+	if e.TCPState&HTTPRoleKnownBit == 0 {
+		return HTTPRoleUnknown
+	}
+	if e.TCPState&HTTPRoleServerBit != 0 {
+		return HTTPRoleServer
+	}
+	return HTTPRoleClient
+}
+
+// HTTPTransport returns the transport bits of an HTTP event's TCPState,
+// without the role bits.
+func (e *Event) HTTPTransport() uint32 {
+	return e.TCPState & httpTransportMask
+}
+
+// IsClientL7Response reports whether e is the caller's view of an HTTP or
+// gRPC call: the response to a request the traced process made.
+func (e *Event) IsClientL7Response() bool {
+	if e.Type != EventHTTPResp && e.Type != EventGRPCMethod {
+		return false
+	}
+	return e.HTTPRole() == HTTPRoleClient
+}
+
+// IsServerL7Response reports whether e is an HTTP or gRPC response the traced
+// process sent for a request it served.
+func (e *Event) IsServerL7Response() bool {
+	if e.Type != EventHTTPResp && e.Type != EventGRPCMethod {
+		return false
+	}
+	return e.HTTPRole() == HTTPRoleServer
+}
 
 // HTTPScheme returns the URL scheme implied by an HTTP event's transport:
 // "https" for any TLS-captured traffic, "http" for cleartext (HTTP/1.x or h2c).

@@ -167,6 +167,15 @@ Operator and agent both expose Prometheus metrics:
     tls_invalid, auth_missing}`. A sustained bad config does not inflate
     this counter — `rate()` detects new failures, not their duration.
 
+  The per-CR event counters (`events_exported_total`, `events_dropped_total`)
+  and the `enrichment_*` series are folded in from the agent's internal
+  statistics every 15 seconds and on every reconcile, so they keep moving on
+  a node whose CRs and pods have not changed for hours. When a CR stops
+  targeting a node, every per-CR series for it is deleted, including
+  `spans_batched_total`, `spans_delivered_total` and
+  `export_delivery_dropped_total`; the final flush of its exporter, which
+  finishes in the background, does not bring them back.
+
   Policy-wiring observability (one series per CR):
 
   - `podtrace_agent_effective_sample_rate{cr_namespace,cr_name}` — the
@@ -183,6 +192,8 @@ Operator and agent both expose Prometheus metrics:
   - `podtrace_agent_error_rate_breached_total{cr_namespace,cr_name}` —
     counter, edge-triggered: one increment per ok→breached transition of
     the rolling-window error rate exceeding `spec.thresholds.errorRatePercent`.
+    The rate is measured over decoded requests (HTTP, gRPC, FastCGI, Redis,
+    Memcached, Kafka, database), not over every traced event.
 
   Machine-readable failure surfaces are also stamped onto the CR itself:
   `PodTrace.status.nodeStatus[*].reason` carries a closed enum
@@ -204,6 +215,41 @@ helm upgrade podtrace ... \
 Both templates are gated on `monitoring.coreos.com/v1` being installed —
 flipping the toggle on a cluster without prometheus-operator is a silent
 no-op rather than a hard install failure.
+
+### Restricting the metrics port
+
+The agent's port 9090 serves `/metrics`, `/issues` and `/profile` without
+authentication. `/issues` lists every workload's active issues on the node and
+`/profile` returns symbolised CPU stacks for every workload on the node, in
+every namespace, so whoever can reach the port can read another tenant's
+profile. The chart leaves `networkPolicy.enabled` off by default, which lets
+any pod reach it.
+
+`networkPolicy.enabled: true` adds NetworkPolicies for the agent and the
+operator. The operator can always reach the agents' port 9090, because it reads
+`/issues` to link issues across workloads. Who else can reach it is
+`networkPolicy.metricsFrom`; **left empty, it allows every source**, so the
+policy restricts nothing on 9090. Name your scrapers there:
+
+```yaml
+networkPolicy:
+  enabled: true
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+  allowAPIServerProxy: true
+```
+
+`kubectl podtrace status` reads the agents through the API server's pod proxy,
+so once `metricsFrom` is set the API server has to be allowed too: on Cilium
+with `allowAPIServerProxy: true`, on other CNIs by adding the control-plane
+node addresses to `metricsFrom` as `ipBlock`s. Anyone with `get` on
+`pods/proxy` in the podtrace namespace can still read every endpoint through
+the API server.
 
 Both [PodTrace](crd-podtrace.md) (continuous) and
 [PodTraceSession](crd-podtracesession.md) (bounded) drive the real eBPF

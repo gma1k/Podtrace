@@ -244,7 +244,7 @@ func newCollectors(opts Options) *collectors {
 
 		eventsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: metricPrefix + "metrics_events_total",
-			Help: "Events reaching this plane, by outcome: aggregated, unattributed (no pod metadata), or ignored (no family maps to the event type).",
+			Help: "Events reaching this plane, by outcome: aggregated, unattributed (no pod metadata), excluded (namespace in excludeNamespaces), or ignored (no family maps to the event type).",
 		}, []string{"outcome"}),
 
 		seriesDropped: prometheus.NewCounterVec(prometheus.CounterOpts{

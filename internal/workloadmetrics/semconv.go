@@ -127,6 +127,7 @@ func (b *boundedValues) bound(v string) string {
 	if v == "" {
 		return "unknown"
 	}
+	v = labelValue(v)
 	if b == nil || b.limit <= 0 {
 		return v
 	}

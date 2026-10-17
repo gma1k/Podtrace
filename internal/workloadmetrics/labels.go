@@ -1,6 +1,31 @@
 package workloadmetrics
 
-import "github.com/gma1k/podtrace/internal/events"
+import (
+	"strings"
+	"unicode/utf8"
+
+	"github.com/gma1k/podtrace/internal/events"
+)
+
+const maxLabelValueBytes = 256
+
+// labelValue makes a value safe to hand to a Prometheus vector. Client
+// libraries panic on a label value that is not valid UTF-8, and comm,
+// :path, Redis command words and DNS names all arrive as raw bytes from
+// the traced process or the wire: one such byte used to crash the agent.
+func labelValue(v string) string {
+	if !utf8.ValidString(v) {
+		v = strings.ToValidUTF8(v, "\uFFFD")
+	}
+	if len(v) <= maxLabelValueBytes {
+		return v
+	}
+	cut := maxLabelValueBytes
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return v[:cut]
+}
 
 // Every helper here returns a value from a closed set. That is the whole
 // reason they exist: a label value derived straight from observed traffic

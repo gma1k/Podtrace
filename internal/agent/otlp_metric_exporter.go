@@ -20,38 +20,22 @@ import (
 
 	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/netguard"
+	"github.com/gma1k/podtrace/internal/workloadmetrics"
 )
 
 // The continuous metrics plane as a second OTLP signal.
-//
-// The metric stream is node-wide: one agent, one set of workload series,
-// whatever the CRs. Spans are per-CR because a span belongs to the trace a
-// CR asked for, but a counter does not — so pushing one metric stream per
-// CR would send the same numbers two or three times to the same collector
-// and every sum across them would be wrong.
-//
-// Hence the pool below. Pushers are keyed by destination and reference
-// counted: several CRs pointing at one collector share one pusher, and it
-// shuts down when the last of them goes away. Two CRs pointing at
-// different collectors get one pusher each, which is fan-out and correct.
 const (
-	// defaultMetricPushInterval matches a conventional Prometheus scrape
-	// period, so a dashboard behaves the same whichever path the metrics
-	// took to reach it.
 	defaultMetricPushInterval = 60 * time.Second
 
 	minMetricPushInterval = 10 * time.Second
 	maxMetricPushInterval = 10 * time.Minute
 
-	// metricPushTimeout bounds one push. It must stay under the interval
-	// or a slow collector makes pushes overlap.
 	metricPushTimeout = 8 * time.Second
 )
 
 // metricProducer is the read side of the continuous metrics plane. Its
 // method set matches sdkmetric.Producer, so a value of this type is
-// accepted directly where the SDK wants a Producer; declaring it here
-// keeps the pool from depending on the workloadmetrics package.
+// accepted directly where the SDK wants a Producer.
 type metricProducer interface {
 	Produce(context.Context) ([]metricdata.ScopeMetrics, error)
 }
@@ -66,13 +50,67 @@ type metricPusherPool struct {
 	producer metricProducer
 	nodeName string
 
-	// newReader is the seam tests use to avoid opening sockets.
 	newReader func(destination, sdkmetric.Producer) (sdkmetric.Reader, error)
 }
 
 type pooledMetricPusher struct {
 	provider *sdkmetric.MeterProvider
 	refs     int
+
+	scopeMu    sync.Mutex
+	namespaces map[string]int
+}
+
+func (e *pooledMetricPusher) addNamespaces(namespaces []string) {
+	e.scopeMu.Lock()
+	defer e.scopeMu.Unlock()
+	for _, ns := range namespaces {
+		e.namespaces[ns]++
+	}
+}
+
+func (e *pooledMetricPusher) removeNamespaces(namespaces []string) {
+	e.scopeMu.Lock()
+	defer e.scopeMu.Unlock()
+	for _, ns := range namespaces {
+		if e.namespaces[ns] <= 1 {
+			delete(e.namespaces, ns)
+			continue
+		}
+		e.namespaces[ns]--
+	}
+}
+
+func (e *pooledMetricPusher) allows(namespace string) bool {
+	e.scopeMu.Lock()
+	defer e.scopeMu.Unlock()
+	return e.namespaces[namespace] > 0
+}
+
+// metricNamespaceScope is the set of namespaces whose series one CR may
+// push. It mirrors inNamespaceScope: a nil allowlist means the CR's own
+// namespace, a non-nil one means exactly that list, and an empty list
+// means nothing.
+func metricNamespaceScope(crNamespace string, targetNamespaces []string) []string {
+	if targetNamespaces == nil {
+		if crNamespace == "" {
+			return nil
+		}
+		return []string{crNamespace}
+	}
+	seen := make(map[string]struct{}, len(targetNamespaces))
+	out := make([]string, 0, len(targetNamespaces))
+	for _, ns := range targetNamespaces {
+		if ns == "" {
+			continue
+		}
+		if _, dup := seen[ns]; dup {
+			continue
+		}
+		seen[ns] = struct{}{}
+		out = append(out, ns)
+	}
+	return out
 }
 
 // destination is everything that decides where and how metrics are sent.
@@ -94,11 +132,12 @@ func newMetricPusherPool(producer metricProducer, nodeName string) *metricPusher
 }
 
 // acquire returns a release function for the pusher serving dest, starting
-// one if this is the first caller.
+// one if this is the first caller, and adds namespaces to what that pusher
+// may send. release takes them away again.
 //
 // The returned release is always safe to call, exactly once, including
 // when acquire failed.
-func (p *metricPusherPool) acquire(dest destination) (func(context.Context) error, error) {
+func (p *metricPusherPool) acquire(dest destination, namespaces []string) (func(context.Context) error, error) {
 	if p == nil || p.producer == nil {
 		return noopRelease, nil
 	}
@@ -110,19 +149,22 @@ func (p *metricPusherPool) acquire(dest destination) (func(context.Context) erro
 
 	if existing, ok := p.byKey[key]; ok {
 		existing.refs++
-		return p.releaseFor(key), nil
+		existing.addNamespaces(namespaces)
+		return p.releaseFor(key, namespaces), nil
 	}
 
-	reader, err := p.newReader(dest, p.producer)
+	entry := &pooledMetricPusher{refs: 1, namespaces: map[string]int{}}
+	entry.addNamespaces(namespaces)
+	reader, err := p.newReader(dest, workloadmetrics.NewNamespaceScopedProducer(p.producer, entry.allows))
 	if err != nil {
 		return noopRelease, err
 	}
-	provider := sdkmetric.NewMeterProvider(
+	entry.provider = sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(reader),
 		sdkmetric.WithResource(p.resource()),
 	)
-	p.byKey[key] = &pooledMetricPusher{provider: provider, refs: 1}
-	return p.releaseFor(key), nil
+	p.byKey[key] = entry
+	return p.releaseFor(key, namespaces), nil
 }
 
 // resource describes the producer of these metrics, which is this agent
@@ -140,12 +182,10 @@ func (p *metricPusherPool) resource() *resource.Resource {
 	if p.nodeName != "" {
 		attrs = append(attrs, semconv.K8SNodeName(p.nodeName))
 	}
-	// NewSchemaless, not New: New merges the process-wide default
-	// resource, which would overwrite service.name.
 	return resource.NewSchemaless(attrs...)
 }
 
-func (p *metricPusherPool) releaseFor(key string) func(context.Context) error {
+func (p *metricPusherPool) releaseFor(key string, namespaces []string) func(context.Context) error {
 	var once sync.Once
 	return func(ctx context.Context) error {
 		var err error
@@ -158,14 +198,13 @@ func (p *metricPusherPool) releaseFor(key string) func(context.Context) error {
 			}
 			entry.refs--
 			if entry.refs > 0 {
+				entry.removeNamespaces(namespaces)
 				p.mu.Unlock()
 				return
 			}
 			delete(p.byKey, key)
 			p.mu.Unlock()
 
-			// Flush before shutdown so the counters accumulated since the
-			// last push are not simply dropped when a CR is deleted.
 			flushCtx, cancel := context.WithTimeout(ctx, metricPushTimeout)
 			defer cancel()
 			_ = entry.provider.ForceFlush(flushCtx)
@@ -186,11 +225,6 @@ func noopRelease(context.Context) error { return nil }
 
 // newOTLPMetricReader builds the periodic reader that pushes the external
 // producer's metrics over OTLP HTTP.
-//
-// No temporality selector is set: a selector only governs instruments the
-// SDK aggregates itself, and every data point here comes from the external
-// producer with its temporality already stamped by the conversion. Setting
-// one would look like a guarantee it does not provide.
 func newOTLPMetricReader(dest destination, producer sdkmetric.Producer) (sdkmetric.Reader, error) {
 	if dest.endpoint == "" {
 		return nil, fmt.Errorf("bundle missing endpoint")
@@ -233,11 +267,6 @@ func newOTLPMetricReader(dest destination, producer sdkmetric.Producer) (sdkmetr
 }
 
 // metricsPath maps a trace endpoint path onto the metrics signal.
-//
-// The two signals have different paths, so an endpoint written for traces
-// must not be reused verbatim: /v1/traces would post metrics to the trace
-// receiver, which rejects them. An empty result leaves the exporter's own
-// default (/v1/metrics) in place.
 func metricsPath(tracePath string) string {
 	switch strings.TrimSuffix(tracePath, "/") {
 	case "", "/v1/traces":

@@ -176,7 +176,12 @@ func ParseB3TraceContext(headers map[string]string) *TraceContext {
 		}
 	}
 
-	if traceID == "" || spanID == "" {
+	traceID, ok := normalizeB3TraceID(traceID)
+	if !ok {
+		return nil
+	}
+	spanID = strings.ToLower(spanID)
+	if len(spanID) != 16 || !isLowerHex(spanID) || isAllZeroHex(spanID) {
 		return nil
 	}
 
@@ -191,6 +196,22 @@ func ParseB3TraceContext(headers map[string]string) *TraceContext {
 	}
 
 	return tc
+}
+
+// normalizeB3TraceID validates an x-b3-traceid and widens it to the 32 hex
+// digits W3C and OpenTelemetry use.
+func normalizeB3TraceID(traceID string) (string, bool) {
+	traceID = strings.ToLower(traceID)
+	if len(traceID) != 16 && len(traceID) != 32 {
+		return "", false
+	}
+	if !isLowerHex(traceID) || isAllZeroHex(traceID) {
+		return "", false
+	}
+	if len(traceID) == 16 {
+		traceID = strings.Repeat("0", 16) + traceID
+	}
+	return traceID, true
 }
 
 func (tc *TraceContext) ToW3CTraceParent() string {

@@ -181,7 +181,7 @@ static __noinline int http_emit_request(void *ctx, void *base, u64 avail,
 		e->latency_ns = 0;
 		e->error = 0;
 		e->bytes = 0;
-		e->tcp_state = transport;
+		e->tcp_state = transport | HTTP_ROLE_KNOWN | (inbound ? HTTP_ROLE_SERVER : 0);
 		e->correlation_id = now;
 		e->http_method = req.method;
 		bpf_probe_read_kernel_str(e->target, sizeof(e->target), req.endpoint);
@@ -256,7 +256,7 @@ static __noinline int http_emit_response(void *ctx, void *base, u64 len,
 		e->latency_ns = latency_ns;
 		e->error = status_num >= 500 ? status_num : 0;
 		e->bytes = len;
-		e->tcp_state = transport;
+		e->tcp_state = transport | HTTP_ROLE_KNOWN | (inbound ? 0 : HTTP_ROLE_SERVER);
 		e->correlation_id = req->start_ns;
 		e->http_method = req->method;
 		bpf_probe_read_kernel_str(e->target, sizeof(e->target), req->endpoint);

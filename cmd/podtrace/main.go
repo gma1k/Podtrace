@@ -650,17 +650,13 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 					if !ok {
 						return
 					}
+					var k8sCtx map[string]interface{}
 					if enricher != nil {
-						enriched := enricher.EnrichEvent(ctx, event)
-						if enriched != nil && enriched.KubernetesContext != nil {
-							k8sCtx := buildK8sContextMap(enriched, sourceIndex.Resolve(event))
-							metricsexporter.HandleEventWithContext(event, k8sCtx)
-						} else {
-							metricsexporter.HandleEvent(event)
+						if enriched := enricher.EnrichEvent(ctx, event); enriched != nil && enriched.KubernetesContext != nil {
+							k8sCtx = buildK8sContextMap(enriched, sourceIndex.Resolve(event))
 						}
-					} else {
-						metricsexporter.HandleEvent(event)
 					}
+					metricsexporter.HandleEventWithContextRecovered(event, k8sCtx)
 				}
 			}
 		}()

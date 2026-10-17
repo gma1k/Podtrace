@@ -63,9 +63,10 @@ silently ignored.
 
 The plane must also be enabled on the TracerConfig
 (`spec.agent.metrics.enabled`), because the push republishes that surface
-rather than producing a second one. Several PodTraces pointing at the same
-collector share one metric stream, since the series are node-wide rather
-than per-CR. See [continuous-metrics.md](continuous-metrics.md) for the
+rather than producing a second one. A push carries only the series of the
+PodTrace's own namespace, or of the consented target namespaces its
+`namespaceSelector` resolved to; several PodTraces pointing at the same
+collector share one metric stream carrying the union of their namespaces. See [continuous-metrics.md](continuous-metrics.md) for the
 wire details, including how convention metric names differ between the
 scrape and the push.
 

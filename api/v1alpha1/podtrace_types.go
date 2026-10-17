@@ -83,7 +83,17 @@ type PodTraceNodeStatus struct {
 
 	TotalEvents int64 `json:"totalEvents"`
 
+	// DroppedEvents counts this PodTrace's events lost on this node, after
+	// they were attributed to it.
 	DroppedEvents int64 `json:"droppedEvents"`
+
+	// KernelDroppedEvents counts events this node's agent lost in the
+	// kernel, before any event could be attributed to a PodTrace: ring
+	// buffer overruns and a full event channel. It is the same node-wide
+	// figure on every PodTrace the node reports for, and is not this
+	// PodTrace's loss alone.
+	// +optional
+	KernelDroppedEvents int64 `json:"kernelDroppedEvents,omitempty"`
 
 	LastHeartbeat metav1.Time `json:"lastHeartbeat"`
 

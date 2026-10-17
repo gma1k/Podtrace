@@ -15,12 +15,12 @@ const exemplarLabelBudget = 128
 // exemplarFor builds the exemplar labels for an event, reporting false when
 // the event carries no trace identity worth linking to.
 func exemplarFor(e *events.Event) (prometheus.Labels, bool) {
-	if e == nil || e.TraceID == "" {
+	if e == nil || !isHexID(e.TraceID) {
 		return nil, false
 	}
 
 	labels := prometheus.Labels{exemplarTraceIDLabel: e.TraceID}
-	if e.SpanID != "" {
+	if isHexID(e.SpanID) {
 		labels[exemplarSpanIDLabel] = e.SpanID
 	}
 
@@ -31,6 +31,21 @@ func exemplarFor(e *events.Event) (prometheus.Labels, bool) {
 		}
 	}
 	return labels, true
+}
+
+// isHexID reports whether id is a non-empty run of hexadecimal digits, the
+// shape of every trace and span id podtrace links to.
+func isHexID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // exemplarLabelLen measures an exemplar against Prometheus's budget.

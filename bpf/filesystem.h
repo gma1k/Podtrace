@@ -104,10 +104,10 @@ static __always_inline int fs_count(u32 type, u64 latency_ns, u64 bytes, s32 err
 {
 	u64 cgroup_id = bpf_get_current_cgroup_id();
 	u8 variant = AGG_VARIANT(0, 0, err != 0 ? 1 : 0);
-	if (agg_record(cgroup_id, (u8)type, variant, 0, 0, latency_ns, bytes, 1))
+	if (agg_record(cgroup_id, (u8)type, variant, 0, 0, 0, latency_ns, bytes, 1))
 		return 1;
 	if (latency_ns < MIN_LATENCY_NS && fs_fast_ops_on())
-		agg_record_in(&fs_fast_ops, cgroup_id, (u8)type, variant, 0, 0, latency_ns, bytes, 1);
+		agg_record_in(&fs_fast_ops, cgroup_id, (u8)type, variant, 0, 0, 0, latency_ns, bytes, 1);
 	return 0;
 }
 

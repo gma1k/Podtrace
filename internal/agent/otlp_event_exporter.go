@@ -29,12 +29,12 @@ func newOTLPEventExporter(cr CRKey, b *BundlePayload, opts ...sdkOption) (tracer
 	if err != nil {
 		return nil, err
 	}
-	return attachMetricPusher(exporter, b, opts...)
+	return attachMetricPusher(exporter, cr, b, opts...)
 }
 
 // attachMetricPusher turns on the second signal when the bundle asks for
 // it, binding the pusher's lifetime to the exporter's.
-func attachMetricPusher(exporter tracer.Exporter, b *BundlePayload, opts ...sdkOption) (tracer.Exporter, error) {
+func attachMetricPusher(exporter tracer.Exporter, cr CRKey, b *BundlePayload, opts ...sdkOption) (tracer.Exporter, error) {
 	dest, wanted := destinationFromBundle(b)
 	if !wanted {
 		return exporter, nil
@@ -48,7 +48,7 @@ func attachMetricPusher(exporter tracer.Exporter, b *BundlePayload, opts ...sdkO
 		return exporter, nil
 	}
 
-	release, err := cfg.pushers.acquire(dest)
+	release, err := cfg.pushers.acquire(dest, metricNamespaceScope(cr.Namespace, b.TargetNamespaces))
 	sdkExporter.releaseMetrics = release
 	if err != nil {
 		return exporter, fmt.Errorf("start OTLP metric export: %w", err)

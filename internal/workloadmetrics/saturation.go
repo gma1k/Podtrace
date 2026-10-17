@@ -162,8 +162,8 @@ func (s *Sink) recordSaturation(e *events.Event, base []string) bool {
 			return true
 		}
 		labels := appendLabels(base, resourceLabel(e.TCPState))
-		s.setGauge(s.c.sat.resourceUtilization, "resource_utilization_percent",
-			labels, s.holdPeak("resource_utilization_percent", labels, float64(e.Error)))
+		s.setHeldGauge(s.c.sat.resourceUtilization, "resource_utilization_percent",
+			labels, float64(e.Error))
 		return true
 
 	case events.EventDBPoolStats:
@@ -186,12 +186,12 @@ func (s *Sink) recordPoolStats(e *events.Event, base []string) bool {
 		return true
 	}
 
-	s.setGauge(s.c.sat.poolOpen, "db_pool_connections_open",
-		base, s.holdPeak("db_pool_connections_open", base, float64(e.Bytes)))
+	s.setHeldGauge(s.c.sat.poolOpen, "db_pool_connections_open",
+		base, float64(e.Bytes))
 
 	if e.TCPState > 0 {
-		s.setGauge(s.c.sat.poolUtilization, "db_pool_utilization_percent",
-			base, s.holdPeak("db_pool_utilization_percent", base, float64(e.Error)))
+		s.setHeldGauge(s.c.sat.poolUtilization, "db_pool_utilization_percent",
+			base, float64(e.Error))
 	}
 	return true
 }
@@ -237,13 +237,13 @@ func peakKey(family string, labelValues []string) string {
 	return family + "\x00" + strings.Join(labelValues, "\x00")
 }
 
-// setGauge writes a gauge under the same budget the counters observe. Unlike a
-// counter, a gauge that is never written again keeps reporting its last value,
-// so the reaper deleting it is what stops a departed workload from looking
-// permanently saturated.
-func (s *Sink) setGauge(g *prometheus.GaugeVec, family string, labelValues []string, value float64) {
+// setHeldGauge writes a peak-held gauge under the same budget the counters
+// observe. Unlike a counter, a gauge that is never written again keeps
+// reporting its last value, so the reaper deleting it is what stops a
+// departed workload from looking permanently saturated.
+func (s *Sink) setHeldGauge(g *prometheus.GaugeVec, family string, labelValues []string, value float64) {
 	if !s.admit(family, labelValues) {
 		return
 	}
-	g.WithLabelValues(labelValues...).Set(value)
+	g.WithLabelValues(labelValues...).Set(s.holdPeak(family, labelValues, value))
 }

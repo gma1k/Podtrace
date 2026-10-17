@@ -15,7 +15,7 @@ func TestHTTPExtractor_ExtractFromHeaders(t *testing.T) {
 		wantNil bool
 	}{
 		{"W3C traceparent", map[string]string{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}, false},
-		{"B3 headers", map[string]string{"x-b3-traceid": "abc", "x-b3-spanid": "def"}, false},
+		{"B3 headers", map[string]string{"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124", "x-b3-spanid": "a2fb4a1d1a96d312"}, false},
 		{"Splunk", map[string]string{"x-splunk-requestid": "req123"}, false},
 		{"empty", map[string]string{}, true},
 		{"no trace headers", map[string]string{"content-type": "application/json"}, true},

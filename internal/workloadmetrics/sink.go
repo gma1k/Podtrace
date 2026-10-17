@@ -41,6 +41,8 @@ type Options struct {
 	KernelAggregation bool
 
 	DNSPacketCapture bool
+
+	ExcludeNamespaces []string
 }
 
 // schedPreempted is the value bpf/cpu.c puts in TCPState when the task left
@@ -49,9 +51,10 @@ const schedPreempted = 1
 
 // seriesEntry records enough about an admitted series to delete it later.
 type seriesEntry struct {
-	family   string
-	labels   []string
-	lastSeen time.Time
+	family    string
+	namespace string
+	labels    []string
+	lastSeen  time.Time
 }
 
 // Sink aggregates events into the continuous surface.
@@ -71,10 +74,13 @@ type Sink struct {
 
 	dnsPacketCapture bool
 
+	excludedNamespaces map[string]struct{}
+
 	traceContext func(*events.Event) bool
 
 	mu        sync.Mutex
 	seen      map[string]*seriesEntry
+	perNS     map[string]int
 	peaks     map[string]utilizationPeak
 	budget    int
 	exhausted bool
@@ -138,6 +144,18 @@ func New(reg prometheus.Registerer, opts Options) (*Sink, error) {
 	if clock == nil {
 		clock = time.Now
 	}
+	if kernelHist != nil {
+		kernelHist.now = clock
+	}
+	var excluded map[string]struct{}
+	for _, ns := range opts.ExcludeNamespaces {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			if excluded == nil {
+				excluded = make(map[string]struct{}, len(opts.ExcludeNamespaces))
+			}
+			excluded[ns] = struct{}{}
+		}
+	}
 	return &Sink{
 		c:              c,
 		sc:             sc,
@@ -152,7 +170,10 @@ func New(reg prometheus.Registerer, opts Options) (*Sink, error) {
 
 		dnsPacketCapture: opts.DNSPacketCapture,
 
+		excludedNamespaces: excluded,
+
 		seen:        make(map[string]*seriesEntry),
+		perNS:       make(map[string]int),
 		budget:      opts.SeriesBudget,
 		onExhausted: opts.OnBudgetExhausted,
 		now:         clock,
@@ -175,6 +196,10 @@ func (s *Sink) Close(context.Context) error { return nil }
 
 // admit reports whether a series may be observed, enforcing the budget.
 func (s *Sink) admit(family string, labelValues []string) bool {
+	for i, v := range labelValues {
+		labelValues[i] = labelValue(v)
+	}
+
 	var key strings.Builder
 	key.WriteString(family)
 	for _, v := range labelValues {
@@ -190,7 +215,8 @@ func (s *Sink) admit(family string, labelValues []string) bool {
 		existing.lastSeen = s.now()
 		return true
 	}
-	if s.budget > 0 && len(s.seen) >= s.budget {
+	namespace := namespaceOf(family, labelValues)
+	if s.budget > 0 && len(s.seen) >= s.budget && !s.fairOverflowLocked(namespace) {
 		s.c.seriesDropped.WithLabelValues(family).Inc()
 		notify := !s.exhausted
 		s.exhausted = true
@@ -200,12 +226,41 @@ func (s *Sink) admit(family string, labelValues []string) bool {
 		return false
 	}
 	s.seen[k] = &seriesEntry{
-		family:   family,
-		labels:   append([]string(nil), labelValues...),
-		lastSeen: s.now(),
+		family:    family,
+		namespace: namespace,
+		labels:    append([]string(nil), labelValues...),
+		lastSeen:  s.now(),
 	}
+	s.perNS[namespace]++
 	s.c.seriesActive.Set(float64(len(s.seen)))
 	return true
+}
+
+// fairOverflowLocked reports whether a namespace may add a series once the
+// budget is spent.
+func (s *Sink) fairOverflowLocked(namespace string) bool {
+	if len(s.seen) >= s.budget+s.budget/4 {
+		return false
+	}
+	namespaces := len(s.perNS)
+	if _, known := s.perNS[namespace]; !known {
+		namespaces++
+	}
+	return s.perNS[namespace] < s.budget/namespaces
+}
+
+// namespaceOf is the namespace a series belongs to. The convention families
+// lead with service_name.
+func namespaceOf(family string, labelValues []string) string {
+	idx := 0
+	switch family {
+	case semconvHTTPDuration, semconvRPCDuration, semconvDBDuration:
+		idx = 1
+	}
+	if idx >= len(labelValues) {
+		return ""
+	}
+	return labelValues[idx]
 }
 
 // Reap deletes series that have not been observed for longer than maxIdle,
@@ -230,6 +285,11 @@ func (s *Sink) Reap(maxIdle time.Duration) int {
 		}
 		delete(s.seen, key)
 		delete(s.peaks, peakKey(entry.family, entry.labels))
+		if s.perNS[entry.namespace] <= 1 {
+			delete(s.perNS, entry.namespace)
+		} else {
+			s.perNS[entry.namespace]--
+		}
 	}
 	if removed > 0 {
 		s.c.seriesReaped.Add(float64(removed))
@@ -352,6 +412,10 @@ func (s *Sink) Export(_ context.Context, batch []*events.Event) error {
 		if e == nil {
 			continue
 		}
+		if s.excludes(e) {
+			s.c.eventsTotal.WithLabelValues("excluded").Inc()
+			continue
+		}
 		if s.traceContext != nil {
 			s.traceContext(e)
 		}
@@ -379,6 +443,9 @@ func (s *Sink) baseLabelValues(e *events.Event) ([]string, bool) {
 	if meta.Namespace == "" || meta.WorkloadName == "" {
 		return nil, false
 	}
+	if _, excluded := s.excludedNamespaces[meta.Namespace]; excluded {
+		return nil, false
+	}
 
 	values := make([]string, 0, len(defaultBaseLabels)+2)
 	values = append(values,
@@ -394,6 +461,20 @@ func (s *Sink) baseLabelValues(e *events.Event) ([]string, bool) {
 		values = append(values, orUnknown(e.ProcessName))
 	}
 	return values, true
+}
+
+// excludes reports whether an event belongs to a namespace the plane was
+// told to skip.
+func (s *Sink) excludes(e *events.Event) bool {
+	if len(s.excludedNamespaces) == 0 {
+		return false
+	}
+	meta, ok := s.metadataFor(e)
+	if !ok {
+		return false
+	}
+	_, excluded := s.excludedNamespaces[meta.Namespace]
+	return excluded
 }
 
 func (s *Sink) metadataFor(e *events.Event) (events.K8sMetadata, bool) {
@@ -420,19 +501,6 @@ func appendLabels(base []string, extra ...string) []string {
 	return out
 }
 
-// isL7Response reports whether t is a decoded application-protocol response,
-// the event types that feed the L7 and semantic-convention families.
-func isL7Response(t events.EventType) bool {
-	switch t {
-	case events.EventHTTPResp, events.EventGRPCMethod,
-		events.EventFastCGIResp, events.EventRedisCmd, events.EventMemcachedCmd,
-		events.EventKafkaProduce, events.EventKafkaFetch, events.EventDBQuery:
-		return true
-	default:
-		return false
-	}
-}
-
 // record routes one event to its family. Returns false when no family
 // maps to the event type, which is expected: this surface deliberately
 // covers golden signals rather than every event podtrace can emit.
@@ -440,9 +508,10 @@ func (s *Sink) record(e *events.Event, base []string) bool {
 	seconds := e.Latency().Seconds()
 
 	if e.KernelAggregated && s.kernelHist != nil {
-		if isL7Response(e.Type) {
+		if events.IsL7Response(e.Type) && !e.IsClientL7Response() {
 			s.recordSemconv(e, seconds)
 		}
+		s.linkKernelExemplar(e, base, seconds)
 		return true
 	}
 
@@ -452,7 +521,8 @@ func (s *Sink) record(e *events.Event, base []string) bool {
 
 	ex, _ := exemplarFor(e)
 
-	if e.IsError() {
+	clientCall := e.IsClientL7Response()
+	if e.IsError() && !clientCall {
 		s.add(s.c.errors, "errors_total", appendLabels(base, errorKind(e.Type)), 1)
 	}
 
@@ -463,13 +533,19 @@ func (s *Sink) record(e *events.Event, base []string) bool {
 	case events.EventHTTPResp, events.EventGRPCMethod,
 		events.EventFastCGIResp, events.EventRedisCmd, events.EventMemcachedCmd,
 		events.EventKafkaProduce, events.EventKafkaFetch, events.EventDBQuery:
+		if clientCall {
+			s.recordEdgeL7(e, outcome(e), seconds)
+			return true
+		}
 		protocol := protocolLabel(e)
 		s.addExemplar(s.c.l7Requests, "l7_requests_total",
 			appendLabels(base, protocol, statusClass(e), outcome(e)), 1, ex)
 		s.observeExemplar(e, s.c.l7Duration, "l7_request_duration_seconds",
 			appendLabels(base, protocol), seconds, ex)
 		s.recordSemconv(e, seconds)
-		s.recordEdgeL7(e, outcome(e), seconds)
+		if !e.IsServerL7Response() {
+			s.recordEdgeL7(e, outcome(e), seconds)
+		}
 		return true
 
 	case events.EventTCPSend, events.EventTCPRecv, events.EventUDPSend, events.EventUDPRecv:
@@ -556,6 +632,63 @@ func (s *Sink) record(e *events.Event, base []string) bool {
 	default:
 		return false
 	}
+}
+
+// linkKernelExemplar attaches a traced event to the series the kernel already
+// counted it in, without counting it again. While a PodTrace exists the
+// kernel still aggregates, so every L7, network and DNS event arrives here
+// already counted; returning before the exemplar, as this once did, meant
+// the metric-to-trace link was missing exactly while someone was tracing.
+func (s *Sink) linkKernelExemplar(e *events.Event, base []string, seconds float64) {
+	ex, ok := exemplarFor(e)
+	if !ok {
+		return
+	}
+	base = s.kernelBase(base)
+	switch e.Type {
+	case events.EventHTTPResp, events.EventGRPCMethod,
+		events.EventFastCGIResp, events.EventRedisCmd, events.EventMemcachedCmd,
+		events.EventKafkaProduce, events.EventKafkaFetch, events.EventDBQuery:
+		if !e.IsClientL7Response() {
+			protocol := protocolLabel(e)
+			s.addExemplar(s.c.l7Requests, "l7_requests_total",
+				appendLabels(base, protocol, statusClass(e), outcome(e)), 0, ex)
+			s.holdKernelExemplar("l7_request_duration_seconds", appendLabels(base, protocol), seconds, ex)
+		}
+		if !e.IsServerL7Response() {
+			if identity, ok := s.edgeIdentity(e); ok {
+				s.addExemplar(s.edges.requests, edgeRequestsTotal, appendLabels(identity, outcome(e)), 0, ex)
+				s.holdKernelExemplar(edgeRequestDuration, identity, seconds, ex)
+			}
+		}
+
+	case events.EventTCPSend, events.EventTCPRecv, events.EventUDPSend, events.EventUDPRecv:
+		direction, transport := networkDimensions(e.Type)
+		s.holdKernelExemplar("network_latency_seconds", appendLabels(base, direction, transport), seconds, ex)
+
+	case events.EventDNS:
+		if e.CountsAsDNSLookup(s.dnsPacketCapture) && e.DNSAnswer() != events.DNSAnswerTimeout {
+			s.holdKernelExemplar("dns_latency_seconds", base, seconds, ex)
+		}
+	}
+}
+
+// kernelBase is the base label set the kernel counted an event under.
+func (s *Sink) kernelBase(base []string) []string {
+	if !s.includeProcess || len(base) == 0 {
+		return base
+	}
+	out := append([]string(nil), base...)
+	out[len(out)-1] = orUnknown("")
+	return out
+}
+
+// holdKernelExemplar records the latest exemplar of a kernel-fed histogram.
+func (s *Sink) holdKernelExemplar(family string, labelValues []string, seconds float64, ex prometheus.Labels) {
+	if !s.kernelHist.owns(family) || !s.admit(family, labelValues) {
+		return
+	}
+	s.kernelHist.holdExemplar(family, labelValues, seconds, ex, s.now())
 }
 
 func (s *Sink) recordSemconv(e *events.Event, seconds float64) {

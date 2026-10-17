@@ -17,7 +17,8 @@ spec:
 
     Three things are asserted on the receiver's own logs:
       - the push lands on /v1/metrics, not the trace path
-      - podtrace's own family names cross verbatim
+      - podtrace's own family names cross verbatim, scoped to the CR's
+        namespace, with the node-wide self-observability series left out
       - the OpenTelemetry convention family crosses as its dotted name,
         which is what makes a stock OTLP backend recognise it
 
@@ -266,9 +267,15 @@ spec:
                 fail=1
               fi
 
-              if ! grep -q 'podtrace_workload_metrics_events_total' /tmp/stats.json; then
+              if ! grep -q 'podtrace_workload_l7_requests_total' /tmp/stats.json; then
                 echo "FAIL: no podtrace_workload_ family in the push; podtrace's own names must"
                 echo "      cross verbatim, the same thing a Collector prometheus receiver does"
+                fail=1
+              fi
+
+              if grep -q 'podtrace_workload_metrics_events_total' /tmp/stats.json; then
+                echo "FAIL: a node-wide self-observability series was pushed. A push carries"
+                echo "      only the namespaces the CR may see; node health stays on /metrics"
                 fail=1
               fi
 

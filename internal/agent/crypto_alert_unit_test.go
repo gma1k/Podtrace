@@ -56,6 +56,7 @@ func TestMainPIDFromCgroupProcs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cg, "cgroup.procs"), []byte("\n9999\n4242\n4243\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	withProcessStartTimes(t, nil)
 	if got := mainPIDFromCgroupProcs(cg); got != 4242 {
 		t.Errorf("mainPIDFromCgroupProcs = %d, want 4242 (lowest/main PID, not first-listed 9999)", got)
 	}

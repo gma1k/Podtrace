@@ -521,6 +521,32 @@ func (d *Decoder) buildAnonymousRequestLocked(st *dirState, rec *RawRecord, meth
 	return d.buildRequestLocked(rec, method, unknownPathPlaceholder, traceparent, extra)
 }
 
+// requestRoleBits returns the role a request seen in dir implies: a request
+// the process received means it served the call.
+func requestRoleBits(dir uint8) uint32 {
+	switch dir {
+	case DirIngress:
+		return events.HTTPRoleBits(true)
+	case DirEgress:
+		return events.HTTPRoleBits(false)
+	default:
+		return 0
+	}
+}
+
+// responseRoleBits returns the role a response seen in dir implies: a
+// response the process sent means it served the call.
+func responseRoleBits(dir uint8) uint32 {
+	switch dir {
+	case DirEgress:
+		return events.HTTPRoleBits(true)
+	case DirIngress:
+		return events.HTTPRoleBits(false)
+	default:
+		return 0
+	}
+}
+
 func otherDirection(dir uint8) uint8 {
 	if dir == DirEgress {
 		return DirIngress
@@ -542,7 +568,7 @@ func (d *Decoder) buildRequestLocked(rec *RawRecord, method, path, traceparent s
 	ev.PID = rec.PID
 	ev.CgroupID = rec.CgroupID
 	ev.Type = events.EventHTTPReq
-	ev.TCPState = uint32(rec.Transport)
+	ev.TCPState = uint32(rec.Transport) | requestRoleBits(rec.Direction)
 	ev.CorrelationID = rec.Timestamp
 	ev.Target = method + " " + path
 	var lines []string
@@ -570,7 +596,7 @@ func (d *Decoder) buildResponseLocked(rec *RawRecord, status, traceparent string
 	ev.PID = rec.PID
 	ev.CgroupID = rec.CgroupID
 	ev.Type = events.EventHTTPResp
-	ev.TCPState = uint32(rec.Transport)
+	ev.TCPState = uint32(rec.Transport) | responseRoleBits(rec.Direction)
 	ev.Details = status
 	if code, err := strconv.Atoi(status); err == nil && code >= 500 && code <= 599 {
 		ev.Error = safeconv.IntToInt32(code)
@@ -625,7 +651,7 @@ func (d *Decoder) holdGRPCResponseLocked(rec *RawRecord, status, traceparent str
 	ev.PID = rec.PID
 	ev.CgroupID = rec.CgroupID
 	ev.Type = events.EventHTTPResp
-	ev.TCPState = uint32(rec.Transport)
+	ev.TCPState = uint32(rec.Transport) | responseRoleBits(rec.Direction)
 	ev.Details = status
 	if code, err := strconv.Atoi(status); err == nil && code >= 500 && code <= 599 {
 		ev.Error = safeconv.IntToInt32(code)
@@ -679,7 +705,7 @@ func (d *Decoder) buildGrpcTrailerLocked(rec *RawRecord, grpcStatus string) *eve
 	ev.PID = rec.PID
 	ev.CgroupID = rec.CgroupID
 	ev.Type = events.EventHTTPResp
-	ev.TCPState = uint32(rec.Transport)
+	ev.TCPState = uint32(rec.Transport) | responseRoleBits(rec.Direction)
 	ev.Details = "grpc-status: " + grpcStatus
 	if code, err := strconv.Atoi(grpcStatus); err == nil && code > 0 && code <= maxGrpcStatusCode {
 		ev.Error = safeconv.IntToInt32(code)

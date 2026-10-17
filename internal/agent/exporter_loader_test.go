@@ -60,6 +60,9 @@ func TestLoadBundle_OTLPLiteral(t *testing.T) {
 	if payload.ResourceVer != "42" {
 		t.Errorf("ResourceVer=%q want 42", payload.ResourceVer)
 	}
+	if payload.SamplingKey != string(uid) {
+		t.Errorf("SamplingKey=%q want the PodTrace UID", payload.SamplingKey)
+	}
 }
 
 func TestLoadBundle_WithCredential(t *testing.T) {
@@ -258,7 +261,7 @@ func TestBuildExporter_ZipkinReturnsHelpfulError(t *testing.T) {
 func TestBuildExporter_EmptyEndpointRejected(t *testing.T) {
 	for _, ty := range []bundle.Type{bundle.TypeOTLP, bundle.TypeJaeger, bundle.TypeDataDog, bundle.TypeSplunk} {
 		t.Run(string(ty), func(t *testing.T) {
-			_, err := BuildExporter(&BundlePayload{Type: ty}, CRKey{"ns", "n"})
+			_, err := BuildExporter(&BundlePayload{Type: ty, Credential: []byte("secret")}, CRKey{"ns", "n"})
 			if err == nil {
 				t.Fatalf("expected error for empty endpoint on %q", ty)
 				return

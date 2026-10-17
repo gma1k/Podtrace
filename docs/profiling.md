@@ -249,6 +249,19 @@ metrics port:
 }
 ```
 
+The agent renders one profile at a time: a render copies the node's profile
+windows and symbolises every stack in them, so parallel renders would pile up
+memory and slow the sampler. A request that arrives while another is being
+rendered waits up to five seconds for its turn, then gets `429 Too Many
+Requests` with `Retry-After: 5`. `status` reads each agent once, so it only
+sees a 429 when someone else is reading the same agent at that moment.
+
+The metrics port has no authentication. `/profile` returns symbolised stacks
+for every workload on the node, whichever namespace it is in, and `/issues`
+returns every workload's active issues. With the chart's default
+`networkPolicy.enabled: false`, any pod in the cluster can read them. See
+[restricting the metrics port](operator.md#restricting-the-metrics-port).
+
 ### What keeps it affordable
 
 **Addresses are counted raw and symbolised only when read.** Resolving one

@@ -119,6 +119,13 @@ func processStartTime(pid uint32) (uint64, bool) {
 	return started, err == nil
 }
 
+// ProcessStartTime exposes processStartTime to callers outside this package
+// that need to order or identify processes, such as picking a container's
+// entrypoint from its cgroup.
+func ProcessStartTime(pid uint32) (uint64, bool) {
+	return processStartTime(pid)
+}
+
 // sameProcess reports whether pid still names the process that started at
 // started. Paths resolved through /proc/<pid> after the target exited and
 // its pid was reused would name files in an unrelated process's rootfs.

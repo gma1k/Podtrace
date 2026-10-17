@@ -155,6 +155,7 @@ func TestMainPIDFromCgroupProcs_ReadsLowestPID(t *testing.T) {
 		t.Fatalf("write cgroup.procs: %v", err)
 	}
 
+	withProcessStartTimes(t, nil)
 	if got := mainPIDFromCgroupProcs(groupDir); got != 3 {
 		t.Errorf("mainPIDFromCgroupProcs = %d, want 3 (lowest valid PID)", got)
 	}

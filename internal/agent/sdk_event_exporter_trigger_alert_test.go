@@ -20,8 +20,9 @@ func errorRateExporter(threshold int32) *sdkEventExporter {
 
 func failingEvent() *events.Event {
 	return &events.Event{
-		Type:  events.EventTCPRecv,
-		Error: 1,
+		Type:    events.EventHTTPResp,
+		Error:   503,
+		Details: "503",
 		K8s: &events.K8sMetadata{
 			Namespace: "prod",
 			PodName:   "checkout-7f",

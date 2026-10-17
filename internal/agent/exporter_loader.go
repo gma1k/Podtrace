@@ -35,6 +35,7 @@ func LoadBundle(ctx context.Context, c client.Client, systemNamespace string, po
 		return nil, fmt.Errorf("parse bundle ConfigMap: %w", err)
 	}
 	payload.ResourceVer = cm.ResourceVersion
+	payload.SamplingKey = string(podtraceUID)
 
 	// Credential Secret is only present when the exporter needed one
 	// (Splunk HEC token, DataDog API key, or an OTLP Secret-backed

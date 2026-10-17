@@ -138,10 +138,10 @@ func TestParseB3TraceContext(t *testing.T) {
 		headers map[string]string
 		wantNil bool
 	}{
-		{"valid", map[string]string{"x-b3-traceid": "abc", "x-b3-spanid": "def"}, false},
-		{"with sampled", map[string]string{"x-b3-traceid": "abc", "x-b3-spanid": "def", "x-b3-sampled": "1"}, false},
-		{"missing trace ID", map[string]string{"x-b3-spanid": "def"}, true},
-		{"missing span ID", map[string]string{"x-b3-traceid": "abc"}, true},
+		{"valid", map[string]string{"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124", "x-b3-spanid": "a2fb4a1d1a96d312"}, false},
+		{"with sampled", map[string]string{"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124", "x-b3-spanid": "a2fb4a1d1a96d312", "x-b3-sampled": "1"}, false},
+		{"missing trace ID", map[string]string{"x-b3-spanid": "a2fb4a1d1a96d312"}, true},
+		{"missing span ID", map[string]string{"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124"}, true},
 		{"empty", map[string]string{}, true},
 	}
 
@@ -237,8 +237,8 @@ func TestParseW3CTraceParent_ShortFlagsLength(t *testing.T) {
 func TestParseB3TraceContext_FlagsOne(t *testing.T) {
 	// x-b3-flags: "1" should set sampled.
 	headers := map[string]string{
-		"x-b3-traceid": "abc123",
-		"x-b3-spanid":  "def456",
+		"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124",
+		"x-b3-spanid":  "a2fb4a1d1a96d312",
 		"x-b3-flags":   "1",
 	}
 	tc := ParseB3TraceContext(headers)
@@ -254,8 +254,8 @@ func TestParseB3TraceContext_FlagsOne(t *testing.T) {
 func TestParseB3TraceContext_SampledTrue(t *testing.T) {
 	// x-b3-sampled: "true" should set sampled.
 	headers := map[string]string{
-		"x-b3-traceid": "abc123",
-		"x-b3-spanid":  "def456",
+		"x-b3-traceid": "463ac35c9f6413ad48485a3953bb6124",
+		"x-b3-spanid":  "a2fb4a1d1a96d312",
 		"x-b3-sampled": "true",
 	}
 	tc := ParseB3TraceContext(headers)
@@ -270,17 +270,17 @@ func TestParseB3TraceContext_SampledTrue(t *testing.T) {
 
 func TestParseB3TraceContext_WithParentSpanID(t *testing.T) {
 	headers := map[string]string{
-		"x-b3-traceid":      "abc123",
-		"x-b3-spanid":       "def456",
-		"x-b3-parentspanid": "parent789",
+		"x-b3-traceid":      "463ac35c9f6413ad48485a3953bb6124",
+		"x-b3-spanid":       "a2fb4a1d1a96d312",
+		"x-b3-parentspanid": "0020000000000001",
 	}
 	tc := ParseB3TraceContext(headers)
 	if tc == nil {
 		t.Fatal("expected non-nil context")
 		return
 	}
-	if tc.ParentSpanID != "def456" {
-		t.Errorf("expected ParentSpanID=def456 (caller span), got %q", tc.ParentSpanID)
+	if tc.ParentSpanID != "a2fb4a1d1a96d312" {
+		t.Errorf("expected ParentSpanID=a2fb4a1d1a96d312 (caller span), got %q", tc.ParentSpanID)
 	}
 	if tc.SpanID != "" {
 		t.Errorf("expected empty SpanID after extraction, got %q", tc.SpanID)

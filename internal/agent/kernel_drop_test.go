@@ -32,7 +32,7 @@ func TestMetricsObserver_OnEventsDropped(t *testing.T) {
 	}
 }
 
-func TestStatusWriter_FoldsKernelDropsIntoNodeStatus(t *testing.T) {
+func TestStatusWriter_ReportsKernelDropsApartFromTheCRsOwn(t *testing.T) {
 	router := NewRouter(nil)
 	exp := &recExp{name: "x"}
 	router.Publish([]CRRule{mkRule("ns", "pt", []uint64{1}, []events.EventType{events.EventDNS}, exp)})
@@ -62,7 +62,10 @@ func TestStatusWriter_FoldsKernelDropsIntoNodeStatus(t *testing.T) {
 	if len(got.Status.NodeStatus) != 1 {
 		t.Fatalf("nodeStatus len = %d, want 1", len(got.Status.NodeStatus))
 	}
-	if got.Status.NodeStatus[0].DroppedEvents != 5 {
-		t.Errorf("DroppedEvents = %d, want 5 (2 exporter + 3 kernel)", got.Status.NodeStatus[0].DroppedEvents)
+	if got.Status.NodeStatus[0].DroppedEvents != 2 {
+		t.Errorf("DroppedEvents = %d, want 2: only the CR's own loss", got.Status.NodeStatus[0].DroppedEvents)
+	}
+	if got.Status.NodeStatus[0].KernelDroppedEvents != 3 {
+		t.Errorf("KernelDroppedEvents = %d, want the node-wide 3", got.Status.NodeStatus[0].KernelDroppedEvents)
 	}
 }

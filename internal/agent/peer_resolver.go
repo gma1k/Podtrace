@@ -141,6 +141,15 @@ func undrawablePeer(ip string) string {
 	return PeerExternal
 }
 
+// sharedAddressSpace is RFC 6598's 100.64.0.0/10. IsPrivate leaves it out,
+// yet EKS custom networking, Calico and GKE alternate ranges hand it out as
+// pod and node CIDRs, so an unresolved peer there is inside the cluster
+// rather than external.
+var sharedAddressSpace = &net.IPNet{
+	IP:   net.IPv4(100, 64, 0, 0).To4(),
+	Mask: net.CIDRMask(10, 32),
+}
+
 // isClusterLocalIP reports whether an address is one a cluster hands out.
 func isClusterLocalIP(raw string) bool {
 	ip := net.ParseIP(raw)
@@ -148,6 +157,7 @@ func isClusterLocalIP(raw string) bool {
 		return false
 	}
 	return ip.IsPrivate() ||
+		sharedAddressSpace.Contains(ip) ||
 		ip.IsLoopback() ||
 		ip.IsLinkLocalUnicast() ||
 		ip.IsUnspecified()
@@ -253,11 +263,17 @@ func serviceLookup(reader client.Reader) func(ip string, port uint16) (PeerIdent
 			client.MatchingFields{serviceIPIndex: endpointKey(ip, port)}); err != nil {
 			return PeerIdentity{}, false
 		}
+		var best *corev1.Service
 		for i := range services.Items {
 			service := &services.Items[i]
-			return PeerIdentity{Service: service.Name, Namespace: service.Namespace}, true
+			if best == nil || lessNamespacedName(service.Namespace, service.Name, best.Namespace, best.Name) {
+				best = service
+			}
 		}
-		return PeerIdentity{}, false
+		if best == nil {
+			return PeerIdentity{}, false
+		}
+		return PeerIdentity{Service: best.Name, Namespace: best.Namespace}, true
 	}
 }
 
@@ -272,16 +288,50 @@ func endpointSliceLookup(reader client.Reader) func(ip string, port uint16) (Pee
 			client.MatchingFields{endpointIPIndex: endpointKey(ip, port)}); err != nil {
 			return PeerIdentity{}, false
 		}
+		var best *discoveryv1.EndpointSlice
 		for i := range slices.Items {
 			slice := &slices.Items[i]
-			name := slice.Labels[discoveryv1.LabelServiceName]
-			if name == "" {
+			if slice.Labels[discoveryv1.LabelServiceName] == "" {
 				continue
 			}
-			return PeerIdentity{Service: name, Namespace: slice.Namespace}, true
+			if best == nil || preferSlice(slice, best) {
+				best = slice
+			}
 		}
-		return PeerIdentity{}, false
+		if best == nil {
+			return PeerIdentity{}, false
+		}
+		return PeerIdentity{Service: best.Labels[discoveryv1.LabelServiceName], Namespace: best.Namespace}, true
 	}
+}
+
+const endpointSliceControllerName = "endpointslice-controller.k8s.io"
+
+// preferSlice reports whether candidate names the far end better than
+// current.
+func preferSlice(candidate, current *discoveryv1.EndpointSlice) bool {
+	_, candidateHeadless := candidate.Labels[corev1.IsHeadlessService]
+	_, currentHeadless := current.Labels[corev1.IsHeadlessService]
+	if candidateHeadless != currentHeadless {
+		return !candidateHeadless
+	}
+	candidateManaged := candidate.Labels[discoveryv1.LabelManagedBy] == endpointSliceControllerName
+	currentManaged := current.Labels[discoveryv1.LabelManagedBy] == endpointSliceControllerName
+	if candidateManaged != currentManaged {
+		return candidateManaged
+	}
+	return lessNamespacedName(
+		candidate.Namespace, candidate.Labels[discoveryv1.LabelServiceName],
+		current.Namespace, current.Labels[discoveryv1.LabelServiceName])
+}
+
+// lessNamespacedName orders (namespace, name) pairs so a tie between
+// candidates resolves the same way on every node and every refresh.
+func lessNamespacedName(namespace, name, otherNamespace, otherName string) bool {
+	if namespace != otherNamespace {
+		return namespace < otherNamespace
+	}
+	return name < otherName
 }
 
 // trimEndpointSlice drops the fields the resolver never reads before an
@@ -295,7 +345,13 @@ func trimEndpointSlice(obj interface{}) (interface{}, error) {
 	slice.Annotations = nil
 	slice.OwnerReferences = nil
 	if name, present := slice.Labels[discoveryv1.LabelServiceName]; present {
-		slice.Labels = map[string]string{discoveryv1.LabelServiceName: name}
+		kept := map[string]string{discoveryv1.LabelServiceName: name}
+		for _, label := range []string{corev1.IsHeadlessService, discoveryv1.LabelManagedBy} {
+			if value, present := slice.Labels[label]; present {
+				kept[label] = value
+			}
+		}
+		slice.Labels = kept
 	} else {
 		slice.Labels = nil
 	}

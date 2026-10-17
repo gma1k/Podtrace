@@ -32,15 +32,23 @@ type PodTraceNodeStatusApplyConfiguration struct {
 	// per-node entry inside an array, and Conditions cannot be expressed per
 	// array element. It is the only readiness signal available here, so it
 	// duplicates nothing. Object-level readiness is a Condition, as usual.
-	Ready         *bool                         `json:"ready,omitempty"`
-	MatchedPods   *int32                        `json:"matchedPods,omitempty"`
-	ActiveCgroups *int32                        `json:"activeCgroups,omitempty"`
-	TotalEvents   *int64                        `json:"totalEvents,omitempty"`
-	DroppedEvents *int64                        `json:"droppedEvents,omitempty"`
-	LastHeartbeat *v1.Time                      `json:"lastHeartbeat,omitempty"`
-	Message       *string                       `json:"message,omitempty"`
-	Reason        *apiv1alpha1.NodeStatusReason `json:"reason,omitempty"`
-	PolicyHash    *string                       `json:"policyHash,omitempty"`
+	Ready         *bool  `json:"ready,omitempty"`
+	MatchedPods   *int32 `json:"matchedPods,omitempty"`
+	ActiveCgroups *int32 `json:"activeCgroups,omitempty"`
+	TotalEvents   *int64 `json:"totalEvents,omitempty"`
+	// DroppedEvents counts this PodTrace's events lost on this node, after
+	// they were attributed to it.
+	DroppedEvents *int64 `json:"droppedEvents,omitempty"`
+	// KernelDroppedEvents counts events this node's agent lost in the
+	// kernel, before any event could be attributed to a PodTrace: ring
+	// buffer overruns and a full event channel. It is the same node-wide
+	// figure on every PodTrace the node reports for, and is not this
+	// PodTrace's loss alone.
+	KernelDroppedEvents *int64                        `json:"kernelDroppedEvents,omitempty"`
+	LastHeartbeat       *v1.Time                      `json:"lastHeartbeat,omitempty"`
+	Message             *string                       `json:"message,omitempty"`
+	Reason              *apiv1alpha1.NodeStatusReason `json:"reason,omitempty"`
+	PolicyHash          *string                       `json:"policyHash,omitempty"`
 }
 
 // PodTraceNodeStatusApplyConfiguration constructs a declarative configuration of the PodTraceNodeStatus type for use with
@@ -94,6 +102,14 @@ func (b *PodTraceNodeStatusApplyConfiguration) WithTotalEvents(value int64) *Pod
 // If called multiple times, the DroppedEvents field is set to the value of the last call.
 func (b *PodTraceNodeStatusApplyConfiguration) WithDroppedEvents(value int64) *PodTraceNodeStatusApplyConfiguration {
 	b.DroppedEvents = &value
+	return b
+}
+
+// WithKernelDroppedEvents sets the KernelDroppedEvents field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KernelDroppedEvents field is set to the value of the last call.
+func (b *PodTraceNodeStatusApplyConfiguration) WithKernelDroppedEvents(value int64) *PodTraceNodeStatusApplyConfiguration {
+	b.KernelDroppedEvents = &value
 	return b
 }
 

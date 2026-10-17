@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -77,7 +78,15 @@ type Metrics struct {
 	lastEnrichSnaps   int64
 	lastOwnerResolved int64
 	lastOwnerOrphaned int64
+
+	retiredMu sync.Mutex
+	retired   map[CRKey]time.Time
+	now       func() time.Time
 }
+
+const retiredCRTTL = 10 * time.Minute
+
+const metricsRefreshInterval = 15 * time.Second
 
 // NewMetrics constructs the full metric surface and registers it
 // against a fresh Registry.
@@ -256,6 +265,8 @@ func NewMetrics() *Metrics {
 		lastEvents:         map[CRKey]int64{},
 		lastDropped:        map[CRKey]int64{},
 		exporterInitLastOK: map[CRKey]bool{},
+		retired:            map[CRKey]time.Time{},
+		now:                time.Now,
 	}
 	m.KernelSinceDrain = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "podtrace_agent",
@@ -293,7 +304,7 @@ func (m *Metrics) SetIdentity(node, tracerConfig string) {
 // ObserveExportDelivery records the outcome of one exporter ExportSpans
 // call.
 func (m *Metrics) ObserveExportDelivery(cr CRKey, spanCount int, err error) {
-	if m == nil || spanCount <= 0 {
+	if m == nil || spanCount <= 0 || m.isRetired(cr) {
 		return
 	}
 	if err != nil {
@@ -311,7 +322,7 @@ func (m *Metrics) ObserveExportDelivery(cr CRKey, spanCount int, err error) {
 // so BatchSpanProcessor queue-overflow drops become observable as
 // spans_batched_total, spans_delivered_total, export_delivery_dropped_total.
 func (m *Metrics) ObserveSpanBatched(cr CRKey, spanCount int) {
-	if m == nil || spanCount <= 0 || m.SpansBatched == nil {
+	if m == nil || spanCount <= 0 || m.SpansBatched == nil || m.isRetired(cr) {
 		return
 	}
 	m.SpansBatched.WithLabelValues(cr.Namespace, cr.Name).Add(float64(spanCount))
@@ -334,6 +345,7 @@ func (m *Metrics) ObserveExporterInit(cr CRKey, err error) {
 	if m == nil {
 		return
 	}
+	m.reinstate(cr)
 	m.exporterInitMu.Lock()
 	defer m.exporterInitMu.Unlock()
 
@@ -353,7 +365,7 @@ func (m *Metrics) ObserveExporterInit(cr CRKey, err error) {
 // ObserveErrorRate feeds one event into the per-CR rolling-window
 // error-rate detector.
 func (m *Metrics) ObserveErrorRate(cr CRKey, thresholdPercent int32, isError bool) (justBreached bool) {
-	if m == nil {
+	if m == nil || m.isRetired(cr) {
 		return false
 	}
 	m.detectorsMu.Lock()
@@ -387,7 +399,7 @@ func (m *Metrics) dropErrorRateDetector(cr CRKey) {
 // RecordThresholdTripped bumps the per-CR-per-kind counter once for an
 // event that exceeded a configured threshold.
 func (m *Metrics) RecordThresholdTripped(cr CRKey, kind string) {
-	if m == nil || m.ThresholdTripped == nil {
+	if m == nil || m.ThresholdTripped == nil || m.isRetired(cr) {
 		return
 	}
 	m.ThresholdTripped.WithLabelValues(cr.Namespace, cr.Name, kind).Inc()
@@ -415,7 +427,16 @@ func (m *Metrics) dropPolicyMetrics(cr CRKey) {
 	if m == nil {
 		return
 	}
+	m.retire(cr)
 	lbls := prometheus.Labels{"cr_namespace": cr.Namespace, "cr_name": cr.Name}
+	for _, vec := range []*prometheus.CounterVec{m.EventsExported, m.EventsDropped, m.SpansBatched, m.SpansDelivered} {
+		if vec != nil {
+			vec.Delete(lbls)
+		}
+	}
+	if m.ExportDeliveryDropped != nil {
+		m.ExportDeliveryDropped.DeletePartialMatch(lbls)
+	}
 	if m.EffectiveSampleRate != nil {
 		m.EffectiveSampleRate.Delete(lbls)
 	}
@@ -437,15 +458,85 @@ func (m *Metrics) dropPolicyMetrics(cr CRKey) {
 	m.exporterInitMu.Unlock()
 }
 
+// retire marks a removed CR so observations still in flight for it, such as
+// the final flush of an exporter closed in the background, are discarded
+// instead of recreating its series.
+func (m *Metrics) retire(cr CRKey) {
+	m.retiredMu.Lock()
+	defer m.retiredMu.Unlock()
+	if m.retired == nil {
+		m.retired = map[CRKey]time.Time{}
+	}
+	m.retired[cr] = m.clock()
+}
+
+// reinstate lifts a retirement once the CR is scheduled on this node again.
+func (m *Metrics) reinstate(cr CRKey) {
+	m.retiredMu.Lock()
+	delete(m.retired, cr)
+	m.retiredMu.Unlock()
+}
+
+func (m *Metrics) isRetired(cr CRKey) bool {
+	m.retiredMu.Lock()
+	defer m.retiredMu.Unlock()
+	at, ok := m.retired[cr]
+	if !ok {
+		return false
+	}
+	if m.clock().Sub(at) >= retiredCRTTL {
+		delete(m.retired, cr)
+		return false
+	}
+	return true
+}
+
+func (m *Metrics) pruneRetired() {
+	m.retiredMu.Lock()
+	defer m.retiredMu.Unlock()
+	now := m.clock()
+	for cr, at := range m.retired {
+		if now.Sub(at) >= retiredCRTTL {
+			delete(m.retired, cr)
+		}
+	}
+}
+
+func (m *Metrics) clock() time.Time {
+	if m.now == nil {
+		return time.Now()
+	}
+	return m.now()
+}
+
+// refreshMetrics folds router and enricher statistics into the registry every
+// interval until ctx ends, so per-CR counters keep moving between reconciles.
+func refreshMetrics(ctx context.Context, interval time.Duration, metrics *Metrics, router *Router, enricher *PodEnricher) error {
+	if metrics == nil || router == nil {
+		return nil
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			metrics.RefreshFromRouter(router)
+			metrics.RefreshFromEnricher(enricher)
+		}
+	}
+}
+
 // RefreshFromEnricher emits the deltas from the enricher's atomic
 // counters to the Prometheus metric set.
 func (m *Metrics) RefreshFromEnricher(e *PodEnricher) {
 	if m == nil || e == nil {
 		return
 	}
-	stats := e.Stats()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	stats := e.Stats()
 
 	if delta := stats.Hits - m.lastEnrichHits; delta > 0 {
 		m.EnrichmentLookups.WithLabelValues("hit").Add(float64(delta))
@@ -530,6 +621,16 @@ func (o *metricsEngineObserver) OnTargetError(stage string, err error) {
 	)
 }
 
+// OnExporterPanic logs an exporter panic the engine recovered from, so the
+// poisoned batch is visible rather than silently counted as a failure.
+func (o *metricsEngineObserver) OnExporterPanic(exporter string, recovered any, stack []byte) {
+	logger.Error("exporter panicked; batch dropped",
+		zap.String("exporter", exporter),
+		zap.Any("panic", recovered),
+		zap.ByteString("stack", stack),
+	)
+}
+
 // OnEventsDropped records kernel-side event loss (ring buffer overrun, full
 // event channel) on the agent registry so it is visible in agent mode, where
 // the tracer's default-registry drop counter is not served.
@@ -553,17 +654,19 @@ func (m *Metrics) KernelDroppedTotal() int64 {
 // RefreshFromRouter walks the router's rule set + stats table and
 // updates every metric to the current snapshot.
 func (m *Metrics) RefreshFromRouter(router *Router) {
-	rules := router.RulesSnapshot()
-	stats := router.Stats().snapshot()
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	rules := router.RulesSnapshot()
+	stats := router.Stats().snapshot()
+
 	m.ActiveCRs.Set(float64(len(rules)))
 
+	m.pruneRetired()
 	seen := make(map[CRKey]struct{}, len(rules))
 	for _, rule := range rules {
 		seen[rule.Key] = struct{}{}
+		m.reinstate(rule.Key)
 		lbls := prometheus.Labels{
 			"cr_namespace": rule.Key.Namespace,
 			"cr_name":      rule.Key.Name,

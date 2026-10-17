@@ -77,6 +77,12 @@ type TargetErrorObserver interface {
 	OnTargetError(stage string, err error)
 }
 
+// ExporterPanicObserver is an optional capability an EngineObserver may also
+// implement, told when an exporter panicked on a batch.
+type ExporterPanicObserver interface {
+	OnExporterPanic(exporter string, recovered any, stack []byte)
+}
+
 type EventDropObserver interface {
 	OnEventsDropped(reason string, n int)
 }

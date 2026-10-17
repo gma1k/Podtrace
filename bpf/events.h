@@ -5,6 +5,10 @@
 
 #include "common.h"
 
+#define HTTP_ROLE_KNOWN  0x08
+#define HTTP_ROLE_SERVER 0x10
+#define HTTP_ROLE_MASK   (HTTP_ROLE_KNOWN | HTTP_ROLE_SERVER)
+
 enum event_type {
 	EVENT_DNS,
 	EVENT_CONNECT,

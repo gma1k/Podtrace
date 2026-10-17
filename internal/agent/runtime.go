@@ -232,6 +232,7 @@ func Run(ctx context.Context, opts Options) error {
 	g.Go(func() error { return reapWorkloadMetrics(gctx, metricsSink, logger) })
 	g.Go(func() error { return drainKernelMetrics(gctx, backend, metricsSink, router, metrics, logger) })
 	g.Go(func() error { return drainOnCPUSamples(gctx, backend, profiler, metrics, logger) })
+	g.Go(func() error { return refreshMetrics(gctx, metricsRefreshInterval, metrics, router, enricher) })
 
 	g.Go(func() error { return runInspections(gctx, inspections, logger) })
 
@@ -382,6 +383,7 @@ func buildExporters(router *Router, metrics *Metrics, enricher *PodEnricher, pee
 		AttributeCardinality: config.WorkloadMetricsAttributeLimit,
 		KernelAggregation:    config.WorkloadMetricsKernelAggregation,
 		DNSPacketCapture:     config.DNSPacketCaptureEnabled(),
+		ExcludeNamespaces:    config.WorkloadMetricsExcludedNamespaces,
 		OnBudgetExhausted: func(budget int) {
 			logger.Error(nil, "continuous metrics series budget exhausted; new series are being refused",
 				"seriesBudget", budget,
@@ -669,6 +671,41 @@ func ResolveNodeName() string {
 // ?format=pprof. ?namespace= and ?workload= keep one workload, and
 // ?requests=slow keeps only the stacks of the slowest requests.
 func profileHandler(profiler *profiling.ContinuousProfiler) http.HandlerFunc {
+	return newProfileGate(profileQueueWait).limit(renderProfile(profiler))
+}
+
+const profileQueueWait = 5 * time.Second
+
+const profileRetryAfter = "5"
+
+type profileGate struct {
+	slot chan struct{}
+	wait time.Duration
+}
+
+func newProfileGate(wait time.Duration) *profileGate {
+	return &profileGate{slot: make(chan struct{}, 1), wait: wait}
+}
+
+func (g *profileGate) limit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		timer := time.NewTimer(g.wait)
+		defer timer.Stop()
+		select {
+		case g.slot <- struct{}{}:
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+			w.Header().Set("Retry-After", profileRetryAfter)
+			http.Error(w, "another profile is being rendered; retry shortly", http.StatusTooManyRequests)
+			return
+		}
+		defer func() { <-g.slot }()
+		next(w, r)
+	}
+}
+
+func renderProfile(profiler *profiling.ContinuousProfiler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), config.ProfileSnapshotTimeout)
 		defer cancel()
