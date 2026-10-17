@@ -9,6 +9,21 @@ under the rules described in [STABILITY.md](STABILITY.md).
 Going forward, releases are managed by [release-please](https://github.com/googleapis/release-please)
 based on [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.14.10](https://github.com/gma1k/podtrace/compare/v0.14.9...v0.14.10) (2026-10-17)
+
+
+### Bug Fixes
+
+* harden bpf attribution, tls capture and restart tracing ([#528](https://github.com/gma1k/podtrace/issues/528)) ([f08390a](https://github.com/gma1k/podtrace/commit/f08390ad9347c38e29a0ff125f5862b17f93a56d))
+* harden l7 decoder state, memory bounds and drop accounting ([#531](https://github.com/gma1k/podtrace/issues/531)) ([e128baf](https://github.com/gma1k/podtrace/commit/e128bafec180c4ef20f1e83f34d4967d82b74a6a))
+* harden operator tenancy, session lifecycle and agent shutdown ([#532](https://github.com/gma1k/podtrace/issues/532)) ([1300b1e](https://github.com/gma1k/podtrace/commit/1300b1e05fdc86d0d2486e0f02c0f8578a695428))
+* harden uprobe target resolution and untrusted elf parsing ([#530](https://github.com/gma1k/podtrace/issues/530)) ([3dfccbe](https://github.com/gma1k/podtrace/commit/3dfccbe383953f51d3d48bc541bf0d37da71c6a6))
+
+
+### Performance
+
+* attach uprobes as uprobe_multi links to speed up agent shutdown ([#533](https://github.com/gma1k/podtrace/issues/533)) ([05f6af3](https://github.com/gma1k/podtrace/commit/05f6af39d49401ee8d0b3455108f2213f7d0735b))
+
 ## [0.14.9](https://github.com/gma1k/podtrace/compare/v0.14.8...v0.14.9) (2026-10-12)
 
 
