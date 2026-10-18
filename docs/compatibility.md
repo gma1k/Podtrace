@@ -188,7 +188,7 @@ uname -r
 ls -l /sys/kernel/btf/vmlinux
 
 # 3. Required capabilities reachable?
-capsh --print | grep -E "cap_bpf|cap_perfmon|cap_sys_admin"
+capsh --print | grep -E "cap_bpf|cap_perfmon|cap_sys_admin|cap_sys_ptrace"
 
 # 4. Cgroup version
 stat -fc %T /sys/fs/cgroup        # cgroup2fs → v2; tmpfs → v1

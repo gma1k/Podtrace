@@ -18,22 +18,20 @@ type ServiceInfo struct {
 
 type ServiceResolver struct {
 	clientset     kubernetes.Interface
-	endpointCache *sync.Map
 	cacheTTL      time.Duration
 	negativeTTL   time.Duration
 	informerCache *InformerCache
 
+	mu                sync.RWMutex
+	endpoints         map[string]ServiceInfo
+	endpointsExpireAt time.Time
+	notFound          map[string]time.Time
+
 	fetchMu sync.Mutex
 }
 
-// endpointCacheEntry is a positive or negative cache row: a negative row
-// (notFound=true, shorter TTL) suppresses repeat cluster-wide lists for
-// endpoints that simply are not backed by a Service.
-type endpointCacheEntry struct {
-	serviceInfo ServiceInfo
-	notFound    bool
-	expiresAt   time.Time
-}
+// endpointsPageSize bounds one page of the cluster-wide Endpoints listing.
+const endpointsPageSize = 500
 
 func NewServiceResolver(clientset kubernetes.Interface) *ServiceResolver {
 	return NewServiceResolverWithCache(clientset, nil)
@@ -47,10 +45,10 @@ func NewServiceResolverWithCache(clientset kubernetes.Interface, ic *InformerCac
 	}
 	return &ServiceResolver{
 		clientset:     clientset,
-		endpointCache: &sync.Map{},
 		cacheTTL:      ttl,
 		negativeTTL:   negativeTTL,
 		informerCache: ic,
+		notFound:      map[string]time.Time{},
 	}
 }
 
@@ -66,7 +64,7 @@ func (sr *ServiceResolver) ResolveService(ctx context.Context, ip string, port i
 		return sr.informerCache.GetServiceByEndpoint(ip, port)
 	}
 
-	cacheKey := fmt.Sprintf("%s:%d", ip, port)
+	cacheKey := endpointKey(ip, port)
 	if info, ok := sr.lookupCache(cacheKey); ok {
 		return info
 	}
@@ -76,69 +74,86 @@ func (sr *ServiceResolver) ResolveService(ctx context.Context, ip string, port i
 	if info, ok := sr.lookupCache(cacheKey); ok {
 		return info
 	}
+	return sr.fetchServiceByEndpoint(ctx, ip, port)
+}
 
-	serviceInfo := sr.fetchServiceByEndpoint(ctx, ip, port)
-	if serviceInfo == nil {
-		sr.endpointCache.Store(cacheKey, &endpointCacheEntry{
-			notFound:  true,
-			expiresAt: time.Now().Add(sr.negativeTTL),
-		})
-	}
-	return serviceInfo
+func endpointKey(ip string, port int) string {
+	return fmt.Sprintf("%s:%d", ip, port)
 }
 
 // lookupCache returns (info, true) on a live positive hit, (nil, true) on
 // a live negative hit, and (nil, false) when the resolver must fetch.
 func (sr *ServiceResolver) lookupCache(cacheKey string) (*ServiceInfo, bool) {
-	cached, ok := sr.endpointCache.Load(cacheKey)
-	if !ok {
-		return nil, false
-	}
-	entry := cached.(*endpointCacheEntry)
-	if time.Now().Before(entry.expiresAt) {
-		if entry.notFound {
-			return nil, true
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
+	now := time.Now()
+	if now.Before(sr.endpointsExpireAt) {
+		if info, ok := sr.endpoints[cacheKey]; ok {
+			return &info, true
 		}
-		info := entry.serviceInfo
-		return &info, true
 	}
-	sr.endpointCache.Delete(cacheKey)
+	if until, ok := sr.notFound[cacheKey]; ok && now.Before(until) {
+		return nil, true
+	}
 	return nil, false
 }
 
-// fetchServiceByEndpoint lists Endpoints once and populates the positive
-// cache for EVERY endpoint in the response, so one cluster-wide list
-// amortizes across all subsequent lookups instead of being repeated per
-// cache miss.
+// fetchServiceByEndpoint lists every Endpoints object page by page and
+// replaces the positive cache with the result, so one cluster-wide listing
+// serves every lookup until it expires. A miss is remembered for the
+// shorter negative TTL, and expired misses are pruned on each refresh.
 func (sr *ServiceResolver) fetchServiceByEndpoint(ctx context.Context, ip string, port int) *ServiceInfo {
-	endpointsList, err := sr.clientset.CoreV1().Endpoints(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil
-	}
+	cacheKey := endpointKey(ip, port)
+	next, err := sr.listEndpoints(ctx)
+	now := time.Now()
 
-	var match *ServiceInfo
-	expiry := time.Now().Add(sr.cacheTTL)
-	for _, endpoint := range endpointsList.Items {
-		for _, subset := range endpoint.Subsets {
-			for _, addr := range subset.Addresses {
-				for _, epPort := range subset.Ports {
-					info := ServiceInfo{
-						Name:      endpoint.Name,
-						Namespace: endpoint.Namespace,
-						Port:      int(epPort.Port),
-					}
-					sr.endpointCache.Store(
-						fmt.Sprintf("%s:%d", addr.IP, epPort.Port),
-						&endpointCacheEntry{serviceInfo: info, expiresAt: expiry},
-					)
-					if addr.IP == ip && int(epPort.Port) == port && match == nil {
-						m := info
-						match = &m
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if err == nil {
+		sr.endpoints = next
+		sr.endpointsExpireAt = now.Add(sr.cacheTTL)
+	}
+	for key, until := range sr.notFound {
+		if !now.Before(until) {
+			delete(sr.notFound, key)
+		}
+	}
+	if err == nil {
+		if info, ok := next[cacheKey]; ok {
+			return &info
+		}
+	}
+	if sr.notFound == nil {
+		sr.notFound = map[string]time.Time{}
+	}
+	sr.notFound[cacheKey] = now.Add(sr.negativeTTL)
+	return nil
+}
+
+func (sr *ServiceResolver) listEndpoints(ctx context.Context) (map[string]ServiceInfo, error) {
+	out := map[string]ServiceInfo{}
+	opts := metav1.ListOptions{Limit: endpointsPageSize}
+	for {
+		page, err := sr.clientset.CoreV1().Endpoints(metav1.NamespaceAll).List(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, endpoint := range page.Items {
+			for _, subset := range endpoint.Subsets {
+				for _, addr := range subset.Addresses {
+					for _, epPort := range subset.Ports {
+						key := endpointKey(addr.IP, int(epPort.Port))
+						if _, seen := out[key]; seen {
+							continue
+						}
+						out[key] = ServiceInfo{Name: endpoint.Name, Namespace: endpoint.Namespace, Port: int(epPort.Port)}
 					}
 				}
 			}
 		}
+		if page.Continue == "" {
+			return out, nil
+		}
+		opts.Continue = page.Continue
 	}
-
-	return match
 }

@@ -86,6 +86,13 @@ func NewOTLPExporter(endpoint string, sampleRate float64) (*OTLPExporter, error)
 	if useInsecure {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
+	if len(config.OTLPHeaders) > 0 {
+		headers := make(map[string]string, len(config.OTLPHeaders))
+		for k, v := range config.OTLPHeaders {
+			headers[k] = v
+		}
+		opts = append(opts, otlptracehttp.WithHeaders(headers))
+	}
 	otlpExporter, err := newOTLPClient(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)

@@ -54,14 +54,29 @@ type RunOptions struct {
 	DynamicReSpawn bool
 	PollInterval   time.Duration
 
+	Stop <-chan struct{}
+
 	KeepSpawnPodOnFailure bool
 
 	ExtraEnv []corev1.EnvVar
 
 	SplunkToken string
 
+	SecretEnv map[string]string
+
 	BTFFile string
 }
+
+var (
+	StopGracePeriod  = 30 * time.Second
+	stopStreamMargin = 15 * time.Second
+)
+
+var attachToPod = AttachToPod
+
+// ErrInterrupted reports a Stop that arrived before a spawn pod was
+// streaming, so there was no trace to finish.
+var ErrInterrupted = errors.New("interrupted before the trace started")
 
 // Run orchestrates the spawn + stream lifecycle. It returns when every per-node
 // pod has terminated or ctx is cancelled.
@@ -122,6 +137,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			OwnerPID:              opts.OwnerPID,
 			ExtraEnv:              opts.ExtraEnv,
 			SplunkToken:           opts.SplunkToken,
+			SecretEnv:             opts.SecretEnv,
 			BTFFile:               opts.BTFFile,
 		})
 		if err != nil {
@@ -149,17 +165,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 			interval = 30 * time.Second
 		}
 		g.Go(func() error {
-			t := time.NewTicker(interval)
-			defer t.Stop()
-			for {
-				select {
-				case <-gctx.Done():
-					return nil
-				case <-t.C:
-				}
+			return pollNewNodes(gctx, opts.Stop, interval, func() error {
 				poll, err := ResolveTargetNodes(gctx, opts.Clientset, opts.Selection)
 				if err != nil {
-					continue
+					return nil
 				}
 				for _, n := range poll.NodeNames {
 					cmu.Lock()
@@ -172,11 +181,31 @@ func Run(ctx context.Context, opts RunOptions) error {
 						return err
 					}
 				}
-			}
+				return nil
+			})
 		})
 	}
 
 	return g.Wait()
+}
+
+// pollNewNodes runs poll every interval until ctx ends, a Stop arrives (a
+// stopping trace spawns nothing new), or poll fails.
+func pollNewNodes(ctx context.Context, stop <-chan struct{}, interval time.Duration, poll func() error) error {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-stop:
+			return nil
+		case <-t.C:
+		}
+		if err := poll(); err != nil {
+			return err
+		}
+	}
 }
 
 func nodePodLabel(podRefs []PodRef) string {
@@ -205,9 +234,9 @@ func nodePodLabel(podRefs []PodRef) string {
 
 func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multiNode bool, wmu *sync.Mutex, nodeLabel string) (retErr error) {
 	secretName := ""
-	if opts.SplunkToken != "" {
-		secretName = SplunkSecretName(podSpec.Name)
-		if serr := createSplunkTokenSecret(ctx, opts.Clientset, podSpec.Namespace, secretName, podSpec.Labels, opts.SplunkToken); serr != nil {
+	if data := spawnSecretData(opts.SplunkToken, opts.SecretEnv); len(data) > 0 {
+		secretName = SpawnSecretName(podSpec.Name)
+		if serr := createSpawnSecret(ctx, opts.Clientset, podSpec.Namespace, secretName, podSpec.Labels, data); serr != nil {
 			return serr
 		}
 	}
@@ -227,7 +256,7 @@ func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multi
 
 	if secretName != "" {
 		if oerr := ownSecretByPod(ctx, opts.Clientset, created, secretName); oerr != nil {
-			logger.Debug("Could not own Splunk token secret by pod",
+			logger.Debug("Could not own spawn secret by pod",
 				zap.String("secret", secretName), zap.Error(oerr))
 		}
 	}
@@ -254,8 +283,15 @@ func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multi
 		}
 	}()
 
+	stop := newGracefulStop(ctx, opts, created.Namespace, created.Name)
+	defer stop.close()
+	ctx = stop.ctx
+
 	running, err := waitForPodRunningOrTerminated(ctx, opts.Clientset, created.Namespace, created.Name)
 	if err != nil {
+		if stop.requested() {
+			return ErrInterrupted
+		}
 		return err
 	}
 	logger.Debug("Spawn pod reached terminal-or-running state",
@@ -281,7 +317,15 @@ func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multi
 		streams.In = nil
 	}
 
-	if _, err := AttachToPod(ctx, opts.RestConfig, opts.Clientset, running, streams); err != nil {
+	if !stop.markStreaming() {
+		return ErrInterrupted
+	}
+	_, err = attachToPod(ctx, opts.RestConfig, opts.Clientset, running, streams)
+	flushPrefixed(streams)
+	if err != nil && stop.requested() && ctx.Err() != nil {
+		return ErrInterrupted
+	}
+	if err != nil {
 		diag := diagnoseAttachFailure(cleanupCtx, opts.Clientset, running.Namespace, running.Name, err)
 		var afe *AttachFailedError
 		if errors.As(diag, &afe) && afe.ExitCode != nil {
@@ -296,6 +340,9 @@ func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multi
 	}
 
 	exit := WaitForExitCode(ctx, opts.Clientset, running.Namespace, running.Name)
+	if exit == -1 && stop.requested() {
+		return nil
+	}
 	if exit != 0 {
 		if tail := dumpPodLogs(cleanupCtx, opts.Clientset, running.Namespace, running.Name); tail != "" {
 			_, _ = fmt.Fprintf(opts.Streams.ErrOut, "spawn pod %s/%s tail:\n%s\n", running.Namespace, running.Name, tail)
@@ -303,6 +350,92 @@ func runOneNode(ctx context.Context, opts RunOptions, podSpec *corev1.Pod, multi
 		return &ExitError{Code: int(exit), Node: podSpec.Spec.NodeSelector["kubernetes.io/hostname"]}
 	}
 	return nil
+}
+
+// gracefulStop turns a Stop request into a graceful delete of one spawn pod.
+// Before the pod streams there is no trace to finish, so a Stop aborts the
+// wait; once it streams, the pod gets SIGTERM and the stream runs on until
+// the pod exits or the grace period and margin have passed.
+type gracefulStop struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+	stopCh <-chan struct{}
+
+	mu        sync.Mutex
+	stopped   bool
+	streaming bool
+}
+
+func newGracefulStop(parent context.Context, opts RunOptions, namespace, name string) *gracefulStop {
+	ctx, cancel := context.WithCancel(parent)
+	g := &gracefulStop{ctx: ctx, cancel: cancel, done: make(chan struct{}), stopCh: opts.Stop}
+	go func() {
+		defer close(g.done)
+		select {
+		case <-ctx.Done():
+			return
+		case <-opts.Stop:
+		}
+		g.mu.Lock()
+		g.stopped = true
+		streaming := g.streaming
+		g.mu.Unlock()
+		if !streaming {
+			cancel()
+			return
+		}
+		if err := DeletePodGracefully(ctx, opts.Clientset, namespace, name, StopGracePeriod); err != nil {
+			logger.Debug("Graceful stop of spawn pod failed; aborting the stream",
+				zap.String("namespace", namespace), zap.String("name", name), zap.Error(err))
+			cancel()
+			return
+		}
+		timer := time.NewTimer(StopGracePeriod + stopStreamMargin)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+			cancel()
+		}
+	}()
+	return g
+}
+
+// markStreaming records that the pod is about to stream, unless a Stop has
+// already arrived, in which case there is nothing to finish.
+func (g *gracefulStop) markStreaming() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stoppedLocked() {
+		return false
+	}
+	g.streaming = true
+	return true
+}
+
+func (g *gracefulStop) requested() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.stoppedLocked()
+}
+
+// stoppedLocked also reads the Stop channel itself, so a Stop is seen at
+// once rather than only after the watching goroutine has run.
+func (g *gracefulStop) stoppedLocked() bool {
+	if !g.stopped {
+		select {
+		case <-g.stopCh:
+			g.stopped = true
+		default:
+		}
+	}
+	return g.stopped
+}
+
+func (g *gracefulStop) close() {
+	g.cancel()
+	<-g.done
 }
 
 // dumpPodLogsCap bounds how much pod stderr we read into the error message.
@@ -369,6 +502,28 @@ func (w *prefixedWriter) Write(p []byte) (int, error) {
 		w.buf = w.buf[i+1:]
 	}
 	return len(p), nil
+}
+
+// Flush writes a final line that never got its newline, such as the last
+// line of a crash message, so it is not lost when the stream ends.
+func (w *prefixedWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.buf) == 0 {
+		return nil
+	}
+	line := append(append([]byte(w.prefix), w.buf...), '\n')
+	w.buf = nil
+	_, err := w.out.Write(line)
+	return err
+}
+
+func flushPrefixed(streams genericiooptions.IOStreams) {
+	for _, w := range []io.Writer{streams.Out, streams.ErrOut} {
+		if pw, ok := w.(*prefixedWriter); ok {
+			_ = pw.Flush()
+		}
+	}
 }
 
 func indexByte(b []byte, c byte) int {

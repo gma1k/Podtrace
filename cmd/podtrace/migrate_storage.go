@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -13,9 +12,8 @@ import (
 	apiextensionsv1client "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/gma1k/podtrace/internal/kubernetes"
 	"github.com/gma1k/podtrace/internal/storagemigrate"
 )
 
@@ -25,6 +23,7 @@ func newMigrateStorageCmd() *cobra.Command {
 	var (
 		crdNames []string
 		dryRun   bool
+		access   kubernetes.ClusterAccess
 	)
 
 	cmd := &cobra.Command{
@@ -45,7 +44,7 @@ and running it against an already-migrated CRD does nothing. It is step 2 and
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := context.Background()
 
-			cfg, err := resolveRESTConfig()
+			cfg, _, err := access.RESTConfig()
 			if err != nil {
 				return err
 			}
@@ -77,6 +76,10 @@ and running it against an already-migrated CRD does nothing. It is step 2 and
 		"CRD to migrate, repeatable (default: every "+podtraceAPIGroup+" CRD in the cluster)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Report what would be rewritten without writing anything")
+	cmd.Flags().StringVar(&access.Kubeconfig, "kubeconfig", "",
+		"Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config, then the in-cluster ServiceAccount)")
+	cmd.Flags().StringVar(&access.Context, "context", "",
+		"Kubeconfig context to use (defaults to the current context)")
 
 	return cmd
 }
@@ -135,20 +138,4 @@ func podtraceCRDNames(ctx context.Context, client apiextensionsv1client.CustomRe
 	}
 	sort.Strings(names)
 	return names, nil
-}
-
-func resolveRESTConfig() (*rest.Config, error) {
-	cfg, err := rest.InClusterConfig()
-	if err == nil {
-		return cfg, nil
-	}
-	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
-		loader.ExplicitPath = kubeconfig
-	}
-	cfg, kerr := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if kerr != nil {
-		return nil, fmt.Errorf("no in-cluster config (%v) and no usable kubeconfig: %w", err, kerr)
-	}
-	return cfg, nil
 }

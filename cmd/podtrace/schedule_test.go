@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
 )
@@ -81,5 +82,21 @@ func TestBuildManualSession_DoesNotShareSpec(t *testing.T) {
 	s.Spec.Duration = metav1.Duration{Duration: time.Hour}
 	if sch.Spec.SessionTemplate.Spec.Duration.Duration == time.Hour {
 		t.Fatal("session spec aliased the schedule template (mutation leaked back)")
+	}
+}
+
+func TestTwoManualTriggersInTheSameSecondGetDistinctNames(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	if a, b := manualSessionName("nightly", now), manualSessionName("nightly", now); a == b {
+		t.Fatalf("both triggers were named %q", a)
+	}
+}
+
+func TestManualSessionNamesAreValidResourceNames(t *testing.T) {
+	for _, schedule := range []string{"nightly", strings.Repeat("x", 70)} {
+		name := manualSessionName(schedule, time.Now())
+		if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 || len(name) > 63 {
+			t.Errorf("%q is not a valid session name: %v", name, errs)
+		}
 	}
 }

@@ -62,6 +62,7 @@ var (
 	TracingSampleRate         = getFloatEnvInRange("PODTRACE_TRACING_SAMPLE_RATE", DefaultTracingSampleRate, 0, 1)
 	SynthesizeSpans           = getBoolEnvOrDefault("PODTRACE_TRACING_SYNTHESIZE_SPANS", DefaultSynthesizeSpans)
 	OTLPEndpoint              = getEnvOrDefault("PODTRACE_OTLP_ENDPOINT", DefaultOTLPEndpoint)
+	OTLPHeaders               map[string]string
 	JaegerEndpoint            = os.Getenv("PODTRACE_JAEGER_ENDPOINT")
 	SplunkEndpoint            = os.Getenv("PODTRACE_SPLUNK_ENDPOINT")
 	SplunkToken               = getEnvOrDefault("PODTRACE_SPLUNK_TOKEN", "")

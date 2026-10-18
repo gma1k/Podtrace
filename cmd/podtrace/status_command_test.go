@@ -267,15 +267,6 @@ func TestWatchAsJSONIsOneObjectPerLine(t *testing.T) {
 	}
 }
 
-func TestAnInterruptedFirstReportIsNotAnError(t *testing.T) {
-	useStatusFake(t, newStatusFake())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := runStatus(ctx, defaultStatusOptions(), &bytes.Buffer{}, io.Discard); err != nil {
-		t.Errorf("err = %v; Ctrl-C during the first window is a normal way to stop", err)
-	}
-}
-
 func TestStatusErrorsAreReturned(t *testing.T) {
 	bad := defaultStatusOptions()
 	bad.Output = "xml"
@@ -536,15 +527,39 @@ func TestWaitGivesUpAfterTheDurationAndSaysWhatIsWrong(t *testing.T) {
 	}
 }
 
-func TestAnInterruptedWaitIsNotAnError(t *testing.T) {
+func TestAnInterruptedWaitIsNotReportedAsHealthy(t *testing.T) {
 	fastPolling(t)
 	f := newStatusFake()
 	f.components = rollingUntil(1 << 30)
 	useStatusFake(t, f)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-	if err := runStatus(ctx, waitOptions(), io.Discard, io.Discard); err != nil {
-		t.Errorf("err = %v; Ctrl-C while waiting is a normal way to stop", err)
+	var progress bytes.Buffer
+	if err := runStatus(ctx, waitOptions(), io.Discard, &progress); !errors.Is(err, errInterrupted) {
+		t.Errorf("err = %v; a wait a signal cut short must not exit as if podtrace were healthy", err)
+	}
+	if strings.Contains(progress.String(), "context canceled") {
+		t.Errorf("the interrupt was reported as a cluster problem: %q", progress.String())
+	}
+}
+
+func TestAnInterruptedSingleCollectionIsNotReportedAsHealthy(t *testing.T) {
+	useStatusFake(t, newStatusFake())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runStatus(ctx, defaultStatusOptions(), io.Discard, io.Discard); !errors.Is(err, errInterrupted) {
+		t.Errorf("err = %v; an interrupted check has no answer and must not exit 0", err)
+	}
+}
+
+func TestStoppingAWatchIsNotAnError(t *testing.T) {
+	useStatusFake(t, newStatusFake())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	opts := defaultStatusOptions()
+	opts.Watch = true
+	if err := runStatus(ctx, opts, io.Discard, io.Discard); err != nil {
+		t.Errorf("err = %v; Ctrl-C is how a watch ends", err)
 	}
 }
 

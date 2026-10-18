@@ -13,8 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 
 	"github.com/gma1k/podtrace/internal/config"
@@ -371,19 +369,13 @@ func replaceReportSecret(ctx context.Context, secrets typedcorev1.SecretInterfac
 	return err
 }
 
-// buildInClusterClient constructs a kubernetes.Interface from the Job
-// pod's ServiceAccount.
+// buildInClusterClient constructs a kubernetes.Interface for the report
+// sink: the Job pod's ServiceAccount inside the cluster, and the --kubeconfig
+// cluster when a workstation run uploads its own report.
 func buildInClusterClient() (kubernetes.Interface, error) {
-	cfg, err := rest.InClusterConfig()
+	cfg, _, err := clusterAccess().RESTConfig()
 	if err != nil {
-		kubeconfig := os.Getenv("KUBECONFIG")
-		if kubeconfig == "" {
-			return nil, fmt.Errorf("in-cluster config: %w", err)
-		}
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			return nil, fmt.Errorf("load kubeconfig: %w", err)
-		}
+		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
 	return kubernetes.NewForConfig(cfg)
 }

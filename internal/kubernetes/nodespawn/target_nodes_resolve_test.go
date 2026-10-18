@@ -45,7 +45,7 @@ func TestResolveTargetNodes_ListErrorPropagates(t *testing.T) {
 		DefaultNamespace: "ns1",
 		AllInNamespace:   true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "list pods in ns1") {
+	if err == nil || !strings.Contains(err.Error(), `list pods in "ns1"`) {
 		t.Fatalf("expected list error, got %v", err)
 	}
 }

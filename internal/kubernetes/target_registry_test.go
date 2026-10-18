@@ -116,12 +116,11 @@ func TestNewTargetRegistry_AppliesDefaults(t *testing.T) {
 	if cap(tr.updates) != 8 {
 		t.Fatalf("updates buffer cap: got %d want 8", cap(tr.updates))
 	}
-	// PodRefSet eagerly resolved.
-	if _, ok := tr.podNameRefs["ns"]["a"]; !ok {
-		t.Errorf("podNameRefs missing default-ns entry")
+	if !tr.matchesSelection(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "a"}}) {
+		t.Errorf("default-namespace pod ref does not match")
 	}
-	if _, ok := tr.podNameRefs["b"]["c"]; !ok {
-		t.Errorf("podNameRefs missing qualified entry")
+	if !tr.matchesSelection(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "c"}}) {
+		t.Errorf("qualified pod ref does not match")
 	}
 }
 

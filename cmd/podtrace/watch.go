@@ -15,7 +15,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	sigsyaml "sigs.k8s.io/yaml"
 
@@ -57,7 +56,7 @@ func registerWatchOnlyFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&watchExporter, "exporter", "default", "Name of the ExporterConfig (in the CR's namespace) events are sent to.")
 	fs.StringVar(&watchName, "name", "", "Name for the created resource (defaults to the --app value).")
 	fs.IntVar(&watchSample, "sample", -1, "Sample percentage 0-100 (default: unset, i.e. the exporter's own default).")
-	fs.StringVar(&watchKubeconfig, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config).")
+	fs.StringVar(&watchKubeconfig, "kubeconfig", "", "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config).")
 	fs.BoolVar(&watchPrintOnly, "print-only", false, "Print the rendered manifest instead of creating it.")
 	fs.BoolVar(&watchApplication, "application", false, "Create an ApplicationTrace (an application of several workloads) instead of a single PodTrace. Each --app/--label becomes one workload selector.")
 }
@@ -176,11 +175,7 @@ func runWatch(ctx context.Context, opts watchOptions) error {
 		return fmt.Errorf("build scheme: %w", err)
 	}
 
-	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loader.ExplicitPath = opts.Kubeconfig
-	}
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, &clientcmd.ConfigOverrides{}).ClientConfig()
+	cfg, _, err := kubernetes.ClusterAccess{Kubeconfig: opts.Kubeconfig}.RESTConfig()
 	if err != nil {
 		return fmt.Errorf("load kubeconfig: %w", err)
 	}

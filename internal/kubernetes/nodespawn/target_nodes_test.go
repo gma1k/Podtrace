@@ -15,10 +15,27 @@ import (
 )
 
 func pod(ns, name, node string, labels map[string]string) *corev1.Pod {
-	return &corev1.Pod{
+	return withRunningContainer(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: labels},
 		Spec:       corev1.PodSpec{NodeName: node},
+	})
+}
+
+func withRunningContainer(p *corev1.Pod) *corev1.Pod {
+	p.Status.ContainerStatuses = append(p.Status.ContainerStatuses, corev1.ContainerStatus{
+		Name:        "app",
+		ContainerID: "containerd://" + p.Name + "-id",
+		State:       corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	})
+	return p
+}
+
+func refNames(refs []PodRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, r.String())
 	}
+	return out
 }
 
 func TestResolveTargetNodes_NilClientset(t *testing.T) {
@@ -45,12 +62,12 @@ func TestResolveTargetNodes_ExplicitPods_FanOutByNode(t *testing.T) {
 	if !reflect.DeepEqual(got.NodeNames, []string{"node-1", "node-2"}) {
 		t.Errorf("node names = %v, want [node-1 node-2]", got.NodeNames)
 	}
-	wantNode1 := []PodRef{{Namespace: "ns1", Name: "a"}, {Namespace: "ns2", Name: "c"}}
-	if !reflect.DeepEqual(got.ByNode["node-1"], wantNode1) {
+	wantNode1 := []string{"ns1/a", "ns2/c"}
+	if !reflect.DeepEqual(refNames(got.ByNode["node-1"]), wantNode1) {
 		t.Errorf("node-1 refs = %v, want %v", got.ByNode["node-1"], wantNode1)
 	}
-	wantNode2 := []PodRef{{Namespace: "ns1", Name: "b"}}
-	if !reflect.DeepEqual(got.ByNode["node-2"], wantNode2) {
+	wantNode2 := []string{"ns1/b"}
+	if !reflect.DeepEqual(refNames(got.ByNode["node-2"]), wantNode2) {
 		t.Errorf("node-2 refs = %v, want %v", got.ByNode["node-2"], wantNode2)
 	}
 }
@@ -73,13 +90,13 @@ func TestResolveTargetNodes_PodSelector_AcrossNamespaces(t *testing.T) {
 	if !reflect.DeepEqual(got.NodeNames, []string{"node-1", "node-2"}) {
 		t.Errorf("node names = %v, want [node-1 node-2]", got.NodeNames)
 	}
-	got1 := got.ByNode["node-1"]
-	want1 := []PodRef{{Namespace: "app", Name: "api-1"}, {Namespace: "other", Name: "api-3"}}
+	got1 := refNames(got.ByNode["node-1"])
+	want1 := []string{"app/api-1", "other/api-3"}
 	if !reflect.DeepEqual(got1, want1) {
 		t.Errorf("node-1 refs = %v, want %v", got1, want1)
 	}
-	got2 := got.ByNode["node-2"]
-	want2 := []PodRef{{Namespace: "app", Name: "api-2"}}
+	got2 := refNames(got.ByNode["node-2"])
+	want2 := []string{"app/api-2"}
 	if !reflect.DeepEqual(got2, want2) {
 		t.Errorf("node-2 refs = %v, want %v", got2, want2)
 	}
@@ -236,8 +253,8 @@ func TestPickRunningContainers_RejectsRunningWithEmptyID(t *testing.T) {
 // TestResolveTargetNodes_SkipsNonRunningContainerIDs — the fix for the
 // cross-node "cgroup path not found" failure mode: when one matching pod's
 // container is Waiting/Terminated, the workstation must NOT hand its stale
-// containerID to the spawn pod. The pod is still routed to its node (with
-// an empty ContainerID), and main.go's preresolved loop skips it cleanly.
+// containerID to the spawn pod. A pod with no running container gives the
+// spawn pod nothing to trace, so it is not routed at all.
 func TestResolveTargetNodes_SkipsNonRunningContainerIDs(t *testing.T) {
 	running := podWithContainer("ns", "alive", "node-1", "app",
 		"containerd://aaaaaa", corev1.ContainerState{
@@ -257,23 +274,12 @@ func TestResolveTargetNodes_SkipsNonRunningContainerIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if got := len(out.ByNode["node-1"]); got != 2 {
-		t.Fatalf("expected both pods routed to node-1, got %d", got)
+	refs := out.ByNode["node-1"]
+	if len(refs) != 1 || refs[0].Name != "alive" {
+		t.Fatalf("expected only the running pod routed to node-1, got %v", refs)
 	}
-	var aliveID, restartingID string
-	for _, r := range out.ByNode["node-1"] {
-		switch r.Name {
-		case "alive":
-			aliveID = r.ContainerID
-		case "restarting":
-			restartingID = r.ContainerID
-		}
-	}
-	if aliveID != "aaaaaa" {
-		t.Errorf("Running pod must propagate containerID, got %q", aliveID)
-	}
-	if restartingID != "" {
-		t.Errorf("CrashLoopBackOff pod must NOT propagate a stale containerID, got %q", restartingID)
+	if refs[0].ContainerID != "aaaaaa" {
+		t.Errorf("Running pod must propagate containerID, got %q", refs[0].ContainerID)
 	}
 }
 

@@ -295,8 +295,8 @@ kubectl krew upgrade podtrace
 >   ```
 >   Skip-the-spawn means eBPF loads on your workstation directly, no
 >   privileged pod, no PSA label, no image to load. Same UX as pre-PR
->   podtrace on a single-node setup. Needs `CAP_BPF` / `CAP_SYS_ADMIN` on
->   the local binary — the release tarball ships these via setcap, and
+>   podtrace on a single-node setup. Needs `CAP_BPF` / `CAP_SYS_ADMIN`
+>   (and the rest of the set below) on the local binary — the release tarball ships these via setcap, and
 >   `make build` + `./scripts/setup-capabilities.sh` does the same for
 >   source builds.
 
@@ -475,9 +475,22 @@ make build-setup
 sudo ./scripts/setup-capabilities.sh
 ```
 
-The script sets:
-- `CAP_SYS_ADMIN`: Required for eBPF operations
-- `CAP_BPF`: Required for loading eBPF programs (kernel 5.8+)
+The script sets the same capabilities the agent and spawn pods run with:
+- `CAP_BPF`: loading eBPF programs and maps (kernel 5.8+)
+- `CAP_PERFMON`: perf events and tracing programs
+- `CAP_SYS_ADMIN`: creating kprobes through the perf_kprobe PMU
+- `CAP_NET_ADMIN`: attaching network programs
+- `CAP_SYS_RESOURCE`: raising the locked-memory limit for BPF maps
+- `CAP_SYS_PTRACE`: reading `/proc/<pid>/root`, `exe` and `maps` of container
+  processes that do not run as root, without which their library uprobes
+  (TLS, HTTP/2, database) attach to nothing
+
+`cp` does not preserve file capabilities. For a copy elsewhere, such as
+`~/.krew/bin/podtrace`, pass its path:
+
+```bash
+sudo ./scripts/setup-capabilities.sh ~/.krew/bin/podtrace
+```
 
 ## Verification
 

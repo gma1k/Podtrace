@@ -10,6 +10,13 @@ import (
 
 const Replacement = '�'
 
+// TerminalLine is Terminal for a single table cell or log line: runs of
+// whitespace, newlines included, collapse to one space first, so a value
+// cannot break the layout it is printed into.
+func TerminalLine(s string) string {
+	return Terminal(strings.Join(strings.Fields(s), " "))
+}
+
 // Terminal returns s with every terminal-unsafe rune, and every byte that is
 // not valid UTF-8, replaced by Replacement. A stray byte is unsafe because a
 // terminal that is not decoding UTF-8 reads 0x9b as an 8-bit CSI.

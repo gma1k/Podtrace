@@ -11,11 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/clientcmd"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	podtracev1alpha1 "github.com/gma1k/podtrace/api/v1alpha1"
+	"github.com/gma1k/podtrace/internal/kubernetes"
 	"github.com/gma1k/podtrace/internal/operator"
 )
 
@@ -74,7 +75,7 @@ Examples:
 	}
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace of the PodTraceSchedule (required)")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass the schedule's concurrencyPolicy and suspend gate")
-	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config)")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config)")
 	cmd.Flags().BoolVar(&printSession, "print-only", false, "Print the rendered session manifest instead of applying it")
 	_ = cmd.MarkFlagRequired("namespace")
 	return cmd
@@ -101,11 +102,7 @@ func runScheduleTrigger(ctx context.Context, opts scheduleTriggerOptions) error 
 		return fmt.Errorf("build scheme: %w", err)
 	}
 
-	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loader.ExplicitPath = opts.Kubeconfig
-	}
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, &clientcmd.ConfigOverrides{}).ClientConfig()
+	cfg, _, err := kubernetes.ClusterAccess{Kubeconfig: opts.Kubeconfig}.RESTConfig()
 	if err != nil {
 		return fmt.Errorf("load kubeconfig: %w", err)
 	}
@@ -181,8 +178,11 @@ func buildManualSession(sch *podtracev1alpha1.PodTraceSchedule, now time.Time, f
 	return session
 }
 
+// manualSessionName stamps the trigger time and a random suffix: a second
+// is too coarse on its own, and two triggers in the same second would
+// collide with AlreadyExists.
 func manualSessionName(scheduleName string, t time.Time) string {
-	stamp := strconv.FormatInt(t.Unix(), 10)
+	stamp := strconv.FormatInt(t.Unix(), 10) + "-" + utilrand.String(5)
 	raw := scheduleName + "-manual-" + stamp
 	if len(raw) > 63 {
 		trail := "-manual-" + stamp

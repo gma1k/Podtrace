@@ -15,11 +15,11 @@ import (
 )
 
 func newPodForDynamic(ns, name, node string, labels map[string]string) *corev1.Pod {
-	return &corev1.Pod{
+	return withRunningContainer(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: labels},
 		Spec:       corev1.PodSpec{NodeName: node},
 		Status:     corev1.PodStatus{Phase: corev1.PodSucceeded},
-	}
+	})
 }
 
 func TestRun_DynamicReSpawn_DiscoversNewNode(t *testing.T) {

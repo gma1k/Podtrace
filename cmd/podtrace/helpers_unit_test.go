@@ -123,7 +123,7 @@ func TestNewChildArgsBuilder(t *testing.T) {
 	}
 
 	t.Run("passMetrics=false strips metrics and control flags", func(t *testing.T) {
-		build := newChildArgsBuilder(cmd, false)
+		build := newChildArgsBuilder(cmd, false, nil)
 		args := build("node-a", pods)
 		joined := strings.Join(args, " ")
 
@@ -148,7 +148,7 @@ func TestNewChildArgsBuilder(t *testing.T) {
 	})
 
 	t.Run("passMetrics=true keeps changed metrics flag", func(t *testing.T) {
-		build := newChildArgsBuilder(cmd, true)
+		build := newChildArgsBuilder(cmd, true, nil)
 		args := build("node-a", pods)
 		if !contains(args, "--metrics=true") {
 			t.Errorf("expected --metrics=true when passMetrics=true, got %v", args)

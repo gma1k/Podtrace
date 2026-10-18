@@ -32,7 +32,7 @@ kubectl podtrace -n my-app api-pod-abc
 # Many pods via label selector (one spawn pod per node)
 kubectl podtrace -n my-app --pod-selector app=api
 
-# Ctrl+C → spawn pod deleted, final diagnostic report on stdout
+# Ctrl+C → spawn pod stopped gracefully, final diagnostic report on stdout
 ```
 
 ### Why a spawn pod

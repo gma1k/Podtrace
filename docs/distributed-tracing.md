@@ -166,7 +166,7 @@ Export to an OpenTelemetry Collector or compatible backend:
 
 **Environment Variable**:
 ```bash
-export PODTRACE_TRACING_OTLP_ENDPOINT=http://otel-collector:4318
+export PODTRACE_OTLP_ENDPOINT=http://otel-collector:4318
 ```
 
 #### Jaeger
@@ -181,7 +181,7 @@ Export directly to Jaeger collector:
 
 **Environment Variable**:
 ```bash
-export PODTRACE_TRACING_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+export PODTRACE_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
 ```
 
 #### Splunk HEC
@@ -197,8 +197,8 @@ Export to Splunk HTTP Event Collector:
 
 **Environment Variables**:
 ```bash
-export PODTRACE_TRACING_SPLUNK_ENDPOINT=https://splunk:8088/services/collector
-export PODTRACE_TRACING_SPLUNK_TOKEN=YOUR_HEC_TOKEN
+export PODTRACE_SPLUNK_ENDPOINT=https://splunk:8088/services/collector
+export PODTRACE_SPLUNK_TOKEN=YOUR_HEC_TOKEN
 ```
 
 #### DataDog
@@ -286,10 +286,10 @@ All tracing configuration can be set via:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PODTRACE_TRACING_ENABLED` | Enable distributed tracing | `false` |
-| `PODTRACE_TRACING_OTLP_ENDPOINT` | OTLP endpoint (HTTP) | - |
-| `PODTRACE_TRACING_JAEGER_ENDPOINT` | Jaeger collector endpoint | - |
-| `PODTRACE_TRACING_SPLUNK_ENDPOINT` | Splunk HEC endpoint | - |
-| `PODTRACE_TRACING_SPLUNK_TOKEN` | Splunk HEC token | - |
+| `PODTRACE_OTLP_ENDPOINT` | OTLP endpoint (HTTP) | - |
+| `PODTRACE_JAEGER_ENDPOINT` | Jaeger collector endpoint | - |
+| `PODTRACE_SPLUNK_ENDPOINT` | Splunk HEC endpoint | - |
+| `PODTRACE_SPLUNK_TOKEN` | Splunk HEC token | - |
 | `PODTRACE_DATADOG_ENDPOINT` | DataDog Agent traces endpoint | `http://localhost:8126/v0.4/traces` |
 | `PODTRACE_DATADOG_API_KEY` | DataDog API key (direct ingest only) | - |
 | `PODTRACE_ZIPKIN_ENDPOINT` | Zipkin v2 spans endpoint | `http://localhost:9411/api/v2/spans` |
@@ -303,7 +303,7 @@ All tracing configuration can be set via:
 | `--tracing-otlp-endpoint` | OTLP endpoint | - |
 | `--tracing-jaeger-endpoint` | Jaeger endpoint | - |
 | `--tracing-splunk-endpoint` | Splunk HEC endpoint | - |
-| `--tracing-splunk-token` | Splunk HEC token | - |
+| `--tracing-splunk-token` | Splunk HEC token. Prefer `PODTRACE_SPLUNK_TOKEN`: a flag value is visible in the process list | - |
 | `--tracing-datadog-endpoint` | DataDog Agent endpoint | - |
 | `--tracing-datadog-api-key` | DataDog API key | - |
 | `--tracing-zipkin-endpoint` | Zipkin v2 endpoint | - |

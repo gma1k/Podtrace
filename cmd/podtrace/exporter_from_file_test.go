@@ -11,12 +11,12 @@ import (
 
 func TestApplyPayloadToConfig_OTLP(t *testing.T) {
 	defer resetTracingConfig()
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:     bundle.TypeOTLP,
 		Endpoint: "otel:4318",
 		Sample:   ptrFloat(0.25),
 	})
-	if config.OTLPEndpoint != "otel:4318" {
+	if config.OTLPEndpoint != "https://otel:4318" {
 		t.Errorf("OTLPEndpoint=%q", config.OTLPEndpoint)
 	}
 	if config.TracingSampleRate != 0.25 {
@@ -24,10 +24,6 @@ func TestApplyPayloadToConfig_OTLP(t *testing.T) {
 	}
 }
 
-// A bundle describes one exporter; applying it must leave only that exporter's
-// endpoint set so NewManager doesn't also build Jaeger/Zipkin/Splunk/DataDog
-// exporters against their non-empty localhost defaults (each failing with
-// connection-refused and firing failure alerts).
 func TestApplyPayloadToConfig_OTLP_ClearsOtherExporters(t *testing.T) {
 	defer resetTracingConfig()
 	config.JaegerEndpoint = "http://localhost:14268/api/traces"
@@ -35,10 +31,10 @@ func TestApplyPayloadToConfig_OTLP_ClearsOtherExporters(t *testing.T) {
 	config.SplunkEndpoint = "http://localhost:8088/services/collector"
 	config.DataDogEndpoint = "http://localhost:8126/v0.4/traces"
 
-	applyPayloadToConfig(&bundle.Payload{Type: bundle.TypeOTLP, Endpoint: "otel:4318"})
+	mustApplyPayload(t, &bundle.Payload{Type: bundle.TypeOTLP, Endpoint: "otel:4318"})
 
-	if config.OTLPEndpoint != "otel:4318" {
-		t.Errorf("OTLPEndpoint=%q, want otel:4318", config.OTLPEndpoint)
+	if config.OTLPEndpoint != "https://otel:4318" {
+		t.Errorf("OTLPEndpoint=%q, want https://otel:4318", config.OTLPEndpoint)
 	}
 	for name, got := range map[string]string{
 		"Jaeger": config.JaegerEndpoint, "Zipkin": config.ZipkinEndpoint,
@@ -52,7 +48,7 @@ func TestApplyPayloadToConfig_OTLP_ClearsOtherExporters(t *testing.T) {
 
 func TestApplyPayloadToConfig_DataDogCredentialSetsToken(t *testing.T) {
 	defer resetTracingConfig()
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:       bundle.TypeDataDog,
 		Endpoint:   "ddtrace:8126",
 		Credential: []byte("dd-api-key"),
@@ -67,7 +63,7 @@ func TestApplyPayloadToConfig_DataDogCredentialSetsToken(t *testing.T) {
 
 func TestApplyPayloadToConfig_SplunkCredentialSetsToken(t *testing.T) {
 	defer resetTracingConfig()
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:       bundle.TypeSplunk,
 		Endpoint:   "splunk:8088",
 		Credential: []byte("hec-token"),
@@ -80,7 +76,7 @@ func TestApplyPayloadToConfig_SplunkCredentialSetsToken(t *testing.T) {
 func TestApplyPayloadToConfig_NilIsNoop(t *testing.T) {
 	defer resetTracingConfig()
 	before := config.OTLPEndpoint
-	applyPayloadToConfig(nil)
+	mustApplyPayload(t, nil)
 	if config.OTLPEndpoint != before {
 		t.Errorf("nil payload mutated config: OTLPEndpoint=%q", config.OTLPEndpoint)
 	}
@@ -88,7 +84,7 @@ func TestApplyPayloadToConfig_NilIsNoop(t *testing.T) {
 
 func TestApplyPayloadToConfig_Jaeger(t *testing.T) {
 	defer resetTracingConfig()
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:     bundle.TypeJaeger,
 		Endpoint: "jaeger:4318",
 	})
@@ -99,7 +95,7 @@ func TestApplyPayloadToConfig_Jaeger(t *testing.T) {
 
 func TestApplyPayloadToConfig_Zipkin(t *testing.T) {
 	defer resetTracingConfig()
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:     bundle.TypeZipkin,
 		Endpoint: "zipkin:9411",
 	})
@@ -111,7 +107,7 @@ func TestApplyPayloadToConfig_Zipkin(t *testing.T) {
 func TestApplyPayloadToConfig_NilSampleDoesNotOverride(t *testing.T) {
 	defer resetTracingConfig()
 	config.TracingSampleRate = 0.5
-	applyPayloadToConfig(&bundle.Payload{
+	mustApplyPayload(t, &bundle.Payload{
 		Type:     bundle.TypeOTLP,
 		Endpoint: "otel:4318",
 		Sample:   nil,
@@ -141,7 +137,7 @@ sample: 0.1
 	if !config.TracingEnabled {
 		t.Error("TracingEnabled not flipped true")
 	}
-	if config.OTLPEndpoint != "otel.observability:4318" {
+	if config.OTLPEndpoint != "http://otel.observability:4318" {
 		t.Errorf("endpoint=%q", config.OTLPEndpoint)
 	}
 	if config.TracingSampleRate != 0.1 {
@@ -187,7 +183,7 @@ func TestApplyExporterFromFile_MissingCredentialFileIsNonFatal(t *testing.T) {
 	if err := applyExporterFromFile(path); err != nil {
 		t.Fatalf("missing credential file should be non-fatal: %v", err)
 	}
-	if config.OTLPEndpoint != "otel:4318" {
+	if config.OTLPEndpoint != "https://otel:4318" {
 		t.Errorf("endpoint=%q", config.OTLPEndpoint)
 	}
 }
@@ -241,9 +237,6 @@ func TestApplyExporterFromFile_MalformedYAMLErrors(t *testing.T) {
 	}
 }
 
-// resetTracingConfig restores the package-level config globals this test
-// file mutates. Multiple tests share these globals, so restoring in a
-// deferred closure prevents leaked state between subtests.
 func resetTracingConfig() {
 	config.TracingEnabled = false
 	config.OTLPEndpoint = config.DefaultOTLPEndpoint
@@ -254,6 +247,14 @@ func resetTracingConfig() {
 	config.DataDogEndpoint = config.DefaultDataDogEndpoint
 	config.DataDogAPIKey = ""
 	config.TracingSampleRate = config.DefaultTracingSampleRate
+	config.OTLPHeaders = nil
 }
 
 func ptrFloat(v float64) *float64 { return &v }
+
+func mustApplyPayload(t *testing.T, p *bundle.Payload) {
+	t.Helper()
+	if err := applyPayloadToConfig(p); err != nil {
+		t.Fatal(err)
+	}
+}

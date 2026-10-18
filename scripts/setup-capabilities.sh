@@ -3,13 +3,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BINARY="${PROJECT_ROOT}/bin/podtrace"
 
-REQUIRED_CAPS="cap_bpf,cap_perfmon,cap_sys_admin,cap_net_admin,cap_sys_resource"
+BINARY="${1:-${PROJECT_ROOT}/bin/podtrace}"
+
+REQUIRED_CAPS="cap_bpf,cap_perfmon,cap_sys_admin,cap_net_admin"
+REQUIRED_CAPS+=",cap_sys_resource,cap_sys_ptrace"
+
+usage() {
+	echo "Usage: sudo $0 [path-to-podtrace-binary]" >&2
+	echo "Default binary: ${PROJECT_ROOT}/bin/podtrace" >&2
+}
 
 check_binary_exists() {
 	if [[ -L "${BINARY}" ]]; then
-		echo "Error: ${BINARY} is a symlink; refusing to grant capabilities to a symlink target" >&2
+		echo "Error: ${BINARY} is a symlink;" \
+			"refusing to grant capabilities to a symlink target" >&2
 		exit 1
 	fi
 
@@ -43,7 +51,8 @@ set_capabilities() {
 	fi
 
 	if [[ -L "${BINARY}" ]]; then
-		echo "Error: ${BINARY} became a symlink before capabilities were set; aborting" >&2
+		echo "Error: ${BINARY} became a symlink before capabilities" \
+			"were set; aborting" >&2
 		exit 1
 	fi
 
@@ -67,6 +76,17 @@ verify_capabilities() {
 		exit 1
 	fi
 
+	local cap missing=() wanted=()
+	IFS=',' read -ra wanted <<<"${REQUIRED_CAPS}"
+	for cap in "${wanted[@]}"; do
+		[[ "${current_caps}" == *"${cap}"* ]] || missing+=("${cap}")
+	done
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		echo "Error: capabilities missing after setcap: ${missing[*]}" >&2
+		echo "  getcap reports: ${current_caps}" >&2
+		exit 1
+	fi
+
 	echo "Verified capabilities:"
 	echo "  ${current_caps}"
 	echo ""
@@ -77,6 +97,11 @@ print_success_message() {
 }
 
 main() {
+	if [[ $# -gt 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+		usage
+		[[ $# -gt 1 ]] && exit 2
+		exit 0
+	fi
 	check_binary_exists
 	check_root
 	set_capabilities

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -38,17 +40,55 @@ var spawnControlFlags = map[string]struct{}{
 	"app":                  {},
 	"label":                {},
 	"all-namespaces":       {},
+	"kubeconfig":           {},
+	"context":              {},
 }
 
-// maybeSpawnOnNode runs the spawn flow when appropriate.
-func maybeSpawnOnNode(ctx context.Context, cmd *cobra.Command, resolver pkgkube.PodResolverInterface, selection pkgkube.TargetSelection) (handled bool, err error) {
+var credentialFlagEnv = map[string]string{
+	"tracing-otlp-endpoint":   "PODTRACE_OTLP_ENDPOINT",
+	"tracing-jaeger-endpoint": "PODTRACE_JAEGER_ENDPOINT",
+	"tracing-splunk-endpoint": "PODTRACE_SPLUNK_ENDPOINT",
+}
+
+// credentialFlags returns the changed credential-bearing flags as the
+// environment the spawn pod reads them from. Only values that do carry
+// credentials move; a plain endpoint stays visible in the args.
+func credentialFlags(cmd *cobra.Command) map[string]string {
+	out := map[string]string{}
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		envName, ok := credentialFlagEnv[f.Name]
+		if ok && endpointHasCredentials(f.Value.String()) {
+			out[envName] = f.Value.String()
+		}
+	})
+	return out
+}
+
+func endpointHasCredentials(endpoint string) bool {
+	raw := strings.TrimSpace(endpoint)
+	if raw == "" {
+		return false
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.Contains(endpoint, "@")
+	}
+	return u.User != nil
+}
+
+// maybeSpawnOnNode runs the spawn flow when appropriate. ctx aborts it;
+// stop asks the spawned trace to finish and print its final report.
+func maybeSpawnOnNode(ctx context.Context, stop <-chan struct{}, cmd *cobra.Command, resolver pkgkube.PodResolverInterface, selection pkgkube.TargetSelection) (handled bool, err error) {
 	if os.Getenv(nodespawn.EnvNodeLocalSentinel) == "1" {
 		return false, nil
 	}
 	if localMode {
 		return false, nil
 	}
-	if _, err := rest.InClusterConfig(); err == nil {
+	if ic, ok := resolver.(interface{ InCluster() bool }); ok && ic.InCluster() {
 		return false, nil
 	}
 
@@ -94,7 +134,8 @@ func maybeSpawnOnNode(ctx context.Context, cmd *cobra.Command, resolver pkgkube.
 		logger.Warn("--metrics ignored: spawn covers multiple nodes; auto-port-forward only single-node spawns. Pass --local for workstation metrics.")
 	}
 
-	build := newChildArgsBuilder(cmd, metricsPassThrough)
+	secretEnv := credentialFlags(cmd)
+	build := newChildArgsBuilder(cmd, metricsPassThrough, secretEnv)
 	streams := genericiooptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
 
 	var onRunning func(context.Context, *corev1.Pod) error
@@ -143,7 +184,8 @@ func maybeSpawnOnNode(ctx context.Context, cmd *cobra.Command, resolver pkgkube.
 		Image:                 image,
 		SpawnNamespace:        ns,
 		BuildChildArgs:        build,
-		SplunkToken:           tracingSplunkToken,
+		SplunkToken:           config.SplunkToken,
+		SecretEnv:             secretEnv,
 		OwnerHost:             host,
 		OwnerPID:              os.Getpid(),
 		Streams:               streams,
@@ -151,6 +193,7 @@ func maybeSpawnOnNode(ctx context.Context, cmd *cobra.Command, resolver pkgkube.
 		DynamicReSpawn:        dynamic,
 		ServiceAccountName:    sa,
 		KeepSpawnPodOnFailure: keepSpawnPodOnFailure,
+		Stop:                  stop,
 		BTFFile:               spawnBTFFile,
 	})
 	if err != nil {
@@ -189,11 +232,14 @@ func selectionIsSpawnable(sel pkgkube.TargetSelection) bool {
 // spawned pod, walking the cobra flag set and emitting only flags the user
 // actually changed (minus spawn-control flags) plus a fresh --pods list for
 // the targets on this node.
-func newChildArgsBuilder(cmd *cobra.Command, passMetrics bool) func(string, []nodespawn.PodRef) []string {
+func newChildArgsBuilder(cmd *cobra.Command, passMetrics bool, secretEnv map[string]string) func(string, []nodespawn.PodRef) []string {
 	return func(_ string, pods []nodespawn.PodRef) []string {
 		args := []string{}
 		cmd.Flags().Visit(func(f *pflag.Flag) {
 			if _, drop := spawnControlFlags[f.Name]; drop {
+				return
+			}
+			if _, viaSecret := secretEnv[credentialFlagEnv[f.Name]]; viaSecret {
 				return
 			}
 			if f.Name == "metrics" && !passMetrics {

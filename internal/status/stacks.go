@@ -26,10 +26,9 @@ var ErrNoStacks = errors.New("no agent has stacks for this workload yet")
 
 // WriteStacks reads one workload's whole stacks from every agent, merges the
 // nodes, and writes them in format: folded lines summed stack by stack, or
-// one pprof profile merged from each node's. The failures of individual
-// agents are returned as warnings.
+// one pprof profile merged from each node's.
 func (c *Collector) WriteStacks(ctx context.Context, w io.Writer, format StackFormat, sel profiling.StackSelection) ([]string, error) {
-	agents, err := c.Cluster.Agents(ctx)
+	agents, err := c.agents(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list podtrace agents: %w", err)
 	}

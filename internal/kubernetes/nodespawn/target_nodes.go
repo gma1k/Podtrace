@@ -70,10 +70,15 @@ type NodeTargets struct {
 func (t NodeTargets) Empty() bool { return len(t.NodeNames) == 0 }
 
 // ResolveTargetNodes walks the TargetSelection, lists pods that match, and
-// groups them by node.
+// groups them by node. It selects with the same predicate as the local
+// TargetRegistry, so a spawn and a --local run trace the same pods.
 func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel pkgkube.TargetSelection) (NodeTargets, error) {
 	if clientset == nil {
 		return NodeTargets{}, fmt.Errorf("nodespawn: clientset is nil")
+	}
+	matches, err := sel.Matcher()
+	if err != nil {
+		return NodeTargets{}, fmt.Errorf("nodespawn: %w", err)
 	}
 
 	byNode := map[string][]PodRef{}
@@ -81,7 +86,8 @@ func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel
 	tolSeen := map[string]map[string]struct{}{}
 	unscheduled := []PodRef{}
 	missingContainer := []PodRef{}
-	routedWithoutID := []PodRef{}
+	notRunning := []PodRef{}
+	selectorMismatch := []PodRef{}
 	seen := map[string]struct{}{}
 
 	add := func(pod *corev1.Pod) {
@@ -106,12 +112,12 @@ func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel
 				}
 			}
 		}
-		if len(ref.Containers) > 0 {
-			ref.ContainerID = ref.Containers[0].ID
-			ref.ContainerName = ref.Containers[0].Name
-		} else {
-			routedWithoutID = append(routedWithoutID, ref)
+		if len(ref.Containers) == 0 {
+			notRunning = append(notRunning, ref)
+			return
 		}
+		ref.ContainerID = ref.Containers[0].ID
+		ref.ContainerName = ref.Containers[0].Name
 		node := pod.Spec.NodeName
 		byNode[node] = append(byNode[node], ref)
 		if tolSeen[node] == nil {
@@ -127,26 +133,33 @@ func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel
 		}
 	}
 
-	for ns, names := range sel.PodRefSet() {
-		for name := range names {
-			pod, err := clientset.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
-				return NodeTargets{}, fmt.Errorf("nodespawn: get pod %s/%s: %w", ns, name, err)
+	if refs := sel.PodRefSet(); len(refs) > 0 {
+		for ns, names := range refs {
+			if ns == "" {
+				return NodeTargets{}, fmt.Errorf("nodespawn: pod refs %s need a namespace", joinNames(names))
 			}
-			add(pod)
+			for name := range names {
+				pod, err := clientset.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return NodeTargets{}, fmt.Errorf("nodespawn: get pod %s/%s: %w", ns, name, err)
+				}
+				if !matches(pod) {
+					selectorMismatch = append(selectorMismatch, PodRef{Namespace: pod.Namespace, Name: pod.Name})
+					continue
+				}
+				add(pod)
+			}
 		}
-	}
-
-	if sel.PodSelector != "" || sel.AllInNamespace || len(sel.Namespaces) > 1 {
+	} else if sel.PodSelector != "" || sel.AllInNamespace || len(sel.Namespaces) > 1 {
 		listOpts := metav1.ListOptions{LabelSelector: sel.PodSelector}
-		for _, ns := range sel.EffectiveNamespaces() {
+		for _, ns := range sel.WatchNamespaces() {
 			list, err := clientset.CoreV1().Pods(ns).List(ctx, listOpts)
 			if err != nil {
-				return NodeTargets{}, fmt.Errorf("nodespawn: list pods in %s: %w", ns, err)
+				return NodeTargets{}, fmt.Errorf("nodespawn: list pods in %q: %w", ns, err)
 			}
 			for i := range list.Items {
 				pod := &list.Items[i]
-				if pod.DeletionTimestamp != nil {
+				if pod.DeletionTimestamp != nil || !matches(pod) {
 					continue
 				}
 				add(pod)
@@ -162,6 +175,14 @@ func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel
 		return NodeTargets{}, fmt.Errorf("nodespawn: %d target pod(s) are not yet scheduled to a node: %s",
 			len(unscheduled), joinRefs(unscheduled))
 	}
+	if len(notRunning) > 0 && len(byNode) == 0 {
+		return NodeTargets{}, fmt.Errorf("nodespawn: %d target pod(s) have no running container yet: %s",
+			len(notRunning), joinRefs(notRunning))
+	}
+	if len(selectorMismatch) > 0 && len(byNode) == 0 {
+		return NodeTargets{}, fmt.Errorf("nodespawn: no named pod matches --pod-selector %q: %s",
+			sel.PodSelector, joinRefs(selectorMismatch))
+	}
 	if len(missingContainer) > 0 {
 		logger.Warn("Skipping target pod(s) with no running container matching the requested name",
 			zap.String("container", sel.ContainerName),
@@ -173,10 +194,16 @@ func ResolveTargetNodes(ctx context.Context, clientset kubernetes.Interface, sel
 			zap.Int("skipped", len(unscheduled)),
 			zap.String("pods", joinRefs(unscheduled)))
 	}
-	if len(routedWithoutID) > 0 {
-		logger.Warn("Target pod(s) have no running container yet; routed without a resolved container ID",
-			zap.Int("count", len(routedWithoutID)),
-			zap.String("pods", joinRefs(routedWithoutID)))
+	if len(notRunning) > 0 {
+		logger.Warn("Skipping target pod(s) with no running container yet",
+			zap.Int("skipped", len(notRunning)),
+			zap.String("pods", joinRefs(notRunning)))
+	}
+	if len(selectorMismatch) > 0 {
+		logger.Warn("Skipping named pod(s) that do not match --pod-selector",
+			zap.String("selector", sel.PodSelector),
+			zap.Int("skipped", len(selectorMismatch)),
+			zap.String("pods", joinRefs(selectorMismatch)))
 	}
 
 	out := NodeTargets{ByNode: byNode, TolerationsByNode: tolByNode}
@@ -248,4 +275,13 @@ func joinRefs(refs []PodRef) string {
 		s[i] = r.String()
 	}
 	return strings.Join(s, ", ")
+}
+
+func joinNames(names map[string]struct{}) string {
+	out := make([]string, 0, len(names))
+	for n := range names {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }

@@ -168,7 +168,7 @@ service:
 
 **Environment Variable**:
 ```bash
-export PODTRACE_TRACING_OTLP_ENDPOINT=http://otel-collector.monitoring.svc.cluster.local:4318
+export PODTRACE_OTLP_ENDPOINT=http://otel-collector.monitoring.svc.cluster.local:4318
 ```
 
 ### Direct Backend Integration
@@ -268,7 +268,7 @@ spec:
 
 **Environment Variable**:
 ```bash
-export PODTRACE_TRACING_JAEGER_ENDPOINT=http://jaeger.monitoring.svc.cluster.local:14268/api/traces
+export PODTRACE_JAEGER_ENDPOINT=http://jaeger.monitoring.svc.cluster.local:14268/api/traces
 ```
 
 ### Access Jaeger UI
@@ -320,8 +320,8 @@ Splunk HTTP Event Collector (HEC) is Splunk's API for ingesting events. `Podtrac
 
 **Environment Variables**:
 ```bash
-export PODTRACE_TRACING_SPLUNK_ENDPOINT=https://splunk.example.com:8088/services/collector
-export PODTRACE_TRACING_SPLUNK_TOKEN=YOUR_HEC_TOKEN
+export PODTRACE_SPLUNK_ENDPOINT=https://splunk.example.com:8088/services/collector
+export PODTRACE_SPLUNK_TOKEN=YOUR_HEC_TOKEN
 ```
 
 **Using Kubernetes Secret**:
@@ -333,7 +333,7 @@ kubectl create secret generic splunk-hec-token \
 
 # Use in Podtrace (if running as pod)
 env:
-- name: PODTRACE_TRACING_SPLUNK_TOKEN
+- name: PODTRACE_SPLUNK_TOKEN
   valueFrom:
     secretKeyRef:
       name: splunk-hec-token

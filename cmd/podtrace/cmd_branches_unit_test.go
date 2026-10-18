@@ -217,7 +217,7 @@ func TestMaybeSpawnOnNode_SentinelSet(t *testing.T) {
 	t.Setenv(nodespawn.EnvNodeLocalSentinel, "1")
 	localMode = false
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
 		plainResolver{}, pkgkube.TargetSelection{Pods: []string{"web-0"}})
 	if handled || err != nil {
 		t.Fatalf("sentinel set: want (false, nil), got (%v, %v)", handled, err)
@@ -229,7 +229,7 @@ func TestMaybeSpawnOnNode_LocalMode(t *testing.T) {
 	t.Setenv(nodespawn.EnvNodeLocalSentinel, "")
 	localMode = true
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
 		plainResolver{}, pkgkube.TargetSelection{Pods: []string{"web-0"}})
 	if handled || err != nil {
 		t.Fatalf("local mode: want (false, nil), got (%v, %v)", handled, err)
@@ -241,7 +241,7 @@ func TestMaybeSpawnOnNode_ResolverWithoutClusterHandles(t *testing.T) {
 	t.Setenv(nodespawn.EnvNodeLocalSentinel, "")
 	localMode = false
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
 		plainResolver{}, pkgkube.TargetSelection{Pods: []string{"web-0"}})
 	if handled || err != nil {
 		t.Fatalf("no cluster handles: want (false, nil), got (%v, %v)", handled, err)
@@ -253,7 +253,7 @@ func TestMaybeSpawnOnNode_NotSpawnableSelection(t *testing.T) {
 	t.Setenv(nodespawn.EnvNodeLocalSentinel, "")
 	localMode = false
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
 		clusterResolver{}, pkgkube.TargetSelection{})
 	if handled || err != nil {
 		t.Fatalf("non-spawnable selection: want (false, nil), got (%v, %v)", handled, err)
@@ -268,8 +268,8 @@ func TestMaybeSpawnOnNode_PodNotFoundResolveError(t *testing.T) {
 	localMode = false
 	spawnImage = "ghcr.io/gma1k/podtrace:test"
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
-		clusterResolver{}, pkgkube.TargetSelection{Pods: []string{"missing-pod"}, Namespaces: []string{"default"}})
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
+		clusterResolver{}, pkgkube.TargetSelection{DefaultNamespace: "default", Pods: []string{"missing-pod"}, Namespaces: []string{"default"}})
 	if !handled {
 		t.Fatalf("expected handled=true once selection is spawnable, got false")
 	}
@@ -286,7 +286,7 @@ func TestMaybeSpawnOnNode_NoScheduledTargets(t *testing.T) {
 	localMode = false
 	spawnImage = "ghcr.io/gma1k/podtrace:test"
 
-	handled, err := maybeSpawnOnNode(context.Background(), &cobra.Command{},
+	handled, err := maybeSpawnOnNode(context.Background(), nil, &cobra.Command{},
 		clusterResolver{}, pkgkube.TargetSelection{AllInNamespace: true, Namespaces: []string{"default"}})
 	if !handled {
 		t.Fatalf("expected handled=true once selection is spawnable, got false")

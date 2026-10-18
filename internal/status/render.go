@@ -74,7 +74,7 @@ func RenderText(w io.Writer, r Report) error {
 				since = formatDuration(r.GeneratedAt.Sub(*is.Since))
 			}
 			issues = append(issues, []string{is.Severity, is.ID, is.Namespace + "/" + is.Workload,
-				orDash(is.Pod), since, orDash(clean(is.Message, messageWidth))})
+				orDash(clean(is.Pod, messageWidth)), since, orDash(clean(is.Message, messageWidth))})
 		}
 		writeTable(b, issues)
 		writeLikelyCauses(b, r.Issues)
@@ -121,7 +121,7 @@ func RenderText(w io.Writer, r Report) error {
 	if len(r.Warnings) > 0 {
 		b.WriteString("\nWARNINGS\n")
 		for _, warning := range r.Warnings {
-			fmt.Fprintf(b, "! %s\n", warning)
+			fmt.Fprintf(b, "! %s\n", sanitize.TerminalLine(warning))
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -148,7 +148,7 @@ func writeTable(b *strings.Builder, rows [][]string) {
 // clean makes attacker-influenced text safe to print: an Event message or a
 // symbol name can carry terminal control sequences.
 func clean(s string, width int) string {
-	s = sanitize.Terminal(strings.Join(strings.Fields(s), " "))
+	s = sanitize.TerminalLine(s)
 	if r := []rune(s); len(r) > width {
 		s = string(r[:width-1]) + "…"
 	}

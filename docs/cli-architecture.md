@@ -52,8 +52,25 @@ host instead:
 
 1. `--local` flag set explicitly.
 2. `PODTRACE_NODE_LOCAL=1` env var set (the child uses this).
-3. `rest.InClusterConfig()` succeeds — the binary is already running
-   inside a Pod, typical when the operator launches a session Job.
+3. The cluster is reached through the in-cluster ServiceAccount — the
+   binary runs inside a Pod with no kubeconfig of its own, typical when the
+   operator launches a session Job.
+
+Like kubectl, the CLI prefers a kubeconfig: `--kubeconfig`, then the
+`KUBECONFIG` path list, then `~/.kube/config`, and only when none of them
+names a cluster, the in-cluster ServiceAccount. A CLI run from a CI or
+debug pod with `KUBECONFIG` pointing at another cluster therefore traces
+that cluster, spawning there as it would from a workstation. `--context`
+picks a context from the same kubeconfig.
+
+## Stopping a trace
+
+The first Ctrl+C (or SIGTERM) stops a spawned trace the way it stops a
+`--local` one: each spawn pod is deleted with a 30s grace period, so its
+podtrace gets SIGTERM, prints its final report and Kubernetes Events
+section, and the CLI keeps streaming until it exits, then exits 0. A
+Ctrl+C before the spawn pod is streaming exits 130 with nothing to
+report. A second Ctrl+C stops at once.
 
 ### Use `--local` for kind / minikube / docker-desktop
 
@@ -68,12 +85,14 @@ PodSecurity labelling, RBAC bootstrap, all of it skippable.
 ./bin/podtrace --local -n my-app my-pod
 ```
 
-`--local` needs `CAP_BPF` + `CAP_SYS_ADMIN` (etc.) on the local binary.
+`--local` needs the agent's capability set on the local binary: `CAP_BPF`,
+`CAP_PERFMON`, `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_SYS_RESOURCE` and
+`CAP_SYS_PTRACE` (for uprobes in containers that do not run as root).
 The release tarball ships these via setcap; for source builds,
 `./scripts/build-and-setup.sh` runs setcap automatically as the last
 step of `make build`. **`cp` does NOT preserve file capabilities** — if
 you copy the binary somewhere else (like `~/.krew/bin/`), re-run
-`./scripts/setup-capabilities.sh /path/to/copy` or just invoke the
+`sudo ./scripts/setup-capabilities.sh /path/to/copy` or just invoke the
 original `./bin/podtrace` directly.
 
 For all other clusters (Talos, EKS, GKE, AKS, OpenShift, bare-metal,

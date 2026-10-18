@@ -75,9 +75,56 @@ func orDefault(d, fallback time.Duration) time.Duration {
 	return d
 }
 
+// bounded gives one API read the scrape deadline. The pod proxy is a
+// long-running request the API server never times out, so without it one
+// wedged agent or half-open connection would hang the command for good.
+func (c *Collector) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, orDefault(c.ScrapeTimeout, defaultScrapeTimeout))
+}
+
+func (c *Collector) agents(ctx context.Context) ([]Agent, error) {
+	actx, cancel := c.bounded(ctx)
+	defer cancel()
+	return c.Cluster.Agents(actx)
+}
+
+func (c *Collector) components(ctx context.Context) ([]Component, error) {
+	actx, cancel := c.bounded(ctx)
+	defer cancel()
+	return c.Cluster.Components(actx)
+}
+
+// liveIssues reads every agent's /issues concurrently, each within the
+// scrape deadline; an agent that fails is simply absent.
+func (c *Collector) liveIssues(ctx context.Context, agents []Agent) map[string][]LiveIssue {
+	out := make(map[string][]LiveIssue, len(agents))
+	var mu sync.Mutex
+	sem := c.semaphore()
+	var wg sync.WaitGroup
+	for _, a := range agents {
+		wg.Add(1)
+		go func(a Agent) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			actx, cancel := c.bounded(ctx)
+			defer cancel()
+			live, err := c.Cluster.ActiveIssues(actx, a)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			out[a.Name] = live
+			mu.Unlock()
+		}(a)
+	}
+	wg.Wait()
+	return out
+}
+
 // Collect reads the agents and returns the report.
 func (c *Collector) Collect(ctx context.Context) (Report, error) {
-	agents, err := c.Cluster.Agents(ctx)
+	agents, err := c.agents(ctx)
 	if err != nil {
 		return Report{}, fmt.Errorf("list podtrace agents: %w", err)
 	}
@@ -100,40 +147,53 @@ func (c *Collector) Collect(ctx context.Context) (Report, error) {
 		return Report{}, err
 	}
 
+	readable := make([]Agent, 0, len(agents))
+	for _, a := range agents {
+		if cur[a.Name].err == nil {
+			readable = append(readable, a)
+		}
+	}
+	live := c.liveIssues(ctx, readable)
+
 	scrapes := make([]AgentScrape, 0, len(agents))
 	for _, a := range agents {
 		res := cur[a.Name]
 		s := AgentScrape{Agent: a, Err: res.err}
 		if res.err == nil {
 			s.Window = inspect.Window{Prev: prev[a.Name].snapshot, Cur: res.snapshot}
-			if live, err := c.Cluster.ActiveIssues(ctx, a); err == nil {
-				s.Live, s.LiveRead = live, true
+			if issues, ok := live[a.Name]; ok {
+				s.Live, s.LiveRead = issues, true
 			}
 		}
 		scrapes = append(scrapes, s)
 	}
 	c.previous = succeeded(cur)
 
-	events, eventsErr := c.Cluster.IssueEvents(ctx, c.Options.Namespace)
+	ectx, cancelEvents := c.bounded(ctx)
+	events, eventsErr := c.Cluster.IssueEvents(ectx, c.Options.Namespace)
+	cancelEvents()
 	report := Build(scrapes, events, c.Options, c.now())
 	if eventsErr != nil {
 		report.Warnings = append(report.Warnings, "could not read the issue Events, so issues show "+
 			"no message or start time: "+oneLine(eventsErr.Error()))
 	}
-	if correlation, err := c.Cluster.Correlations(ctx); err == nil {
+	cctx, cancelCorrelations := c.bounded(ctx)
+	correlation, err := c.Cluster.Correlations(cctx)
+	cancelCorrelations()
+	if err == nil {
 		report.AttachCauses(correlation)
 	} else if len(report.Issues) > 0 {
 		report.Warnings = append(report.Warnings, "could not read the operator's issue correlation, "+
 			"so likely causes are limited to each issue's own workload: "+oneLine(err.Error()))
 	}
-	report.Assess(c.Cluster.Components(ctx))
+	report.Assess(c.components(ctx))
 	return report, nil
 }
 
 // Health reads each agent once, with no rate window, and the components,
 // and says whether podtrace is healthy.
 func (c *Collector) Health(ctx context.Context) (Report, error) {
-	agents, err := c.Cluster.Agents(ctx)
+	agents, err := c.agents(ctx)
 	if err != nil {
 		return Report{}, fmt.Errorf("list podtrace agents: %w", err)
 	}
@@ -144,7 +204,7 @@ func (c *Collector) Health(ctx context.Context) (Report, error) {
 		scrapes = append(scrapes, AgentScrape{Agent: a, Err: res.err, Window: inspect.Window{Cur: res.snapshot}})
 	}
 	report := Build(scrapes, nil, c.Options, c.now())
-	report.Assess(c.Cluster.Components(ctx))
+	report.Assess(c.components(ctx))
 	return report, nil
 }
 
@@ -309,7 +369,7 @@ func (c *Collector) readAgent(ctx context.Context, a Agent, want readAfter, sem 
 // A profile is symbolised on request, which can take a while on a busy node,
 // hence the separate, longer deadline.
 func (c *Collector) Profile(ctx context.Context, namespace, workload string, top int) (*WorkloadHotFrames, []string, error) {
-	agents, err := c.Cluster.Agents(ctx)
+	agents, err := c.agents(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list podtrace agents: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 	pkgkube "github.com/gma1k/podtrace/internal/kubernetes"
 	"github.com/gma1k/podtrace/internal/kubernetes/nodespawn"
 	"github.com/gma1k/podtrace/internal/logger"
+	"github.com/gma1k/podtrace/internal/sanitize"
 	"go.uber.org/zap"
 )
 
@@ -101,7 +102,8 @@ func formatK8sEventsSection(groups []podEvents) string {
 				count = fmt.Sprintf(" (x%d)", e.Count)
 			}
 			fmt.Fprintf(&b, "    %s  %-7s %-22s %s%s\n",
-				e.Timestamp.Format("15:04:05"), e.Type, e.Reason, e.Message, count)
+				e.Timestamp.Format("15:04:05"), sanitize.TerminalLine(e.Type),
+				sanitize.TerminalLine(e.Reason), sanitize.TerminalLine(e.Message), count)
 		}
 		b.WriteString("\n")
 	}

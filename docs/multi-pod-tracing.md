@@ -56,6 +56,21 @@ Supports both `pod` and `namespace/pod` forms.
   --diagnose 60s
 ```
 
+## How the Selection Flags Combine
+
+The default spawn mode and `--local` select pods with the same rules:
+
+- Named pods (`<pod-name>` or `--pods`) are the target set. A `namespace/pod`
+  ref carries its own namespace; a bare name uses `--namespace`.
+- `--pod-selector` narrows named pods: only those whose labels match are traced.
+  Without named pods, it selects every matching pod in the namespaces in scope.
+- `--namespaces` sets the namespaces a selector or `--all-in-namespace` looks in.
+  A named pod outside that list is an error rather than silently skipped.
+- `--all-namespaces` looks in every namespace, so named pods need the
+  `namespace/pod` form.
+- A pod with no running container yet is skipped with a warning; if no
+  selected pod is running, the command fails and says so.
+
 ## Same-Namespace Test Flow
 
 Use this to verify multi-pod tracing quickly.

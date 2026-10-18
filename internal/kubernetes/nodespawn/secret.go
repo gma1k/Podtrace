@@ -15,6 +15,27 @@ import (
 // createSplunkTokenSecret creates the Secret that backs the spawn pod's
 // PODTRACE_SPLUNK_TOKEN SecretKeyRef.
 func createSplunkTokenSecret(ctx context.Context, cs kubernetes.Interface, namespace, name string, labels map[string]string, token string) error {
+	return createSpawnSecret(ctx, cs, namespace, name, labels, spawnSecretData(token, nil))
+}
+
+// spawnSecretData is everything the spawn pod reads from its Secret: the
+// Splunk token under its fixed key, and each SecretEnv value under the name
+// of the environment variable it becomes.
+func spawnSecretData(splunkToken string, secretEnv map[string]string) map[string]string {
+	data := make(map[string]string, len(secretEnv)+1)
+	if splunkToken != "" {
+		data[SplunkSecretKey] = splunkToken
+	}
+	for name, value := range secretEnv {
+		data[name] = value
+	}
+	return data
+}
+
+// createSpawnSecret creates the Secret behind the spawn pod's SecretKeyRefs,
+// so credentials never appear in its args, which anyone who can read pods
+// in the namespace can see.
+func createSpawnSecret(ctx context.Context, cs kubernetes.Interface, namespace, name string, labels map[string]string, data map[string]string) error {
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -22,7 +43,7 @@ func createSplunkTokenSecret(ctx context.Context, cs kubernetes.Interface, names
 			Labels:    labels,
 		},
 		Type:       corev1.SecretTypeOpaque,
-		StringData: map[string]string{SplunkSecretKey: token},
+		StringData: data,
 	}
 	_, err := cs.CoreV1().Secrets(namespace).Create(ctx, sec, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {

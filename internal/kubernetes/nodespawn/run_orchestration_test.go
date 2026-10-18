@@ -228,7 +228,7 @@ func TestRunOneNode_SplunkSecretCreatedAndCleanedUp(t *testing.T) {
 	runningOnCreate(cs)
 
 	spec := spawnPodSpec(t, "ns1")
-	secretName := SplunkSecretName(spec.Name)
+	secretName := SpawnSecretName(spec.Name)
 	var wmu sync.Mutex
 	_, _, out, errOut := genericiooptions.NewTestIOStreams()
 

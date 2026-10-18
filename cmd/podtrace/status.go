@@ -13,9 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
+	pkgkube "github.com/gma1k/podtrace/internal/kubernetes"
 	"github.com/gma1k/podtrace/internal/profiling"
+	"github.com/gma1k/podtrace/internal/sanitize"
 	"github.com/gma1k/podtrace/internal/status"
 )
 
@@ -50,18 +51,12 @@ type statusOptions struct {
 
 // statusClusterFactory builds the cluster the command reads; tests replace it.
 var statusClusterFactory = func(opts statusOptions) (status.Cluster, error) {
-	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loader.ExplicitPath = opts.Kubeconfig
-	}
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader,
-		&clientcmd.ConfigOverrides{CurrentContext: opts.Context}).ClientConfig()
+	cfg, _, err := pkgkube.ClusterAccess{Kubeconfig: opts.Kubeconfig, Context: opts.Context}.RESTConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
-	// Two proxied reads per agent in parallel would otherwise queue behind
-	// client-go's default of five requests a second.
 	cfg.QPS, cfg.Burst = 50, 100
+	status.LimitResponses(cfg, status.MaxResponseBytes)
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build client: %w", err)
@@ -95,8 +90,9 @@ podtrace system namespace, list on events for issue messages, and list on
 deployments and daemonsets there to check the operator and the fleets.
 
 The exit status is 0 when podtrace is healthy (operator available, every
-fleet rolled out, every agent capturing) and 1 otherwise, so a script can act
-on it. Active workload issues do not change it.`,
+fleet rolled out, every agent capturing), 130 when a signal interrupts the
+check before it has an answer, and 1 otherwise, so a script can act on it.
+Active workload issues do not change it.`,
 		Example: `  # The cluster at a glance:
   kubectl podtrace status
 
@@ -124,7 +120,7 @@ on it. Active workload issues do not change it.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.Kubeconfig, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config)")
+	f.StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (defaults to KUBECONFIG, then ~/.kube/config)")
 	f.StringVar(&opts.Context, "context", "", "Kubeconfig context to use (defaults to the current context)")
 	f.StringVar(&opts.SystemNamespace, "system-namespace", "podtrace-system", "Namespace the podtrace agents run in")
 	f.StringVarP(&opts.Namespace, "namespace", "n", "", "Show only this namespace's workloads and issues (default: all namespaces)")
@@ -188,8 +184,8 @@ func (o statusOptions) validate() (profileNamespace, profileWorkload string, err
 	return o.Namespace, o.Profile, nil
 }
 
-// notHealthyError is the exit error when podtrace is not healthy. The report
-// has already been printed; the message only says why the exit status is 1.
+var errInterrupted = errors.New("interrupted")
+
 func notHealthyError(problems []string) error {
 	return fmt.Errorf("podtrace is not healthy: %s", strings.Join(problems, "; "))
 }
@@ -202,6 +198,9 @@ func waitHealthy(ctx context.Context, collector *status.Collector, wait time.Dur
 	for {
 		var now string
 		report, err := collector.Health(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		switch {
 		case err != nil:
 			now = err.Error()
@@ -212,7 +211,7 @@ func waitHealthy(ctx context.Context, collector *status.Collector, wait time.Dur
 			now = progressLine(report.Problems)
 		}
 		if now != last {
-			_, _ = fmt.Fprintf(progress, "… waiting: %s\n", now)
+			_, _ = fmt.Fprintf(progress, "… waiting: %s\n", sanitize.TerminalLine(now))
 			last = now
 		}
 		if !time.Now().Before(deadline) {
@@ -266,7 +265,7 @@ func runStatus(ctx context.Context, opts statusOptions, out, progress io.Writer)
 			Namespace: profileNamespace, Workload: profileWorkload, SlowRequests: opts.SlowRequests,
 		})
 		for _, warning := range failed {
-			_, _ = fmt.Fprintf(progress, "! %s\n", warning)
+			_, _ = fmt.Fprintf(progress, "! %s\n", sanitize.TerminalLine(warning))
 		}
 		if errors.Is(err, status.ErrNoStacks) {
 			return fmt.Errorf("no agent has stacks for %s/%s yet; they appear once the workload has run on CPU with continuous profiling on", profileNamespace, profileWorkload)
@@ -278,17 +277,20 @@ func runStatus(ctx context.Context, opts statusOptions, out, progress io.Writer)
 	if opts.Wait {
 		if err := waitHealthy(ctx, collector, opts.WaitDuration, progress); err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return errInterrupted
 			}
-			_, _ = fmt.Fprintf(progress, "✗ %s; the report below shows what is still wrong\n", err)
+			_, _ = fmt.Fprintf(progress, "✗ %s; the report below shows what is still wrong\n", sanitize.TerminalLine(err.Error()))
 		}
 	}
 
 	for {
 		report, err := collector.Collect(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && opts.Watch {
 				return nil
+			}
+			if ctx.Err() != nil {
+				return errInterrupted
 			}
 			return err
 		}

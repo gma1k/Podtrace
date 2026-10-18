@@ -13,10 +13,10 @@ import (
 )
 
 func tolPod(ns, name, node string, tols []corev1.Toleration) *corev1.Pod {
-	return &corev1.Pod{
+	return withRunningContainer(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: map[string]string{"app": "x"}},
 		Spec:       corev1.PodSpec{NodeName: node, Tolerations: tols},
-	}
+	})
 }
 
 func TestResolveTargetNodes_PropagatesTolerations(t *testing.T) {

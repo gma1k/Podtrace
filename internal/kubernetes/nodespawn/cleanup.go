@@ -27,12 +27,43 @@ var MachineBootID = func() string {
 	return strings.TrimSpace(string(data))
 }
 
+// MachinePIDNamespace returns the inode of this process's PID namespace, or
+// "" when it cannot be read.
+var MachinePIDNamespace = func() string {
+	link, err := readPIDNamespaceLink()
+	if err != nil {
+		return ""
+	}
+	inode, ok := strings.CutPrefix(link, "pid:[")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSuffix(inode, "]")
+}
+
+var readPIDNamespaceLink = func() (string, error) {
+	return os.Readlink("/proc/self/ns/pid")
+}
+
 // DeletePod best-effort deletes the spawn pod; NotFound is swallowed so retries
 // and parallel reapers don't error out.
 func DeletePod(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error {
 	zero := int64(0)
 	err := clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{
 		GracePeriodSeconds: &zero,
+	})
+	if err == nil || IsNotFound(err) {
+		return nil
+	}
+	return fmt.Errorf("nodespawn: delete %s/%s: %w", namespace, name, err)
+}
+
+// DeletePodGracefully deletes the spawn pod with a grace period, so the
+// kubelet sends its podtrace SIGTERM and lets it finish before killing it.
+func DeletePodGracefully(ctx context.Context, clientset kubernetes.Interface, namespace, name string, grace time.Duration) error {
+	seconds := int64(grace / time.Second)
+	err := clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{
+		GracePeriodSeconds: &seconds,
 	})
 	if err == nil || IsNotFound(err) {
 		return nil
@@ -63,6 +94,7 @@ func reapStaleWithLiveness(
 	}
 
 	localBootID := MachineBootID()
+	localPIDNS := MachinePIDNamespace()
 	reaped := 0
 	for i := range list.Items {
 		p := &list.Items[i]
@@ -76,6 +108,9 @@ func reapStaleWithLiveness(
 		}
 
 		if !expired {
+			if podPIDNS := p.Labels[LabelOwnerPIDNS]; podPIDNS != "" && podPIDNS != sanitizeLabelValue(localPIDNS) {
+				continue
+			}
 			pidStr := p.Labels[LabelOwnerPID]
 			if pidStr == "" {
 				logger.Debug("Spawn pod has no owner-pid label; not reaping (anomaly — surface but don't touch)",
@@ -122,8 +157,7 @@ func reapAgeBound(activeDeadlineSeconds *int64) time.Duration {
 }
 
 // podOlderThan parses the created-at label (unix seconds) and reports
-// whether the pod is older than maxAge. Missing or malformed labels
-// report false — age-based reaping requires positive evidence.
+// whether the pod is older than maxAge.
 func podOlderThan(createdAt string, maxAge time.Duration) bool {
 	if createdAt == "" {
 		return false

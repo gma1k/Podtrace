@@ -53,8 +53,8 @@ func TestBuildPodSpec_SplunkTokenViaSecretRef(t *testing.T) {
 	if ref.Key != SplunkSecretKey {
 		t.Errorf("SecretKeyRef key = %q, want %q", ref.Key, SplunkSecretKey)
 	}
-	if ref.Name != SplunkSecretName(podName) {
-		t.Errorf("SecretKeyRef name = %q, want %q", ref.Name, SplunkSecretName(podName))
+	if ref.Name != SpawnSecretName(podName) {
+		t.Errorf("SecretKeyRef name = %q, want %q", ref.Name, SpawnSecretName(podName))
 	}
 }
 
@@ -65,9 +65,9 @@ func TestBuildPodSpec_NoSplunkTokenNoEnv(t *testing.T) {
 	}
 }
 
-func TestSplunkSecretName_Deterministic(t *testing.T) {
-	if got := SplunkSecretName("podtrace-cli-worker-1-abc"); got != "podtrace-cli-worker-1-abc-splunk" {
-		t.Errorf("SplunkSecretName = %q", got)
+func TestSpawnSecretName_Deterministic(t *testing.T) {
+	if got := SpawnSecretName("podtrace-cli-worker-1-abc"); got != "podtrace-cli-worker-1-abc-credentials" {
+		t.Errorf("SpawnSecretName = %q", got)
 	}
 }
 

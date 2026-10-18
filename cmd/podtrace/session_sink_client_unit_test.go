@@ -11,13 +11,23 @@ import (
 	"github.com/gma1k/podtrace/internal/config"
 )
 
-func TestBuildInClusterClient_NoInClusterNoKubeconfig(t *testing.T) {
+func useEmptyKubeconfig(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(path, []byte("apiVersion: v1\nkind: Config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := kubeconfigPath
+	kubeconfigPath = path
+	t.Cleanup(func() { kubeconfigPath = orig })
+}
 
-	t.Setenv("KUBECONFIG", "")
+func TestBuildInClusterClient_NoInClusterNoKubeconfig(t *testing.T) {
+	useEmptyKubeconfig(t)
 
 	_, err := buildInClusterClient()
-	if err == nil || !strings.Contains(err.Error(), "in-cluster config") {
-		t.Fatalf("expected in-cluster config error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "load kubeconfig") {
+		t.Fatalf("expected a kubeconfig error, got %v", err)
 	}
 }
 
@@ -93,7 +103,7 @@ func TestUploadReport_ParseSpecError(t *testing.T) {
 }
 
 func TestUploadReport_ClientBuildError(t *testing.T) {
-	t.Setenv("KUBECONFIG", "")
+	useEmptyKubeconfig(t)
 
 	err := uploadReport(context.Background(), "configmap/ns/name", "text")
 	if err == nil || !strings.Contains(err.Error(), "build kubernetes client") {
