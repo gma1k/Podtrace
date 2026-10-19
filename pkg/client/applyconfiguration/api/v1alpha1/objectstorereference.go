@@ -27,11 +27,14 @@ import (
 // ObjectStoreReference names a cloud-storage destination for a session
 // report. When CredentialsSecretRef is unset, the uploader uses the
 // cloud SDK's default credential chain (IRSA / Workload Identity /
-// Managed Identity) — the cloud-native preferred path. The explicit
-// Secret is the fallback for clusters without ambient credentials.
+// Managed Identity). That ambient fallback is allowed for sessions in
+// the operator's own namespace; sessions in other namespaces need the
+// operator's cross-namespace ambient-credentials opt-in or a Secret with
+// static credentials. A custom endpoint is honoured only alongside
+// static credentials or when the operator's endpoint allowlist names it.
 //
 // Per-backend Secret key schema (all optional — missing keys defer to
-// the SDK default chain):
+// the SDK default chain, subject to the rules above):
 //
 // S3:     access_key_id, secret_access_key, session_token,
 // region, endpoint, force_path_style
