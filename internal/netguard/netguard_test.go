@@ -45,19 +45,6 @@ func TestIsBlockedIP_PrivateOptIn(t *testing.T) {
 	}
 }
 
-func TestIsLoopbackHost(t *testing.T) {
-	for _, h := range []string{"localhost", "127.0.0.1", "::1"} {
-		if !IsLoopbackHost(h) {
-			t.Errorf("IsLoopbackHost(%q) = false, want true", h)
-		}
-	}
-	for _, h := range []string{"example.com", "8.8.8.8", "169.254.169.254"} {
-		if IsLoopbackHost(h) {
-			t.Errorf("IsLoopbackHost(%q) = true, want false", h)
-		}
-	}
-}
-
 func TestValidateEndpointHost(t *testing.T) {
 	if err := ValidateEndpointHost("169.254.169.254"); err == nil {
 		t.Error("metadata IP literal accepted")

@@ -115,9 +115,20 @@ func TestAllowedAgentImageRepos_WidenedViaEnv(t *testing.T) {
 	}
 }
 
-func TestAllowedAgentImageRepos_ExplicitEmptyDisables(t *testing.T) {
-	t.Setenv("PODTRACE_ALLOWED_AGENT_IMAGE_REPOS", "")
-	if got := AllowedAgentImageRepos(); len(got) != 0 {
-		t.Errorf("explicit empty must disable the policy, got %v", got)
+func TestAllowedAgentImageRepos_EmptyFailsClosedToTrustedImage(t *testing.T) {
+	for _, raw := range []string{"", " ", " , ", ",,"} {
+		t.Setenv("PODTRACE_ALLOWED_AGENT_IMAGE_REPOS", raw)
+		got := AllowedAgentImageRepos()
+		if len(got) != 1 || got[0] != Image {
+			t.Errorf("AllowedAgentImageRepos(%q) = %v, want [%s]", raw, got, Image)
+		}
+	}
+}
+
+func TestAllowedAgentImageRepos_ExplicitWildcardIsPassedThrough(t *testing.T) {
+	t.Setenv("PODTRACE_ALLOWED_AGENT_IMAGE_REPOS", "*")
+	got := AllowedAgentImageRepos()
+	if len(got) != 1 || got[0] != "*" {
+		t.Errorf("AllowedAgentImageRepos = %v, want [*]", got)
 	}
 }

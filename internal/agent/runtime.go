@@ -191,6 +191,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	targetsCh := make(chan tracer.TargetSet, 8)
 
+	delivery := newDeliveryHealth()
 	reconciler := &AgentReconciler{
 		Client:          mgr.GetClient(),
 		NodeName:        opts.NodeName,
@@ -203,6 +204,7 @@ func Run(ctx context.Context, opts Options) error {
 		MetricsPlane: NodeCoverage(config.WorkloadMetricsEnabled, config.ContinuousProfilingEnabled,
 			config.WorkloadMetricsExcludedNamespaces),
 		WorkloadMetrics: workloadMetricProducer(metricsSink),
+		Delivery:        delivery,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setup reconciler: %w", err)
@@ -217,6 +219,7 @@ func Run(ctx context.Context, opts Options) error {
 		Heartbeat:     probeSrv.Heartbeat,
 		KernelDropped: metrics.KernelDroppedTotal,
 		BackendErr:    backendErr,
+		Delivery:      delivery,
 	}
 
 	inspections := startInspectionEngine(metrics, metricsSink,

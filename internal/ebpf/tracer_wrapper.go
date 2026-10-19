@@ -14,6 +14,8 @@ var WithInitialCategories = tracer.WithInitialCategories
 
 type ContainerProbeTarget = tracer.ContainerProbeTarget
 
+type CgroupOwner = tracer.CgroupOwner
+
 func NewTracer(opts ...Option) (TracerInterface, error) {
 	return tracer.NewTracer(opts...)
 }

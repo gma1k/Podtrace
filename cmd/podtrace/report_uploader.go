@@ -146,6 +146,7 @@ func uploadToObjectStore(ctx context.Context, opts reportUploaderOptions, report
 	sink, err := objectstore.New(ctx, objectstore.Config{
 		URI:         opts.ReportToSpec,
 		Credentials: creds,
+		Policy:      objectstore.PolicyFromEnv(),
 	})
 	if err != nil {
 		return fmt.Errorf("object-store sink: %w", err)

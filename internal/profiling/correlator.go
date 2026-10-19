@@ -68,6 +68,7 @@ type CorrelatedResult struct {
 
 	HeapProfile      *ProfileResult
 	GoroutineProfile *ProfileResult
+	CPUProfile       *ProfileResult
 
 	PprofAvailable bool
 	PodIP          string
@@ -375,7 +376,7 @@ func GenerateSection(cr *CorrelatedResult, duration time.Duration) string {
 			if i >= 8 {
 				break
 			}
-			fmt.Fprintf(&sb, "    %-5d  %s\n", f.Count, f.Frame)
+			fmt.Fprintf(&sb, "    %-5d  %s\n", f.Count, sanitize.Terminal(f.Frame))
 		}
 		sb.WriteString("  Frames are resolved where the process was still running; any that\n")
 		sb.WriteString("  remain as raw addresses belong to a process that had already exited.\n")
@@ -405,7 +406,19 @@ func GenerateSection(cr *CorrelatedResult, duration time.Duration) string {
 				break
 			}
 			fmt.Fprintf(&sb, "    %-10s  count=%-6d  %s\n",
-				formatBytes(f.Bytes), f.Count, f.Function)
+				formatBytes(f.Bytes), f.Count, sanitize.Terminal(f.Function))
+		}
+		sb.WriteString("\n")
+	}
+
+	if cr.CPUProfile != nil && cr.CPUProfile.Available && len(cr.CPUProfile.TopCPUFunctions) > 0 {
+		fmt.Fprintf(&sb, "  Top CPU functions (from %v pprof CPU profile, flat time):\n", cr.CPUProfile.Duration)
+		for i, f := range cr.CPUProfile.TopCPUFunctions {
+			if i >= 8 {
+				break
+			}
+			fmt.Fprintf(&sb, "    %-10v  samples=%-6d  %s\n",
+				f.CPUTime.Round(time.Millisecond), f.Samples, sanitize.Terminal(f.Function))
 		}
 		sb.WriteString("\n")
 	}

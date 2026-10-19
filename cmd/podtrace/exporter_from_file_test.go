@@ -46,30 +46,40 @@ func TestApplyPayloadToConfig_OTLP_ClearsOtherExporters(t *testing.T) {
 	}
 }
 
-func TestApplyPayloadToConfig_DataDogCredentialSetsToken(t *testing.T) {
+func TestApplyPayloadToConfig_DataDogShipsOverOTLPWithItsAPIKey(t *testing.T) {
 	defer resetTracingConfig()
 	mustApplyPayload(t, &bundle.Payload{
 		Type:       bundle.TypeDataDog,
-		Endpoint:   "ddtrace:8126",
+		Endpoint:   "datadog-agent.datadog:4318",
+		HeaderName: "DD-API-KEY",
 		Credential: []byte("dd-api-key"),
 	})
-	if config.DataDogEndpoint != "ddtrace:8126" {
-		t.Errorf("DataDogEndpoint=%q", config.DataDogEndpoint)
+	if config.OTLPEndpoint != "https://datadog-agent.datadog:4318" {
+		t.Errorf("OTLPEndpoint=%q", config.OTLPEndpoint)
 	}
-	if config.DataDogAPIKey != "dd-api-key" {
-		t.Errorf("DataDogAPIKey lost")
+	if config.DataDogEndpoint != "" {
+		t.Errorf("DataDogEndpoint=%q, want empty (the bundle endpoint is an OTLP intake)", config.DataDogEndpoint)
+	}
+	if config.OTLPHeaders["DD-API-KEY"] != "dd-api-key" {
+		t.Errorf("OTLPHeaders=%v, want the API key under DD-API-KEY", config.OTLPHeaders)
 	}
 }
 
-func TestApplyPayloadToConfig_SplunkCredentialSetsToken(t *testing.T) {
+func TestApplyPayloadToConfig_SplunkShipsOverOTLPWithItsToken(t *testing.T) {
 	defer resetTracingConfig()
 	mustApplyPayload(t, &bundle.Payload{
 		Type:       bundle.TypeSplunk,
-		Endpoint:   "splunk:8088",
-		Credential: []byte("hec-token"),
+		Endpoint:   "splunk-otel-collector.splunk:4318",
+		Credential: []byte("access-token"),
 	})
-	if config.SplunkToken != "hec-token" {
-		t.Errorf("SplunkToken lost")
+	if config.OTLPEndpoint != "https://splunk-otel-collector.splunk:4318" {
+		t.Errorf("OTLPEndpoint=%q", config.OTLPEndpoint)
+	}
+	if config.SplunkEndpoint != "" {
+		t.Errorf("SplunkEndpoint=%q, want empty (the bundle endpoint is an OTLP collector)", config.SplunkEndpoint)
+	}
+	if config.OTLPHeaders["X-SF-TOKEN"] != "access-token" {
+		t.Errorf("OTLPHeaders=%v, want the token under X-SF-TOKEN", config.OTLPHeaders)
 	}
 }
 
@@ -203,8 +213,8 @@ func TestApplyExporterFromFile_CredentialFileLoaded(t *testing.T) {
 	if err := applyExporterFromFile(path); err != nil {
 		t.Fatal(err)
 	}
-	if config.DataDogAPIKey != "dd-key" {
-		t.Errorf("DataDogAPIKey=%q want dd-key", config.DataDogAPIKey)
+	if config.OTLPHeaders["DD-API-KEY"] != "dd-key" {
+		t.Errorf("OTLPHeaders=%v want DD-API-KEY dd-key", config.OTLPHeaders)
 	}
 }
 
@@ -220,8 +230,8 @@ func TestApplyExporterFromFile_EnvCredentialWins(t *testing.T) {
 	if err := applyExporterFromFile(path); err != nil {
 		t.Fatalf("applyExporterFromFile: %v", err)
 	}
-	if config.SplunkToken != "env-hec-token" {
-		t.Errorf("SplunkToken=%q want env-hec-token (env credential must win)", config.SplunkToken)
+	if config.OTLPHeaders["X-SF-TOKEN"] != "env-hec-token" {
+		t.Errorf("OTLPHeaders=%v want X-SF-TOKEN env-hec-token (env credential must win)", config.OTLPHeaders)
 	}
 }
 
@@ -241,13 +251,14 @@ func resetTracingConfig() {
 	config.TracingEnabled = false
 	config.OTLPEndpoint = config.DefaultOTLPEndpoint
 	config.JaegerEndpoint = config.DefaultJaegerEndpoint
-	config.ZipkinEndpoint = config.DefaultZipkinEndpoint
+	config.ZipkinEndpoint = ""
 	config.SplunkEndpoint = config.DefaultSplunkEndpoint
 	config.SplunkToken = ""
-	config.DataDogEndpoint = config.DefaultDataDogEndpoint
+	config.DataDogEndpoint = ""
 	config.DataDogAPIKey = ""
 	config.TracingSampleRate = config.DefaultTracingSampleRate
 	config.OTLPHeaders = nil
+	config.OTLPInsecure = false
 }
 
 func ptrFloat(v float64) *float64 { return &v }

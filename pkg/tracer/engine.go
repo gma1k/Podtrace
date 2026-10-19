@@ -60,6 +60,7 @@ type engine struct {
 
 	mu              sync.RWMutex
 	activeCgroups   map[string]cgroupState
+	uprobeRetry     map[string]struct{}
 	eventsReceived  int64
 	eventsExported  int64
 	eventsDropped   int64
@@ -103,6 +104,7 @@ func NewEngine(backend TracerBackend, exporters []Exporter, cfg Config) (Engine,
 		exporters:     exporters,
 		cfg:           cfg,
 		activeCgroups: make(map[string]cgroupState),
+		uprobeRetry:   make(map[string]struct{}),
 	}, nil
 }
 
@@ -168,11 +170,13 @@ func (e *engine) applyTargets(set TargetSet) error {
 		snapshot = append(snapshot, CgroupTarget{
 			CgroupPath:  t.CgroupPath,
 			ContainerID: t.ContainerID,
+			PodName:     t.PodName,
+			Namespace:   t.Namespace,
 		})
 	}
 
 	e.mu.Lock()
-	added, removed, changed := 0, 0, 0
+	added, removed, changed, retry := 0, 0, 0, 0
 	for path, t := range desired {
 		prev, ok := e.activeCgroups[path]
 		if !ok {
@@ -188,20 +192,29 @@ func (e *engine) applyTargets(set TargetSet) error {
 			removed++
 		}
 	}
+	for _, t := range desired {
+		if _, ok := e.uprobeRetry[t.ContainerID]; ok && t.ContainerID != "" {
+			retry++
+		}
+	}
 	e.mu.Unlock()
 
-	if added == 0 && removed == 0 && changed == 0 {
+	cgroupsChanged := added != 0 || removed != 0 || changed != 0
+	if !cgroupsChanged && retry == 0 {
 		return nil
 	}
 
 	var attachErrs []attachError
+	failedIDs := make(map[string]struct{})
 
-	if err := e.backend.SetCgroups(snapshot); err != nil {
-		e.mu.Lock()
-		e.attachFailure++
-		e.mu.Unlock()
-		e.reportAttachErrors([]attachError{{stage: "set_cgroups", err: err}})
-		return err
+	if cgroupsChanged {
+		if err := e.backend.SetCgroups(snapshot); err != nil {
+			e.mu.Lock()
+			e.attachFailure++
+			e.mu.Unlock()
+			e.reportAttachErrors([]attachError{{stage: "set_cgroups", err: err}})
+			return err
+		}
 	}
 
 	if rec, ok := e.backend.(ContainerUprobeReconciler); ok {
@@ -219,6 +232,9 @@ func (e *engine) applyTargets(set TargetSet) error {
 		}
 		if err := rec.SetContainerTargets(cts); err != nil {
 			attachErrs = append(attachErrs, attachError{stage: "set_container_targets", err: err})
+			for _, ct := range cts {
+				failedIDs[ct.ContainerID] = struct{}{}
+			}
 		}
 	} else {
 		seen := make(map[string]struct{}, len(desired))
@@ -239,11 +255,15 @@ func (e *engine) applyTargets(set TargetSet) error {
 			}); ok {
 				if err := multi.SetContainerIDs(ids); err != nil {
 					attachErrs = append(attachErrs, attachError{stage: "set_container_ids", err: err})
+					for _, id := range ids {
+						failedIDs[id] = struct{}{}
+					}
 				}
 			} else {
 				for _, id := range ids {
 					if err := e.backend.SetContainerID(id); err != nil {
 						attachErrs = append(attachErrs, attachError{stage: "set_container_id", err: err})
+						failedIDs[id] = struct{}{}
 					}
 				}
 			}
@@ -256,6 +276,7 @@ func (e *engine) applyTargets(set TargetSet) error {
 	}
 	e.mu.Lock()
 	e.activeCgroups = next
+	e.uprobeRetry = failedIDs
 	e.cgroupsAttached += int64(added)
 	e.cgroupsDetached += int64(removed)
 	e.attachFailure += int64(len(attachErrs))

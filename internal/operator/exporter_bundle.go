@@ -83,7 +83,7 @@ func renderBundlePayload(policy *bundlePolicyInputs, ec *podtracev1alpha1.Export
 		if ec.Spec.OTLP == nil {
 			return nil, nil, nil, fmt.Errorf("spec.otlp is required when type=otlp")
 		}
-		data["endpoint"] = ec.Spec.OTLP.Endpoint
+		data["endpoint"] = qualifyServiceHost(ec.Spec.OTLP.Endpoint, ec.Namespace)
 		if ec.Spec.OTLP.Protocol != "" {
 			data["protocol"] = string(ec.Spec.OTLP.Protocol)
 		} else {
@@ -122,21 +122,21 @@ func renderBundlePayload(policy *bundlePolicyInputs, ec *podtracev1alpha1.Export
 		if ec.Spec.Jaeger == nil {
 			return nil, nil, nil, fmt.Errorf("spec.jaeger is required when type=jaeger")
 		}
-		data["endpoint"] = ec.Spec.Jaeger.Endpoint
+		data["endpoint"] = qualifyServiceHost(ec.Spec.Jaeger.Endpoint, ec.Namespace)
 		return data, nil, nil, nil
 
 	case podtracev1alpha1.ExporterTypeZipkin:
 		if ec.Spec.Zipkin == nil {
 			return nil, nil, nil, fmt.Errorf("spec.zipkin is required when type=zipkin")
 		}
-		data["endpoint"] = ec.Spec.Zipkin.Endpoint
+		data["endpoint"] = qualifyServiceHost(ec.Spec.Zipkin.Endpoint, ec.Namespace)
 		return data, nil, nil, nil
 
 	case podtracev1alpha1.ExporterTypeSplunk:
 		if ec.Spec.Splunk == nil {
 			return nil, nil, nil, fmt.Errorf("spec.splunk is required when type=splunk")
 		}
-		data["endpoint"] = ec.Spec.Splunk.Endpoint
+		data["endpoint"] = qualifyServiceHost(ec.Spec.Splunk.Endpoint, ec.Namespace)
 		data["header_secret_name"] = "X-SF-TOKEN"
 		ref := ec.Spec.Splunk.TokenSecretRef
 		return data, &ref, nil, nil
@@ -151,7 +151,7 @@ func renderBundlePayload(policy *bundlePolicyInputs, ec *podtracev1alpha1.Export
 		}
 		data["site"] = site
 		if ec.Spec.DataDog.Endpoint != "" {
-			data["endpoint"] = ec.Spec.DataDog.Endpoint
+			data["endpoint"] = qualifyServiceHost(ec.Spec.DataDog.Endpoint, ec.Namespace)
 		} else {
 			data["endpoint"] = "datadog-agent.datadog:4318"
 		}

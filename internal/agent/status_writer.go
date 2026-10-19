@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ type StatusWriter struct {
 	KernelDropped func() int64
 
 	BackendErr error
+
+	Delivery *deliveryHealth
 
 	reportedKeys map[CRKey]struct{}
 }
@@ -73,7 +76,11 @@ func (w *StatusWriter) emitOnce(ctx context.Context) error {
 	var firstErr error
 	current := make(map[CRKey]struct{}, len(rules))
 	for _, rule := range rules {
-		entry := buildNodeStatusEntry(w.NodeName, &rule, stats[rule.Key], agentReady, w.BackendErr, time.Now())
+		now := time.Now()
+		entry := buildNodeStatusEntry(w.NodeName, &rule, stats[rule.Key], agentReady, w.BackendErr, now)
+		if state, failing := w.Delivery.failing(rule.Key); failing {
+			applyDeliveryFailure(&entry, state, now)
+		}
 		if w.KernelDropped != nil {
 			entry.KernelDroppedEvents = w.KernelDropped()
 		}
@@ -121,6 +128,17 @@ func buildNodeStatusEntry(node string, rule *CRRule, counters crCounters, agentR
 		entry.Reason = podtracev1alpha1.NodeStatusReasonAgentUnready
 	}
 	return entry
+}
+
+// applyDeliveryFailure reports a failing exporter on an otherwise healthy
+// row. The row stays Ready, since the node is still capturing.
+func applyDeliveryFailure(entry *podtracev1alpha1.PodTraceNodeStatus, state deliveryState, now time.Time) {
+	if entry.Reason != "" {
+		return
+	}
+	entry.Reason = podtracev1alpha1.NodeStatusReasonExporterDeliveryFailed
+	entry.Message = fmt.Sprintf("%s exporter is not delivering spans to the backend (%d failed batches, failing for %s): %s",
+		state.Exporter, state.FailedBatches, now.Sub(state.FailingSince).Truncate(time.Second), state.LastError)
 }
 
 func classifyRuleErr(err error) podtracev1alpha1.NodeStatusReason {

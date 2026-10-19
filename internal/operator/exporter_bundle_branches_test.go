@@ -46,7 +46,7 @@ func TestRenderBundlePayload_DataDogExplicitEndpoint(t *testing.T) {
 	if data["site"] != "datadoghq.eu" {
 		t.Errorf("site=%q want datadoghq.eu", data["site"])
 	}
-	if data["endpoint"] != "dd-custom:4318" {
+	if data["endpoint"] != "dd-custom.default.svc:4318" {
 		t.Errorf("explicit endpoint not honored: %q", data["endpoint"])
 	}
 }

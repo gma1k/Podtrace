@@ -20,6 +20,7 @@ import (
 	"github.com/gma1k/podtrace/internal/hostfs"
 	"github.com/gma1k/podtrace/internal/logger"
 	"github.com/gma1k/podtrace/internal/redactor"
+	"github.com/gma1k/podtrace/internal/tracing"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +32,7 @@ func finalizeDiagnoseOutputs(ctx context.Context, report string, d *diagnose.Dia
 	defer cancel()
 	node := os.Getenv("NODE_NAME")
 	summary := computeSessionSummary(d, node)
+	summary.Exports = collectSessionExports()
 	if err := emitSessionArtifacts(finalizeCtx, summary, report); err != nil {
 		logger.Warn("emit session artifacts", zap.Error(err))
 	}
@@ -52,6 +54,56 @@ type SessionSummary struct {
 	ErrorsDetected int32  `json:"errorsDetected,omitempty"`
 	DurationMS     int64  `json:"durationMs,omitempty"`
 	Node           string `json:"node,omitempty"`
+
+	Exports []SessionExportStatus `json:"exports,omitempty"`
+}
+
+// SessionExportStatus is one exporter's delivery record for the session,
+// so the operator can tell a session whose spans never left the node from
+// one that delivered them.
+type SessionExportStatus struct {
+	Exporter  string `json:"exporter"`
+	Succeeded int64  `json:"succeeded,omitempty"`
+	Failed    int64  `json:"failed,omitempty"`
+	LastError string `json:"lastError,omitempty"`
+}
+
+const maxExportErrorBytes = 300
+
+var sessionExportStatus func() []tracing.ExporterStatus
+
+type exportStatusSource interface {
+	Flush()
+	ExportStatus() []tracing.ExporterStatus
+}
+
+// flushingExportStatus builds the sessionExportStatus hook for src, flushing
+// pending spans first so the status covers the final batch.
+func flushingExportStatus(src exportStatusSource) func() []tracing.ExporterStatus {
+	return func() []tracing.ExporterStatus {
+		src.Flush()
+		return src.ExportStatus()
+	}
+}
+
+func collectSessionExports() []SessionExportStatus {
+	if sessionExportStatus == nil {
+		return nil
+	}
+	var out []SessionExportStatus
+	for _, st := range sessionExportStatus() {
+		lastError := st.LastError
+		if len(lastError) > maxExportErrorBytes {
+			lastError = strings.ToValidUTF8(lastError[:maxExportErrorBytes], "") + "..."
+		}
+		out = append(out, SessionExportStatus{
+			Exporter:  st.Exporter,
+			Succeeded: st.SucceededBatches,
+			Failed:    st.FailedBatches,
+			LastError: lastError,
+		})
+	}
+	return out
 }
 
 // computeSessionSummary rolls up a Diagnostician's observed events into

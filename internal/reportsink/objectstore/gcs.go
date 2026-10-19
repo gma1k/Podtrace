@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 
 	"cloud.google.com/go/auth/credentials"
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
+
+	"github.com/gma1k/podtrace/internal/netguard"
 )
 
 const (
@@ -32,7 +36,7 @@ type gcsSink struct {
 func newGCSSink(ctx context.Context, cfg Config, d destination) (Sink, error) {
 	creds := cfg.Credentials
 
-	var opts []option.ClientOption
+	authOpts := []option.ClientOption{option.WithScopes(gcsScopes...)}
 	saJSON := stringFromCreds(creds, gcsSecretKeyServiceAccountJSON)
 	if saJSON != "" {
 		ac, err := credentials.NewCredentialsFromJSON(credentials.ServiceAccount, []byte(saJSON), &credentials.DetectOptions{
@@ -41,16 +45,26 @@ func newGCSSink(ctx context.Context, cfg Config, d destination) (Sink, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gcs: load service account JSON: %w", err)
 		}
-		opts = append(opts, option.WithAuthCredentials(ac))
+		authOpts = append(authOpts, option.WithAuthCredentials(ac))
 	}
-	if endpoint := stringFromCreds(creds, gcsSecretKeyEndpoint); endpoint != "" {
-		opts = append(opts, option.WithEndpoint(endpoint))
+	endpoint := stringFromCreds(creds, gcsSecretKeyEndpoint)
+	if endpoint != "" {
+		authOpts = append(authOpts, option.WithEndpoint(endpoint))
 		if saJSON == "" {
 			_, _ = fmt.Fprintf(os.Stderr,
 				`{"component":"objectstore.gcs","level":"warn","message":"custom endpoint without %s: uploading WITHOUT AUTHENTICATION; this mode is for fake-gcs-server/dev only","endpoint":%q}`+"\n",
 				gcsSecretKeyServiceAccountJSON, endpoint)
-			opts = append(opts, option.WithoutAuthentication())
+			authOpts = append(authOpts, option.WithoutAuthentication())
 		}
+	}
+
+	rt, err := htransport.NewTransport(ctx, netguard.HardenedTransport(), authOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("gcs: build transport: %w", err)
+	}
+	opts := []option.ClientOption{option.WithHTTPClient(&http.Client{Transport: rt, CheckRedirect: netguard.RefuseRedirect})}
+	if endpoint != "" {
+		opts = append(opts, option.WithEndpoint(endpoint))
 	}
 
 	client, err := storage.NewClient(ctx, opts...)

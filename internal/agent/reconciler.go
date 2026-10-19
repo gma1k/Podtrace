@@ -61,6 +61,8 @@ type AgentReconciler struct {
 
 	WorkloadMetrics metricProducer
 
+	Delivery *deliveryHealth
+
 	exporterCacheMu sync.Mutex
 	exporterCache   map[CRKey]cachedExporter
 	pendingClose    []tracer.Exporter
@@ -81,7 +83,7 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		metrics := r.Metrics
 		pushers := newMetricPusherPool(r.WorkloadMetrics, r.NodeName)
 		r.ExporterBuilder = func(b *BundlePayload, key CRKey) (tracer.Exporter, error) {
-			return BuildExporter(b, key, withMetrics(metrics), withMetricPushers(pushers))
+			return BuildExporter(b, key, withMetrics(metrics), withMetricPushers(pushers), withDeliveryHealth(r.Delivery))
 		}
 	}
 	if r.CgroupResolver == nil {

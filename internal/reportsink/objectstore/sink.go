@@ -44,11 +44,13 @@ type Sink interface {
 // Config is the construction-time data for a Sink. URI is required;
 // Credentials are optional (when empty the backend falls back to the
 // SDK's default credential chain — IRSA / Workload Identity / Managed
-// Identity / static env vars).
+// Identity / static env vars) when Policy allows it.
 type Config struct {
 	URI string
 
 	Credentials map[string][]byte
+
+	Policy CredentialPolicy
 }
 
 // destination is the parsed form of a URI. Shared by all backends.
@@ -129,6 +131,9 @@ func (d destination) resolveKey(keyHint string) string {
 func New(ctx context.Context, cfg Config) (Sink, error) {
 	d, err := parseURI(cfg.URI)
 	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Policy.check(d, cfg.Credentials); err != nil {
 		return nil, err
 	}
 	switch d.scheme {

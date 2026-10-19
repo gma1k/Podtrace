@@ -49,7 +49,7 @@ func TestParseStapsdtNotes_Valid(t *testing.T) {
 	desc := stapsdtDesc(order, 0xDEADBEEF, 0xCAFE, "provider", "probe")
 	data := note(order, "stapsdt", 3, desc, -1, -1)
 
-	got := parseStapsdtNotes(data, order)
+	got := parseStapsdtNotes(data, order, hostArgArch())
 	if len(got) != 1 {
 		t.Fatalf("expected 1 probe, got %d", len(got))
 	}
@@ -70,7 +70,7 @@ func TestParseStapsdtNotes_HugeSizesNoPanic(t *testing.T) {
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := parseStapsdtNotes(data, order)
+			got := parseStapsdtNotes(data, order, hostArgArch())
 			if len(got) != 0 {
 				t.Errorf("oversized note should yield no probes, got %d", len(got))
 			}
@@ -80,10 +80,10 @@ func TestParseStapsdtNotes_HugeSizesNoPanic(t *testing.T) {
 
 func TestParseStapsdtNotes_TruncatedHeader(t *testing.T) {
 	order := binary.ByteOrder(binary.LittleEndian)
-	if got := parseStapsdtNotes([]byte{1, 2, 3, 4, 5, 6, 7, 8}, order); len(got) != 0 {
+	if got := parseStapsdtNotes([]byte{1, 2, 3, 4, 5, 6, 7, 8}, order, hostArgArch()); len(got) != 0 {
 		t.Errorf("truncated header should yield no probes, got %d", len(got))
 	}
-	if got := parseStapsdtNotes(nil, order); len(got) != 0 {
+	if got := parseStapsdtNotes(nil, order, hostArgArch()); len(got) != 0 {
 		t.Errorf("nil data should yield no probes, got %d", len(got))
 	}
 }

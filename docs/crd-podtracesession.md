@@ -104,7 +104,14 @@ can introspect a finished session without scraping pod logs:
 | `startTime`, `completionTime` | Set when the first Job starts and last completes. |
 | `jobs[]` | One entry per node hosting a matched pod. Carries `node`, `name`, `completed`, `totalEvents`, `startTime`, `completionTime`. |
 | `summary` | Aggregated `{totalEvents, eventsByFilter, errorsDetected}` across all Jobs. `eventsByFilter` is keyed by filter name (`dns`, `net`, ...), so a new filter needs no schema change. |
-| `conditions` | Standard `Reconciled`, `Degraded`. |
+| `conditions` | Standard `Reconciled`, `Degraded`, plus `ReportUploaded` for an object-store report and `Exported` for span delivery. |
+
+`Exported` is set once the session's Jobs report what their exporter
+delivered: `True Delivered`, `False ExportPartiallyFailed` (some batches
+failed), or `False ExporterUnreachable` (no batch reached the backend; the
+session is then also `Degraded=True ExporterUnreachable`). The message
+names each exporter, its batch counts and its last error. A session that
+produced no spans has no `Exported` condition.
 
 ## Lifecycle
 
@@ -256,6 +263,11 @@ Look at the `Conditions` block. Likely candidates:
 - `Degraded=True ExporterNotFound` — fix the `exporterRef`.
 - `Degraded=True NodeCapacity` — `TracerConfig.spec.maxConcurrentSessionsPerNode` saturated. A session that is still waiting for a slot 30 minutes after creation fails with `NodeCapacityDeadlineExceeded`. On a shared cluster, set `TracerConfig.spec.session.maxDuration` to bound how long one session can hold a slot; it is unset by default. For always-on tracing use a `PodTrace`, which holds no slot and has no duration.
 - No matched pods — selector matches no `Running` pods.
+
+**Phase `Completed` but no spans in the backend:** check `Exported`.
+`ExporterUnreachable` with `no such host` usually means a Service name the
+system namespace cannot resolve; see
+[endpoint host names](crd-exporterconfig.md#endpoint-host-names).
 
 **Phase = `Failed` immediately:** check the `Degraded` condition first. The
 operator fails a session up front, without creating a Job, when it can never

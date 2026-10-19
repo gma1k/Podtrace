@@ -3,7 +3,6 @@ package exporter
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,18 +61,18 @@ func (e *ZipkinExporter) ExportTraces(traces []*tracker.Trace) error {
 		return nil
 	}
 
-	var errs []error
+	var outcome exportOutcome
 	for _, t := range traces {
 		if !e.shouldSample(t) {
 			continue
 		}
 
 		if err := e.exportTrace(t); err != nil {
-			errs = append(errs, fmt.Errorf("trace %s: %w", t.TraceID, err))
+			outcome.record(fmt.Errorf("trace %s: %w", t.TraceID, err), t.TraceID)
 		}
 	}
 
-	return errors.Join(errs...)
+	return outcome.err()
 }
 
 func (e *ZipkinExporter) shouldSample(t *tracker.Trace) bool {
@@ -130,7 +129,7 @@ func (e *ZipkinExporter) exportTrace(t *tracker.Trace) error {
 
 	payload, err := marshalJSON(zipkinSpans)
 	if err != nil {
-		return fmt.Errorf("failed to marshal zipkin payload: %w", err)
+		return permanent(fmt.Errorf("failed to marshal zipkin payload: %w", err))
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "POST", e.endpoint, bytes.NewReader(payload))
@@ -150,7 +149,7 @@ func (e *ZipkinExporter) exportTrace(t *tracker.Trace) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return statusError(resp.StatusCode)
 	}
 
 	return nil

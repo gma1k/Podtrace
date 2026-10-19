@@ -14,7 +14,7 @@ func TestParseStapsdtNotes_CapsProbeCount(t *testing.T) {
 		data = append(data, one...)
 	}
 
-	got := parseStapsdtNotes(data, order)
+	got := parseStapsdtNotes(data, order, hostArgArch())
 	if len(got) != maxScannedProbes {
 		t.Fatalf("parseStapsdtNotes returned %d probes, want the %d cap", len(got), maxScannedProbes)
 	}
@@ -29,7 +29,7 @@ func TestParseStapsdtNotes_UnderCapReturnsAll(t *testing.T) {
 	for i := 0; i < n; i++ {
 		data = append(data, one...)
 	}
-	if got := parseStapsdtNotes(data, order); len(got) != n {
+	if got := parseStapsdtNotes(data, order, hostArgArch()); len(got) != n {
 		t.Fatalf("parseStapsdtNotes returned %d probes, want %d", len(got), n)
 	}
 }

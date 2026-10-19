@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,47 +72,130 @@ func readScoped(rel string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+const confDir = "/etc"
+
+const maxIncludeDepth = 8
+
+const maxIncludedFiles = 256
+
 // SearchPaths returns the dynamic-linker search paths assembled from
-// ld.so.conf plus every *.conf entry under ld.so.conf.d/. Empty lines
-// and lines starting with '#' are skipped. Errors reading individual
-// files are silently ignored — a missing /etc/ld.so.conf on minimal
-// containers is normal, and the caller falls back to architecture
-// defaults.
+// ld.so.conf (following its include directives) plus every *.conf entry
+// under ld.so.conf.d/. Comments, blank lines, hwcap directives and relative
+// paths are skipped, and each directory is returned once in first-seen order.
+// Errors reading individual files are silently ignored — a missing
+// /etc/ld.so.conf on minimal containers is normal, and the caller falls back
+// to architecture defaults.
 func SearchPaths() []string {
-	var out []string
-
-	if data, err := readScoped("ld.so.conf"); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				out = append(out, line)
-			}
-		}
-	}
-
 	r, err := openRoot()
 	if err != nil {
-		return out
+		return nil
 	}
-	entries, err := fs.readDir(r, "ld.so.conf.d")
+	p := &parser{root: r, visited: map[string]struct{}{}, seen: map[string]struct{}{}}
+	p.parseFile("ld.so.conf", 0)
+	p.includeGlob("ld.so.conf.d/*.conf", 0)
+	return p.out
+}
+
+type parser struct {
+	root    *os.Root
+	visited map[string]struct{}
+	seen    map[string]struct{}
+	out     []string
+}
+
+func (p *parser) parseFile(rel string, depth int) {
+	if depth > maxIncludeDepth || len(p.visited) >= maxIncludedFiles {
+		return
+	}
+	if _, done := p.visited[rel]; done {
+		return
+	}
+	p.visited[rel] = struct{}{}
+	data, err := readScoped(rel)
 	if err != nil {
-		return out
+		return
 	}
-	for _, name := range entries {
-		if !strings.HasSuffix(name, ".conf") {
+	for _, line := range strings.Split(string(data), "\n") {
+		if hash := strings.IndexByte(line, '#'); hash >= 0 {
+			line = line[:hash]
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
 			continue
 		}
-		rel := filepath.Join("ld.so.conf.d", name)
-		if data, err := readScoped(rel); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					out = append(out, line)
+		switch fields[0] {
+		case "include":
+			for _, pattern := range fields[1:] {
+				if relPattern, ok := scopedPattern(pattern, rel); ok {
+					p.includeGlob(relPattern, depth+1)
 				}
 			}
+			continue
+		case "hwcap":
+			continue
+		}
+		dir := strings.TrimSpace(line)
+		if eq := strings.IndexByte(dir, '='); eq >= 0 {
+			dir = strings.TrimSpace(dir[:eq])
+		}
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		dir = filepath.Clean(dir)
+		if _, dup := p.seen[dir]; dup {
+			continue
+		}
+		p.seen[dir] = struct{}{}
+		p.out = append(p.out, dir)
+	}
+}
+
+// includeGlob reads every file matching a root-relative pattern. Wildcards
+// are honoured in the final path component only.
+func (p *parser) includeGlob(relPattern string, depth int) {
+	dir, filePattern := filepath.Split(relPattern)
+	dir = filepath.Clean(dir)
+	if _, err := filepath.Match(filePattern, ""); err != nil {
+		return
+	}
+	if !hasGlobMeta(filePattern) {
+		p.parseFile(filepath.Join(dir, filePattern), depth)
+		return
+	}
+	names, err := fs.readDir(p.root, dir)
+	if err != nil {
+		return
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if ok, _ := filepath.Match(filePattern, name); ok {
+			p.parseFile(filepath.Join(dir, name), depth)
 		}
 	}
-	return out
+}
+
+// scopedPattern maps an include pattern onto a path relative to the root. An
+// absolute pattern must lie under confDir.
+func scopedPattern(pattern, includingRel string) (string, bool) {
+	var rel string
+	if filepath.IsAbs(pattern) {
+		clean := filepath.Clean(pattern)
+		prefix := confDir + "/"
+		if !strings.HasPrefix(clean, prefix) {
+			return "", false
+		}
+		rel = strings.TrimPrefix(clean, prefix)
+	} else {
+		rel = filepath.Clean(filepath.Join(filepath.Dir(includingRel), pattern))
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return rel, true
+}
+
+func hasGlobMeta(s string) bool {
+	return strings.ContainsAny(s, "*?[\\")
 }
 
 // fs holds tiny utilities used internally so the file does not depend

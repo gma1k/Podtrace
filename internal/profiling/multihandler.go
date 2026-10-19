@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/events"
 )
 
@@ -21,12 +20,13 @@ type Reporter interface {
 // MultiHandler fans profiling across every target pod on the node: one Handler
 // (one pprof scrape target) per pod IP.
 type MultiHandler struct {
-	handlers    []*Handler
-	triggerChan chan triggerReq
+	handlers []*Handler
 }
 
 // NewMultiHandler builds one Handler per distinct, non-empty pod IP.
 func NewMultiHandler(podIPs []string, ports []int) *MultiHandler {
+	concurrency := profilingConcurrency()
+	sem := make(chan struct{}, concurrency)
 	hs := make([]*Handler, 0, len(podIPs))
 	seen := make(map[string]struct{}, len(podIPs))
 	for _, ip := range podIPs {
@@ -37,12 +37,9 @@ func NewMultiHandler(podIPs []string, ports []int) *MultiHandler {
 			continue
 		}
 		seen[ip] = struct{}{}
-		hs = append(hs, NewHandler(ip, ports))
+		hs = append(hs, newHandler(ip, ports, sem, concurrency))
 	}
-	return &MultiHandler{
-		handlers:    hs,
-		triggerChan: make(chan triggerReq, config.ProfilingMaxConcurrent),
-	}
+	return &MultiHandler{handlers: hs}
 }
 
 // Len reports how many pod profilers are active.
@@ -50,23 +47,23 @@ func (m *MultiHandler) Len() int { return len(m.handlers) }
 
 // Run consumes eventChan, dispatching latency-spike checks to every sub-handler
 // (each self-rate-limits to one auto-trigger) and servicing on-demand trigger
-// requests against all pods.
+// requests against all pods. Every pod's workers draw from one shared
+// semaphore, so fetches in flight across the node stay within
+// config.ProfilingMaxConcurrent.
 func (m *MultiHandler) Run(ctx context.Context, eventChan <-chan *events.Event) {
 	for _, h := range m.handlers {
 		discoverCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		h.profiler.Discover(discoverCtx)
 		cancel()
 	}
+	for _, h := range m.handlers {
+		h.startWorkers(ctx)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case req := <-m.triggerChan:
-			for _, h := range m.handlers {
-				h := h
-				go h.doProfile(ctx, req.ptype, req.duration)
-			}
 		case e, ok := <-eventChan:
 			if !ok {
 				return
@@ -95,39 +92,12 @@ func (m *MultiHandler) HTTPStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	q := r.URL.Query()
-	ptypeStr := q.Get("type")
-	if ptypeStr == "" {
-		ptypeStr = "heap"
+	ptype, dur := parseStartRequest(r)
+	outcomes := make([]triggerOutcome, 0, len(m.handlers))
+	for _, h := range m.handlers {
+		outcomes = append(outcomes, h.enqueue(ptype, dur))
 	}
-	dur := config.ProfilingDefaultDuration
-	if d := q.Get("duration"); d != "" {
-		if pd, err := time.ParseDuration(d); err == nil && pd > 0 {
-			dur = pd
-		}
-	}
-	var ptype ProfileType
-	switch strings.ToLower(ptypeStr) {
-	case "cpu":
-		ptype = ProfileCPU
-	case "goroutine":
-		ptype = ProfileGoroutine
-	default:
-		ptype = ProfileHeap
-	}
-
-	select {
-	case m.triggerChan <- triggerReq{ptype: ptype, duration: dur}:
-	default:
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":   "triggered",
-		"type":     ptype.String(),
-		"duration": dur.String(),
-		"pods":     len(m.handlers),
-	})
+	writeStartResponse(w, ptype, dur, outcomes, map[string]interface{}{"pods": len(m.handlers)})
 }
 
 // HTTPStatus returns a per-pod status array.

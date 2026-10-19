@@ -59,8 +59,22 @@ operator:
   affinity: {}
   podAnnotations: {}
   extraEnv: []
+  # Report uploads to object storage (PodTraceSession.spec.reportRef.objectStore).
+  # The uploader runs in the podtrace namespace, so its ambient identity
+  # (node instance profile, managed identity, workload identity) is yours,
+  # not the session owner's. See docs/object-store-reports.md.
+  objectStore:
+    # Let sessions outside the operator's namespace upload with that ambient
+    # identity when their credentialsSecretRef carries no static credential.
+    crossNamespaceAmbientCredentials: false
+    # Hosts a Secret's custom `endpoint` may name without static credentials
+    # in the same Secret, e.g. an S3 VPC endpoint or a sovereign-cloud blob
+    # host. "*.example.com" matches subdomains.
+    endpointAllowlist: []
 
 agent:
+  # Extra repositories a TracerConfig may point the agent image at. The
+  # chart's own image.repository is always allowed. "*" disables the check.
   allowedImageRepos: []
   resources:
     requests:

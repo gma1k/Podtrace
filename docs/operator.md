@@ -198,7 +198,7 @@ Operator and agent both expose Prometheus metrics:
   Machine-readable failure surfaces are also stamped onto the CR itself:
   `PodTrace.status.nodeStatus[*].reason` carries a closed enum
   (`AgentUnready`, `BackendUnavailable`, `BundleLoadFailed`,
-  `ExporterBuildFailed`, `ProgramAttachFailed`, `PolicyParseError`,
+  `ExporterBuildFailed`, `ExporterDeliveryFailed`, `ProgramAttachFailed`, `PolicyParseError`,
   `PodMatchFailed`, `CgroupResolutionFailed`, `Unknown`) alongside the
   free-text `message`. The operator lifts that enum into the rolled-up
   `Degraded` condition's `reason` field, so `kubectl describe podtrace`

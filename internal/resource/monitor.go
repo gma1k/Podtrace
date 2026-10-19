@@ -88,7 +88,10 @@ type ResourceMonitor struct {
 	checkInterval time.Duration
 	stopCh        chan struct{}
 	wg            sync.WaitGroup
-	namespace     string
+
+	identityMu sync.RWMutex
+	namespace  string
+	podName    string
 
 	cpuQuotaMicros  uint64
 	cpuPeriodMicros uint64
@@ -136,6 +139,34 @@ func NewResourceMonitor(cgroupPath string, limitsMap, alertsMap *ebpf.Map, event
 	}
 
 	return rm, nil
+}
+
+// SetPodIdentity records the Kubernetes pod that owns the monitored cgroup so
+// alerts name the pod (and can become trigger Events) instead of the cgroup.
+func (rm *ResourceMonitor) SetPodIdentity(podName, namespace string) {
+	rm.identityMu.Lock()
+	defer rm.identityMu.Unlock()
+	rm.podName = podName
+	rm.namespace = namespace
+}
+
+// alertSubject returns the PodName/Namespace an alert carries. Without a
+// resolved pod the cgroup path stays the subject only when no namespace is
+// known either, so it keeps alerts for distinct cgroups apart but can never
+// become the involved object of a Kubernetes Event.
+func (rm *ResourceMonitor) alertSubject() (podName, namespace string) {
+	rm.identityMu.RLock()
+	defer rm.identityMu.RUnlock()
+	if rm.podName != "" || rm.namespace != "" {
+		return rm.podName, rm.namespace
+	}
+	return rm.cgroupPath, ""
+}
+
+func (rm *ResourceMonitor) metricsNamespace() string {
+	rm.identityMu.RLock()
+	defer rm.identityMu.RUnlock()
+	return rm.namespace
 }
 
 func (rm *ResourceMonitor) Start(ctx context.Context) {
@@ -547,7 +578,7 @@ func (rm *ResourceMonitor) checkAlerts() {
 		utilizationPercent := float64(utilizationUint32)
 		metricsexporter.ExportResourceMetrics(
 			resourceTypeLabel,
-			rm.namespace,
+			rm.metricsNamespace(),
 			limit.LimitBytes,
 			limit.UsageBytes,
 			utilizationPercent,
@@ -569,14 +600,15 @@ func (rm *ResourceMonitor) checkAlerts() {
 				if utilizationUint32 >= 95 {
 					recommendations = append(recommendations, "Immediate action required - resource exhaustion imminent")
 				}
+				podName, namespace := rm.alertSubject()
 				alert := &alerting.Alert{
 					Severity:  severity,
 					Title:     title,
 					Message:   message,
 					Timestamp: time.Now(),
-					Source:    "resource_monitor",
-					PodName:   rm.cgroupPath,
-					Namespace: rm.namespace,
+					Source:    alerting.AlertSourceResourceMonitor,
+					PodName:   podName,
+					Namespace: namespace,
 					Context: map[string]interface{}{
 						"resource_type":       resourceTypeLabel,
 						"utilization_percent": float64(utilizationUint32),

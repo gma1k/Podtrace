@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"container/list"
 	"strconv"
 	"sync"
 	"time"
@@ -10,8 +11,10 @@ import (
 )
 
 type TraceTracker struct {
-	mu     sync.RWMutex
-	traces map[string]*Trace
+	mu      sync.RWMutex
+	traces  map[string]*Trace
+	recency *list.List
+	evicted uint64
 }
 
 type Trace struct {
@@ -24,6 +27,7 @@ type Trace struct {
 
 	exportedSpans map[string]int
 	lastUpdate    time.Time
+	recency       *list.Element
 }
 
 type Span struct {
@@ -56,7 +60,8 @@ type ServiceInfo struct {
 
 func NewTraceTracker() *TraceTracker {
 	return &TraceTracker{
-		traces: make(map[string]*Trace),
+		traces:  make(map[string]*Trace),
+		recency: list.New(),
 	}
 }
 
@@ -71,10 +76,15 @@ func (tt *TraceTracker) ProcessEvent(event *events.Event, k8sContext interface{}
 
 	tt.mu.Lock()
 	trace, exists := tt.traces[event.TraceID]
-	if !exists {
-		if len(tt.traces) >= config.MaxTrackedTraces {
+	if exists {
+		tt.touchLocked(trace)
+	} else {
+		if config.MaxTrackedTraces <= 0 {
 			tt.mu.Unlock()
 			return
+		}
+		for len(tt.traces) >= config.MaxTrackedTraces {
+			tt.evictOldestLocked()
 		}
 		trace = &Trace{
 			TraceID:       event.TraceID,
@@ -85,6 +95,7 @@ func (tt *TraceTracker) ProcessEvent(event *events.Event, k8sContext interface{}
 			exportedSpans: make(map[string]int),
 		}
 		tt.traces[event.TraceID] = trace
+		tt.touchLocked(trace)
 	}
 	tt.mu.Unlock()
 
@@ -109,6 +120,40 @@ func (tt *TraceTracker) ProcessEvent(event *events.Event, k8sContext interface{}
 	if k8sContext != nil {
 		tt.updateServiceInfo(trace, span, k8sContext)
 	}
+}
+
+// touchLocked marks trace as the most recently updated. Caller holds tt.mu.
+func (tt *TraceTracker) touchLocked(trace *Trace) {
+	if trace.recency != nil {
+		tt.recency.MoveToFront(trace.recency)
+		return
+	}
+	trace.recency = tt.recency.PushFront(trace)
+}
+
+// evictOldestLocked drops the trace idle longest. Caller holds tt.mu and
+// guarantees the tracker is not empty.
+func (tt *TraceTracker) evictOldestLocked() {
+	trace := tt.recency.Back().Value.(*Trace)
+	tt.removeLocked(trace.TraceID, trace)
+	tt.evicted++
+}
+
+// removeLocked forgets the trace stored under traceID. Caller holds tt.mu.
+func (tt *TraceTracker) removeLocked(traceID string, trace *Trace) {
+	delete(tt.traces, traceID)
+	if trace.recency != nil && tt.recency != nil {
+		tt.recency.Remove(trace.recency)
+		trace.recency = nil
+	}
+}
+
+// EvictedTraceCount reports how many traces were evicted to make room for
+// newer ones since the tracker was created.
+func (tt *TraceTracker) EvictedTraceCount() uint64 {
+	tt.mu.RLock()
+	defer tt.mu.RUnlock()
+	return tt.evicted
 }
 
 func (tt *TraceTracker) findOrCreateSpan(trace *Trace, event *events.Event) *Span {
@@ -366,7 +411,7 @@ func (tt *TraceTracker) CleanupOldTraces(maxAge time.Duration) {
 		age := now.Sub(trace.lastUpdate)
 		trace.mu.RUnlock()
 		if age > maxAge {
-			delete(tt.traces, traceID)
+			tt.removeLocked(traceID, trace)
 		}
 	}
 }

@@ -467,7 +467,9 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		if err := tracingManager.Start(tracingCtx); err != nil {
 			logger.Warn("Failed to start tracing manager", zap.Error(err))
 		} else {
+			sessionExportStatus = flushingExportStatus(tracingManager)
 			defer func() {
+				sessionExportStatus = nil
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 				defer shutdownCancel()
 				_ = tracingManager.Shutdown(shutdownCtx)
@@ -590,6 +592,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 	}
 
 	cgroupPaths, containerIDs := targetAttachSets(targetInfos)
+	setTracerCgroupOwners(tracer, targetCgroupOwners(targetInfos))
 	if err := attachTracerToCgroups(tracer, cgroupPaths); err != nil {
 		return fmt.Errorf("failed to attach to cgroups: %w", err)
 	}
@@ -597,33 +600,7 @@ func runPodtrace(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to set container IDs: %w", err)
 	}
 	sourceIndex.followRestartedContainers(tracer)
-	if targetRegistry != nil {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case snapshot := <-targetRegistry.Updates():
-					if len(snapshot) == 0 {
-						logger.Warn("Target registry currently empty; retaining previous cgroup filters")
-						continue
-					}
-					nextCgroups, nextContainerIDs := targetAttachSets(snapshot)
-					if err := attachTracerToCgroups(tracer, nextCgroups); err != nil {
-						logger.Warn("Failed to apply dynamic cgroup target update", zap.Error(err))
-						continue
-					}
-					if err := setTracerContainerIDs(tracer, nextContainerIDs); err != nil {
-						logger.Warn("Failed to apply dynamic container uprobe target update", zap.Error(err))
-					}
-					sourceIndex.Replace(snapshot)
-					logger.Info("Updated dynamic target set",
-						zap.Int("pods", len(snapshot)),
-						zap.Int("containers", len(nextContainerIDs)))
-				}
-			}
-		}()
-	}
+	followTargetRegistry(ctx, targetRegistry, tracer, sourceIndex)
 
 	var enricher *kubernetes.ContextEnricher
 	enrichmentEnabled := config.K8sEnrichmentEnabled()
@@ -1158,6 +1135,76 @@ func cgroupIDFromPath(path string) (uint64, error) {
 		return 0, fmt.Errorf("unsupported stat type for cgroup path")
 	}
 	return sys.Ino, nil
+}
+
+// followTargetRegistry retargets the tracer on every target registry update
+// until ctx ends. A nil registry means the targets are fixed.
+func followTargetRegistry(ctx context.Context, registry *kubernetes.TargetRegistry, tracer ebpf.TracerInterface, sourceIndex *sourcePodIndex) {
+	if registry == nil {
+		return
+	}
+	go applyTargetUpdates(ctx, registry.Updates(), tracer, sourceIndex)
+}
+
+func applyTargetUpdates(ctx context.Context, updates <-chan []*kubernetes.PodInfo, tracer ebpf.TracerInterface, sourceIndex *sourcePodIndex) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snapshot := <-updates:
+			applyDynamicTargetSnapshot(tracer, sourceIndex, snapshot)
+		}
+	}
+}
+
+// applyDynamicTargetSnapshot retargets the tracer and the source index to a
+// target registry update, keeping the previous filters when it is empty.
+func applyDynamicTargetSnapshot(tracer ebpf.TracerInterface, sourceIndex *sourcePodIndex, snapshot []*kubernetes.PodInfo) {
+	if len(snapshot) == 0 {
+		logger.Warn("Target registry currently empty; retaining previous cgroup filters")
+		return
+	}
+	nextCgroups, nextContainerIDs := targetAttachSets(snapshot)
+	setTracerCgroupOwners(tracer, targetCgroupOwners(snapshot))
+	if err := attachTracerToCgroups(tracer, nextCgroups); err != nil {
+		logger.Warn("Failed to apply dynamic cgroup target update", zap.Error(err))
+		return
+	}
+	if err := setTracerContainerIDs(tracer, nextContainerIDs); err != nil {
+		logger.Warn("Failed to apply dynamic container uprobe target update", zap.Error(err))
+	}
+	sourceIndex.Replace(snapshot)
+	logger.Info("Updated dynamic target set",
+		zap.Int("pods", len(snapshot)),
+		zap.Int("containers", len(nextContainerIDs)))
+}
+
+// setTracerCgroupOwners hands the tracer the pod owning each target cgroup so
+// resource-limit alerts name that pod and can raise trigger Events.
+func setTracerCgroupOwners(tr ebpf.TracerInterface, owners map[string]ebpf.CgroupOwner) {
+	if o, ok := tr.(interface {
+		SetCgroupOwners(map[string]ebpf.CgroupOwner)
+	}); ok {
+		o.SetCgroupOwners(owners)
+	}
+}
+
+// targetCgroupOwners maps every traced container cgroup of every target pod to
+// that pod.
+func targetCgroupOwners(infos []*kubernetes.PodInfo) map[string]ebpf.CgroupOwner {
+	owners := make(map[string]ebpf.CgroupOwner)
+	for _, p := range infos {
+		if p == nil || p.PodName == "" || p.Namespace == "" {
+			continue
+		}
+		owner := ebpf.CgroupOwner{PodName: p.PodName, Namespace: p.Namespace}
+		for _, c := range podContainerTargets(p) {
+			if c.CgroupPath != "" {
+				owners[c.CgroupPath] = owner
+			}
+		}
+	}
+	return owners
 }
 
 func attachTracerToCgroups(tr ebpf.TracerInterface, cgroupPaths []string) error {

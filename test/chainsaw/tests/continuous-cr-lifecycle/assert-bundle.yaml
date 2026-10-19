@@ -8,7 +8,7 @@ metadata:
     podtrace.io/exporter-config: lifecycle-otlp
 data:
   type: otlp
-  endpoint: otel-collector:4318
+  (endpoint == join('', ['otel-collector.', $namespace, '.svc:4318'])): true
 ---
 apiVersion: podtrace.io/v1alpha1
 kind: PodTrace

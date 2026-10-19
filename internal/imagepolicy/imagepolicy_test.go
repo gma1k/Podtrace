@@ -42,9 +42,41 @@ func TestNormalizeRepository_Errors(t *testing.T) {
 	}
 }
 
-func TestRepoAllowed_EmptyAllowlistAllowsEverything(t *testing.T) {
-	if err := RepoAllowed("attacker/evil:latest", nil); err != nil {
-		t.Errorf("empty allowlist must allow any image, got %v", err)
+func TestRepoAllowed_EmptyAllowlistFailsClosed(t *testing.T) {
+	for _, allowed := range [][]string{nil, {}, {""}, {" "}} {
+		if err := RepoAllowed("attacker/evil:latest", allowed); err == nil {
+			t.Errorf("allowlist %q must refuse an untrusted image", allowed)
+		}
+	}
+}
+
+func TestRepoAllowed_ExplicitWildcardAllowsEverything(t *testing.T) {
+	if err := RepoAllowed("attacker/evil:latest", []string{" * "}); err != nil {
+		t.Errorf("explicit wildcard must allow any image, got %v", err)
+	}
+}
+
+func TestRepoAllowed_RegistryHostIsCaseInsensitive(t *testing.T) {
+	cases := []struct {
+		ref     string
+		allowed string
+	}{
+		{"GHCR.IO/gma1k/podtrace:0.14.3", "ghcr.io/gma1k/podtrace"},
+		{"ghcr.io/gma1k/podtrace:0.14.3", "Ghcr.Io/gma1k/podtrace"},
+		{"Registry.Internal:5000/team/app", "registry.internal:5000/team"},
+		{"index.docker.io/library/nginx", "nginx"},
+		{"docker.io/nginx", "docker.io/library/nginx"},
+	}
+	for _, c := range cases {
+		if err := RepoAllowed(c.ref, []string{c.allowed}); err != nil {
+			t.Errorf("RepoAllowed(%q, [%q]) = %v, want allowed", c.ref, c.allowed, err)
+		}
+	}
+}
+
+func TestRepoAllowed_RepositoryPathStaysCaseSensitive(t *testing.T) {
+	if err := RepoAllowed("ghcr.io/GMA1K/podtrace:tag", []string{"ghcr.io/gma1k/podtrace"}); err == nil {
+		t.Error("a repository path differing in case must not match")
 	}
 }
 

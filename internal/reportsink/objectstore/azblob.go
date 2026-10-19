@@ -51,6 +51,7 @@ func newAzureSink(_ context.Context, cfg Config, d destination) (Sink, error) {
 	azClientOpts := &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			PerRetryPolicies: []policy.Policy{newAzureRetryLogPolicy()},
+			Transport:        guardedHTTPClient(nil),
 		},
 	}
 
@@ -65,9 +66,7 @@ func newAzureSink(_ context.Context, cfg Config, d destination) (Sink, error) {
 		if err != nil {
 			return nil, fmt.Errorf("azblob: new shared-key client: %w", err)
 		}
-	case stringFromCreds(creds, azureSecretKeyTenantID) != "" &&
-		stringFromCreds(creds, azureSecretKeyClientID) != "" &&
-		stringFromCreds(creds, azureSecretKeyClientSecret) != "":
+	case azureHasSPN(creds):
 		spn, err := azidentity.NewClientSecretCredential(
 			stringFromCreds(creds, azureSecretKeyTenantID),
 			stringFromCreds(creds, azureSecretKeyClientID),

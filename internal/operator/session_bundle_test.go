@@ -60,7 +60,7 @@ func TestEnsureSessionExporterBundle_CreatesConfigMap(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: SessionBundleName(s.UID), Namespace: "podtrace-system"}, &cm); err != nil {
 		t.Fatalf("get bundle CM: %v", err)
 	}
-	if cm.Data["type"] != "otlp" || cm.Data["endpoint"] != "otel:4318" {
+	if cm.Data["type"] != "otlp" || cm.Data["endpoint"] != "otel.team-a.svc:4318" {
 		t.Errorf("CM data wrong: %+v", cm.Data)
 	}
 	if cm.Data["bundle.yaml"] == "" {

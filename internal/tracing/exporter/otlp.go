@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -77,9 +76,15 @@ func NewOTLPExporter(endpoint string, sampleRate float64) (*OTLPExporter, error)
 		return nil, err
 	}
 
+	httpClient, err := otlpHTTPClient(config.TracingExporterTimeout, useInsecure)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx := context.Background()
 	opts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpointURL(endpointURL),
+		otlptracehttp.WithHTTPClient(httpClient),
 		otlptracehttp.WithTimeout(config.TracingExporterTimeout),
 		otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}),
 	}
@@ -122,33 +127,36 @@ func (e *OTLPExporter) ExportTraces(traces []*tracker.Trace) error {
 	}
 
 	ctx := context.Background()
-	var errs []error
+	var outcome exportOutcome
 	var snapshots []sdktrace.ReadOnlySpan
+	var shipped []string
 	for _, t := range traces {
 		if !e.shouldSample(t) {
 			continue
 		}
 
+		contributed := false
 		for _, span := range t.Spans {
 			snapshot, err := e.spanSnapshot(span)
 			if err != nil {
-				// Keep exporting, but surface the failure: returning nil
-				// here made the manager's exporter-failure alerting
-				// unreachable dead code.
-				errs = append(errs, fmt.Errorf("trace %s span %s: %w", t.TraceID, span.SpanID, err))
+				outcome.record(permanent(fmt.Errorf("trace %s span %s: %w", t.TraceID, span.SpanID, err)))
 				continue
 			}
 			snapshots = append(snapshots, snapshot)
+			contributed = true
+		}
+		if contributed {
+			shipped = append(shipped, t.TraceID)
 		}
 	}
 
 	if len(snapshots) > 0 {
 		if err := e.exporter.ExportSpans(ctx, snapshots); err != nil {
-			errs = append(errs, fmt.Errorf("export %d spans: %w", len(snapshots), err))
+			outcome.record(fmt.Errorf("export %d spans: %w", len(snapshots), err), shipped...)
 		}
 	}
 
-	return errors.Join(errs...)
+	return outcome.err()
 }
 
 func (e *OTLPExporter) shouldSample(t *tracker.Trace) bool {

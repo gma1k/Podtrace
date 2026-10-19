@@ -48,6 +48,9 @@ type Exporter interface {
 type CgroupTarget struct {
 	CgroupPath  string
 	ContainerID string
+
+	PodName   string
+	Namespace string
 }
 
 // TracerBackend is the minimal surface an Engine needs from the eBPF

@@ -66,9 +66,9 @@ var (
 	JaegerEndpoint            = os.Getenv("PODTRACE_JAEGER_ENDPOINT")
 	SplunkEndpoint            = os.Getenv("PODTRACE_SPLUNK_ENDPOINT")
 	SplunkToken               = getEnvOrDefault("PODTRACE_SPLUNK_TOKEN", "")
-	DataDogEndpoint           = getEnvOrDefault("PODTRACE_DATADOG_ENDPOINT", DefaultDataDogEndpoint)
+	DataDogEndpoint           = os.Getenv("PODTRACE_DATADOG_ENDPOINT")
 	DataDogAPIKey             = getEnvOrDefault("PODTRACE_DATADOG_API_KEY", "")
-	ZipkinEndpoint            = getEnvOrDefault("PODTRACE_ZIPKIN_ENDPOINT", DefaultZipkinEndpoint)
+	ZipkinEndpoint            = os.Getenv("PODTRACE_ZIPKIN_ENDPOINT")
 	MaxTraceIDLength          = 32
 	MaxSpanIDLength           = 16
 	MaxTraceStateLength       = 512
@@ -620,15 +620,15 @@ var (
 // AllowedAgentImageRepos returns the repository prefixes the operator accepts
 // in TracerConfig.spec.image.
 func AllowedAgentImageRepos() []string {
-	raw, set := os.LookupEnv("PODTRACE_ALLOWED_AGENT_IMAGE_REPOS")
-	if !set {
-		return []string{Image}
-	}
+	raw, _ := os.LookupEnv("PODTRACE_ALLOWED_AGENT_IMAGE_REPOS")
 	var repos []string
 	for _, r := range strings.Split(raw, ",") {
 		if r = strings.TrimSpace(r); r != "" {
 			repos = append(repos, r)
 		}
+	}
+	if len(repos) == 0 {
+		return []string{Image}
 	}
 	return repos
 }
@@ -666,8 +666,10 @@ func GetUserAgent() string {
 	return "Podtrace/" + GetVersion()
 }
 
+var OTLPInsecure bool
+
 func OTLPAllowInsecureNonLoopback() bool {
-	return getBoolEnvOrDefault("PODTRACE_OTLP_INSECURE", false)
+	return OTLPInsecure || getBoolEnvOrDefault("PODTRACE_OTLP_INSECURE", false)
 }
 
 func ExporterAllowInsecureNonLoopback() bool {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gma1k/podtrace/internal/config"
 	"github.com/gma1k/podtrace/internal/tracing/context"
 )
 
@@ -50,7 +51,7 @@ func (e *HTTPExtractor) ExtractFromHeaders(headers map[string]string) *context.T
 	if e.extractW3C {
 		if traceParent, ok := normalized["traceparent"]; ok {
 			if tc, err := context.ParseW3CTraceParent(traceParent); err == nil {
-				if tracestate, ok := normalized["tracestate"]; ok {
+				if tracestate, ok := normalized["tracestate"]; ok && len(tracestate) <= config.MaxTraceStateLength {
 					tc.State = tracestate
 				}
 				return tc
@@ -73,7 +74,9 @@ func (e *HTTPExtractor) ExtractFromHeaders(headers map[string]string) *context.T
 	if e.extractSplunk {
 		if requestID, ok := normalized["x-splunk-requestid"]; ok {
 			tc := context.NewTraceContextFromSeed(requestID)
-			tc.State = requestID
+			if len(requestID) <= config.MaxTraceStateLength {
+				tc.State = requestID
+			}
 			return tc
 		}
 	}

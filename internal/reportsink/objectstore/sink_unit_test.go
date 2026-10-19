@@ -128,7 +128,8 @@ func TestNewAzureSink_DefaultCredential(t *testing.T) {
 	// No credentials → falls through to NewDefaultAzureCredential, which
 	// builds a lazy credential chain without making network calls.
 	sink, err := New(context.Background(), Config{
-		URI: "azblob://devstoreaccount1/reports/",
+		URI:    "azblob://devstoreaccount1/reports/",
+		Policy: CredentialPolicy{AllowAmbientCredentials: true},
 	})
 	if err != nil {
 		t.Fatalf("New (default credential): %v", err)

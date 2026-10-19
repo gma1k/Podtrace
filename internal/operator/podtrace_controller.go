@@ -464,8 +464,20 @@ func allNodesReady(ns []podtracev1alpha1.PodTraceNodeStatus) bool {
 // lexicographically first NodeStatus row that an agent has tombstoned
 // (Ready=false with a non-empty Message).
 func firstDegradedNode(ns []podtracev1alpha1.PodTraceNodeStatus) (node, message string, reason podtracev1alpha1.NodeStatusReason, ok bool) {
+	node, message, reason, ok = firstNodeMatching(ns, func(n podtracev1alpha1.PodTraceNodeStatus) bool {
+		return !n.Ready && n.Message != ""
+	})
+	if ok {
+		return node, message, reason, ok
+	}
+	return firstNodeMatching(ns, func(n podtracev1alpha1.PodTraceNodeStatus) bool {
+		return n.Reason == podtracev1alpha1.NodeStatusReasonExporterDeliveryFailed && n.Message != ""
+	})
+}
+
+func firstNodeMatching(ns []podtracev1alpha1.PodTraceNodeStatus, match func(podtracev1alpha1.PodTraceNodeStatus) bool) (node, message string, reason podtracev1alpha1.NodeStatusReason, ok bool) {
 	for _, n := range ns {
-		if n.Ready || n.Message == "" {
+		if !match(n) {
 			continue
 		}
 		if !ok || n.Node < node {

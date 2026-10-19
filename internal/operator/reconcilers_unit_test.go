@@ -212,7 +212,7 @@ func TestPodTraceReconciler_FinalizerAddedThenReconciled(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: bundleName, Namespace: sysNS}, &bundle); err != nil {
 		t.Fatalf("bundle not created: %v", err)
 	}
-	if bundle.Data["type"] != "otlp" || bundle.Data["endpoint"] != "otel:4318" {
+	if bundle.Data["type"] != "otlp" || bundle.Data["endpoint"] != "otel.default.svc:4318" {
 		t.Errorf("bundle data wrong: %+v", bundle.Data)
 	}
 }

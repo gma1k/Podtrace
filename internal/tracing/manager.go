@@ -2,7 +2,9 @@ package tracing
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +38,20 @@ type Manager struct {
 	stopCh          chan struct{}
 	stopOnce        sync.Once
 	wg              sync.WaitGroup
+
+	exportMu sync.Mutex
+	statsMu  sync.Mutex
+	stats    map[string]*ExporterStatus
+}
+
+// ExporterStatus is the delivery record of one exporter over the
+// manager's lifetime: how many export batches it delivered, how many
+// failed, and the last failure (URLs redacted).
+type ExporterStatus struct {
+	Exporter         string
+	SucceededBatches int64
+	FailedBatches    int64
+	LastError        string
 }
 
 func NewManager() (*Manager, error) {
@@ -272,18 +288,44 @@ func (m *Manager) exporterTargets() []exporterTarget {
 // interval). force (shutdown) flushes spans of traces that are still
 // settling.
 func (m *Manager) exportTraces(force bool) {
+	m.exportMu.Lock()
+	defer m.exportMu.Unlock()
 	for _, target := range m.exporterTargets() {
 		traces := m.traceTracker.SnapshotForExport(m.exportInterval, force, target.name)
 		if len(traces) == 0 {
 			continue
 		}
-		if err := target.export(traces); err != nil {
+		err := target.export(traces)
+		m.recordExport(target.name, err)
+		if err != nil {
 			m.reportExporterFailure(target, err)
-			continue
 		}
-		// Advance only this exporter's watermark, on its own success.
-		m.traceTracker.CommitExport(traces, target.name)
+		// Advance only this exporter's watermark, and only past the traces
+		// it must not be offered again.
+		if done := settledTraces(traces, err); len(done) > 0 {
+			m.traceTracker.CommitExport(done, target.name)
+		}
 	}
+}
+
+// settledTraces returns the traces of a batch that must not be re-offered:
+// all of them on success, none on a whole-batch failure, and on a partial
+// failure every trace except those the exporter asks to retry.
+func settledTraces(traces []*tracker.Trace, err error) []*tracker.Trace {
+	if err == nil {
+		return traces
+	}
+	var partial *exporter.PartialExportError
+	if !errors.As(err, &partial) {
+		return nil
+	}
+	done := make([]*tracker.Trace, 0, len(traces))
+	for _, t := range traces {
+		if !partial.Retry(t.TraceID) {
+			done = append(done, t)
+		}
+	}
+	return done
 }
 
 // reportExporterFailure logs and (unless suppressed) raises an alert for a
@@ -311,6 +353,53 @@ func (m *Manager) reportExporterFailure(target exporterTarget, err error) {
 		},
 		Recommendations: target.recommendations,
 	})
+}
+
+// recordExport tallies one export batch for the exporter's status.
+func (m *Manager) recordExport(name string, err error) {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	if m.stats == nil {
+		m.stats = map[string]*ExporterStatus{}
+	}
+	st, ok := m.stats[name]
+	if !ok {
+		st = &ExporterStatus{Exporter: name}
+		m.stats[name] = st
+	}
+	if err == nil {
+		st.SucceededBatches++
+		return
+	}
+	st.FailedBatches++
+	st.LastError = alerting.RedactURLsInText(err.Error())
+}
+
+// Flush exports every pending span now, including spans of traces that are
+// still settling, without stopping the manager. A bounded run (a session
+// Job) calls it before reading ExportStatus so the status covers the final
+// batch too.
+func (m *Manager) Flush() {
+	if !m.enabled {
+		return
+	}
+	m.exportTraces(true)
+}
+
+// ExportStatus returns the delivery record of every exporter that has
+// attempted at least one batch, sorted by exporter name.
+func (m *Manager) ExportStatus() []ExporterStatus {
+	if !m.enabled {
+		return nil
+	}
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	out := make([]ExporterStatus, 0, len(m.stats))
+	for _, st := range m.stats {
+		out = append(out, *st)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Exporter < out[j].Exporter })
+	return out
 }
 
 func (m *Manager) GetRequestFlowGraph() *graph.RequestFlowGraph {

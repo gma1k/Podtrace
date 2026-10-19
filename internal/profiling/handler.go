@@ -33,6 +33,9 @@ type Handler struct {
 	triggered   atomic.Bool
 	triggerChan chan triggerReq
 	sem         chan struct{}
+	workers     int
+	queuedMu    sync.Mutex
+	queued      map[ProfileType]bool
 	podIP       string
 }
 
@@ -41,19 +44,40 @@ type triggerReq struct {
 	duration time.Duration
 }
 
+// triggerOutcome reports what happened to a trigger request.
+type triggerOutcome int
+
+const (
+	triggerQueued triggerOutcome = iota
+	triggerCoalesced
+	triggerRejected
+)
+
+const profileTypeCount = 3
+
 // NewHandler creates a Handler for the pod at podIP. ports is the list of
 // candidate pprof HTTP ports to probe.
 func NewHandler(podIP string, ports []int) *Handler {
-	concurrency := config.ProfilingMaxConcurrent
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency := profilingConcurrency()
+	return newHandler(podIP, ports, make(chan struct{}, concurrency), concurrency)
+}
+
+func newHandler(podIP string, ports []int, sem chan struct{}, workers int) *Handler {
 	return &Handler{
 		profiler:    NewPodProfiler(podIP, ports),
-		triggerChan: make(chan triggerReq, concurrency),
-		sem:         make(chan struct{}, concurrency),
+		triggerChan: make(chan triggerReq, profileTypeCount),
+		sem:         sem,
+		workers:     workers,
+		queued:      make(map[ProfileType]bool, profileTypeCount),
 		podIP:       podIP,
 	}
+}
+
+func profilingConcurrency() int {
+	if config.ProfilingMaxConcurrent < 1 {
+		return 1
+	}
+	return config.ProfilingMaxConcurrent
 }
 
 // clampProfileDuration bounds a requested profile duration to a sane maximum so
@@ -75,23 +99,63 @@ func (h *Handler) Run(ctx context.Context, eventChan <-chan *events.Event) {
 	discoverCtx, discoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	h.profiler.Discover(discoverCtx)
 	discoverCancel()
+	h.startWorkers(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case req := <-h.triggerChan:
-			go func(req triggerReq) {
-				h.sem <- struct{}{}
-				defer func() { <-h.sem }()
-				h.doProfile(ctx, req.ptype, req.duration)
-			}(req)
 		case e, ok := <-eventChan:
 			if !ok {
 				return
 			}
 			h.checkSpike(ctx, e)
 		}
+	}
+}
+
+// startWorkers starts the fixed pool that services triggerChan.
+func (h *Handler) startWorkers(ctx context.Context) {
+	for i := 0; i < h.workers; i++ {
+		go h.work(ctx)
+	}
+}
+
+func (h *Handler) work(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-h.triggerChan:
+			h.queuedMu.Lock()
+			delete(h.queued, req.ptype)
+			h.queuedMu.Unlock()
+			select {
+			case h.sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			h.doProfile(ctx, req.ptype, req.duration)
+			<-h.sem
+		}
+	}
+}
+
+// enqueue queues a profile request unless one of the same type is already
+// waiting, in which case the waiting request is kept and this one coalesces
+// into it. It never blocks.
+func (h *Handler) enqueue(ptype ProfileType, duration time.Duration) triggerOutcome {
+	h.queuedMu.Lock()
+	defer h.queuedMu.Unlock()
+	if h.queued[ptype] {
+		return triggerCoalesced
+	}
+	select {
+	case h.triggerChan <- triggerReq{ptype: ptype, duration: duration}:
+		h.queued[ptype] = true
+		return triggerQueued
+	default:
+		return triggerRejected
 	}
 }
 
@@ -118,11 +182,12 @@ func (h *Handler) checkSpike(ctx context.Context, e *events.Event) {
 		zap.Uint64("latency_ns", e.LatencyNS),
 		zap.Uint32("pid", e.PID))
 
-	// Run the quick profiles in the background so we don't block the event loop.
-	go func() {
-		h.doProfile(ctx, ProfileHeap, 0)
-		h.doProfile(ctx, ProfileGoroutine, 0)
-	}()
+	for _, ptype := range []ProfileType{ProfileHeap, ProfileGoroutine} {
+		if h.enqueue(ptype, 0) == triggerRejected {
+			logger.Warn("Profiling queue full; auto-triggered profile not queued",
+				zap.String("type", ptype.String()), zap.String("pod_ip", h.podIP))
+		}
+	}
 }
 
 // doProfile fetches the requested profile type and stores/updates the result.
@@ -153,11 +218,13 @@ func (h *Handler) doProfile(ctx context.Context, ptype ProfileType, duration tim
 			logger.Warn("CPU profile fetch failed", zap.String("error", cpu.Error))
 			metricsexporter.RecordProfilingFetchError(h.podIP, ProfileCPU.String())
 		}
-		// CPU profiles don't feed into CorrelatedResult directly — the binary is
-		// stored in cpu.RawBytes for potential file export. Update metadata only.
 		h.mu.Lock()
 		next := h.resultCopyLocked()
-		next.PprofAvailable = cpu.Available
+		if cpu.Available {
+			next.CPUProfile = cpu
+			next.PprofAvailable = true
+		}
+		next.PodIP = h.podIP
 		h.result = next
 		h.mu.Unlock()
 		return
@@ -193,12 +260,12 @@ func (h *Handler) resultCopyLocked() *CorrelatedResult {
 	return &cp
 }
 
-// TriggerNow enqueues an on-demand profile request (non-blocking; drops if full).
+// TriggerNow enqueues an on-demand profile request without blocking. A request
+// for a type that is already queued coalesces into the queued one.
 func (h *Handler) TriggerNow(ptype ProfileType, duration time.Duration) {
-	select {
-	case h.triggerChan <- triggerReq{ptype: ptype, duration: duration}:
-	default:
-		logger.Warn("Profiling trigger channel full; dropping request")
+	if h.enqueue(ptype, duration) == triggerRejected {
+		logger.Warn("Profiling queue full; dropping request",
+			zap.String("type", ptype.String()), zap.String("pod_ip", h.podIP))
 	}
 }
 
@@ -217,10 +284,11 @@ func (h *Handler) GenerateSection(allEvents []*events.Event, duration time.Durat
 	storedHeap := h.result
 	h.mu.RUnlock()
 
-	var heap, goroutine *ProfileResult
+	var heap, goroutine, cpu *ProfileResult
 	if storedHeap != nil {
 		heap = storedHeap.HeapProfile
 		goroutine = storedHeap.GoroutineProfile
+		cpu = storedHeap.CPUProfile
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), symbolizeBudget)
@@ -229,6 +297,10 @@ func (h *Handler) GenerateSection(allEvents []*events.Event, duration time.Durat
 	cr := Correlate(ctx, allEvents, heap, goroutine,
 		config.ProfilingAutoTriggerMS, stacktrace.NewResolver())
 	cr.PodIP = h.podIP
+	if cpu != nil && cpu.Available {
+		cr.CPUProfile = cpu
+		cr.PprofAvailable = true
+	}
 
 	// Merge pprof availability from profiler discovery.
 	if h.profiler.foundPort.Load() != 0 {
@@ -246,37 +318,74 @@ func (h *Handler) HTTPStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	ptype, dur := parseStartRequest(r)
+	writeStartResponse(w, ptype, dur, []triggerOutcome{h.enqueue(ptype, dur)}, nil)
+}
+
+// parseStartRequest reads the profile type and clamped duration of a
+// /profile/start request.
+func parseStartRequest(r *http.Request) (ProfileType, time.Duration) {
 	q := r.URL.Query()
-	ptypeStr := q.Get("type")
-	if ptypeStr == "" {
-		ptypeStr = "heap"
-	}
-	durationStr := q.Get("duration")
 	dur := config.ProfilingDefaultDuration
-	if durationStr != "" {
+	if durationStr := q.Get("duration"); durationStr != "" {
 		if d, err := time.ParseDuration(durationStr); err == nil && d > 0 {
 			dur = clampProfileDuration(d)
 		}
 	}
-
-	var ptype ProfileType
-	switch strings.ToLower(ptypeStr) {
+	switch strings.ToLower(q.Get("type")) {
 	case "cpu":
-		ptype = ProfileCPU
+		return ProfileCPU, dur
 	case "goroutine":
-		ptype = ProfileGoroutine
+		return ProfileGoroutine, dur
 	default:
-		ptype = ProfileHeap
+		return ProfileHeap, dur
 	}
+}
 
-	h.TriggerNow(ptype, dur)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status":   "triggered",
+// writeStartResponse answers a /profile/start request. It is 202 when at
+// least one pod queued or coalesced the request, and 429 when every pod's
+// queue was full, so a caller learns its request was not taken.
+func writeStartResponse(w http.ResponseWriter, ptype ProfileType, dur time.Duration, outcomes []triggerOutcome, extra map[string]interface{}) {
+	var queued, coalesced, rejected int
+	for _, o := range outcomes {
+		switch o {
+		case triggerQueued:
+			queued++
+		case triggerCoalesced:
+			coalesced++
+		default:
+			rejected++
+		}
+	}
+	status := "triggered"
+	code := http.StatusAccepted
+	switch {
+	case len(outcomes) > 0 && rejected == len(outcomes):
+		status = "busy"
+		code = http.StatusTooManyRequests
+		w.Header().Set("Retry-After", strconv.Itoa(int(clampProfileDuration(dur).Seconds())+1))
+		logger.Warn("Profiling request rejected: queue full",
+			zap.String("type", ptype.String()), zap.Int("pods", len(outcomes)))
+	case queued == 0 && coalesced > 0:
+		status = "already_queued"
+	}
+	body := map[string]interface{}{
+		"status":   status,
 		"type":     ptype.String(),
 		"duration": dur.String(),
-	})
+	}
+	if coalesced > 0 {
+		body["coalesced"] = coalesced
+	}
+	if rejected > 0 {
+		body["rejected"] = rejected
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // statusMap builds the profiling status payload for this pod.
@@ -329,6 +438,11 @@ func (h *Handler) resultMap() map[string]interface{} {
 		Bytes    int64  `json:"bytes"`
 		Count    int64  `json:"count"`
 	}
+	type cpuFn struct {
+		Function string `json:"function"`
+		CPUNS    int64  `json:"cpu_ns"`
+		Samples  int64  `json:"samples"`
+	}
 
 	hotFrames := make([]frame, len(result.HotFrames))
 	for i, f := range result.HotFrames {
@@ -342,6 +456,12 @@ func (h *Handler) resultMap() map[string]interface{} {
 	if result.HeapProfile != nil {
 		for _, f := range result.HeapProfile.TopFunctions {
 			topAllocs = append(topAllocs, allocFn(f))
+		}
+	}
+	var topCPU []cpuFn
+	if result.CPUProfile != nil {
+		for _, f := range result.CPUProfile.TopCPUFunctions {
+			topCPU = append(topCPU, cpuFn{Function: f.Function, CPUNS: int64(f.CPUTime), Samples: f.Samples})
 		}
 	}
 	goroutineCount := 0
@@ -361,6 +481,7 @@ func (h *Handler) resultMap() map[string]interface{} {
 		"hot_frames":        hotFrames,
 		"cpu_hot_processes": procs,
 		"top_heap_allocs":   topAllocs,
+		"top_cpu_functions": topCPU,
 		"goroutine_count":   goroutineCount,
 		"blocked_count":     blockedCount,
 		"page_fault_pids":   pageFaults,

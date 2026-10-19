@@ -51,6 +51,7 @@ const (
 	ConditionDegraded       = "Degraded"
 	ConditionPaused         = "Paused"
 	ConditionReportUploaded = "ReportUploaded"
+	ConditionExported       = "Exported"
 	ConditionReferenced     = "Referenced"
 	ConditionConflict       = "Conflict"
 

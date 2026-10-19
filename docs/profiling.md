@@ -351,6 +351,14 @@ curl http://localhost:<MANAGEMENT_PORT>/profile/status
 curl http://localhost:<MANAGEMENT_PORT>/profile/result
 ```
 
+`/profile/start` accepts two optional query parameters: `type` (`heap`, the default, `cpu` or `goroutine`) and `duration` (a Go duration such as `30s`, clamped to the configured maximum). It answers `202 Accepted` with `status: "triggered"`. If a capture of the same type is already waiting, the request is merged into it and the status is `already_queued`. If every queue is full it answers `429 Too Many Requests` with `status: "busy"` and a `Retry-After` header. Captures run through a fixed worker pool bounded by the profiling concurrency limit, and that bound is shared across pods in multi-pod mode.
+
+For CPU captures, `/profile/result` includes `top_cpu_functions`: the flat CPU time and sample count of each leaf function, parsed from the pprof CPU profile. The diagnose report shows the same list.
+
+When the CLI runs the trace in a pod on the target node (the default), `PODTRACE_MANAGEMENT_PORT` and `PODTRACE_PROFILING_PPROF_PORTS` are passed on to that pod. The API listens on the pod's loopback, so reach it with `kubectl port-forward pod/<podtrace-cli-pod> <port>`.
+
+pprof fetches always dial the target pod's IP directly. They ignore proxy environment variables and follow only redirects to the same scheme, host and port, such as `/debug/pprof` → `/debug/pprof/`. Function and frame names from the target are stripped of terminal control sequences before they are written to reports.
+
 ## Auto-trigger
 
 Profiling can also fire automatically when event latency exceeds configured thresholds — no manual intervention needed. When the handler detects a slow event, it triggers a capture and correlates the result against the active BPF `SchedSwitch` stacks from that time window.

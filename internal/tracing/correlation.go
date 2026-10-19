@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
@@ -45,44 +46,65 @@ type correlationEntry struct {
 // event.
 type correlationCache struct {
 	mu         sync.Mutex
-	m          map[string]correlationEntry
+	m          map[string]*list.Element
+	order      *list.List
 	maxEntries int
+	evicted    uint64
+}
+
+type correlationItem struct {
+	key   string
+	entry correlationEntry
 }
 
 func newCorrelationCache(maxEntries int) *correlationCache {
-	return &correlationCache{m: make(map[string]correlationEntry), maxEntries: maxEntries}
+	return &correlationCache{m: make(map[string]*list.Element), order: list.New(), maxEntries: maxEntries}
 }
 
 func (c *correlationCache) store(key string, e correlationEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.m) >= c.maxEntries {
-		c.m = make(map[string]correlationEntry, c.maxEntries)
-	}
 	e.storedNS = time.Now().UnixNano()
-	c.m[key] = e
+	if el, ok := c.m[key]; ok {
+		el.Value.(*correlationItem).entry = e
+		c.order.MoveToFront(el)
+		return
+	}
+	for len(c.m) > 0 && len(c.m) >= c.maxEntries {
+		c.removeLocked(c.order.Back())
+		c.evicted++
+	}
+	c.m[key] = c.order.PushFront(&correlationItem{key: key, entry: e})
 }
 
 func (c *correlationCache) loadDelete(key string) (correlationEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.m[key]
-	if ok {
-		delete(c.m, key)
+	el, ok := c.m[key]
+	if !ok {
+		return correlationEntry{}, false
 	}
-	return e, ok
+	c.removeLocked(el)
+	return el.Value.(*correlationItem).entry, true
 }
 
 // sweep drops entries older than maxAge (requests that never got a response).
+// The list is in store order, so it stops at the first fresh entry.
 func (c *correlationCache) sweep(maxAge time.Duration) {
 	cutoff := time.Now().Add(-maxAge).UnixNano()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, e := range c.m {
-		if e.storedNS < cutoff {
-			delete(c.m, k)
+	for el := c.order.Back(); el != nil; el = c.order.Back() {
+		if el.Value.(*correlationItem).entry.storedNS >= cutoff {
+			return
 		}
+		c.removeLocked(el)
 	}
+}
+
+func (c *correlationCache) removeLocked(el *list.Element) {
+	delete(c.m, el.Value.(*correlationItem).key)
+	c.order.Remove(el)
 }
 
 // isCorrelatableL7 reports whether an event is one half of an L7 request/

@@ -136,12 +136,17 @@ type ebpfBackendAdapter struct {
 
 func (a *ebpfBackendAdapter) SetCgroups(targets []tracer.CgroupTarget) error {
 	paths := make([]string, 0, len(targets))
+	owners := make(map[string]ebpf.CgroupOwner, len(targets))
 	for _, t := range targets {
 		if t.CgroupPath == "" {
 			continue
 		}
 		paths = append(paths, t.CgroupPath)
+		if t.PodName != "" && t.Namespace != "" {
+			owners[t.CgroupPath] = ebpf.CgroupOwner{PodName: t.PodName, Namespace: t.Namespace}
+		}
 	}
+	setTracerCgroupOwners(a.tr, owners)
 	return a.tr.SetCgroups(paths)
 }
 

@@ -8,7 +8,7 @@ metadata:
     podtrace.io/exporter-config: ns-selector-otlp
 data:
   type: otlp
-  endpoint: otel-collector:4318
+  (endpoint == join('', ['otel-collector.', $namespace, '.svc:4318'])): true
   target_namespaces: ns-selector-in
 ---
 apiVersion: podtrace.io/v1alpha1

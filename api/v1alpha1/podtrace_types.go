@@ -50,7 +50,7 @@ type PodTraceSpec struct {
 // NodeStatusReason is the stable enum the agent stamps onto
 // status.nodeStatus[].reason when a node reports unready or a CR rule
 // fails.
-// +kubebuilder:validation:Enum=AgentUnready;BackendUnavailable;BundleLoadFailed;ExporterBuildFailed;ProgramAttachFailed;PolicyParseError;PodMatchFailed;CgroupResolutionFailed;Unknown
+// +kubebuilder:validation:Enum=AgentUnready;BackendUnavailable;BundleLoadFailed;ExporterBuildFailed;ExporterDeliveryFailed;ProgramAttachFailed;PolicyParseError;PodMatchFailed;CgroupResolutionFailed;Unknown
 type NodeStatusReason string
 
 var (
@@ -63,6 +63,11 @@ var (
 	NodeStatusReasonPodMatchFailed         = NodeStatusReason("PodMatchFailed")
 	NodeStatusReasonCgroupResolutionFailed = NodeStatusReason("CgroupResolutionFailed")
 	NodeStatusReasonUnknown                = NodeStatusReason("Unknown")
+
+	// NodeStatusReasonExporterDeliveryFailed marks a node that is tracing
+	// (the row stays Ready) but whose exporter is not delivering spans to
+	// the backend: an unreachable collector or a rejected credential.
+	NodeStatusReasonExporterDeliveryFailed = NodeStatusReason("ExporterDeliveryFailed")
 )
 
 // PodTraceNodeStatus reports one agent's view of this PodTrace.

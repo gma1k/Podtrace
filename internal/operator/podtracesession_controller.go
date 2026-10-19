@@ -206,6 +206,11 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := validateManagedCRName("ExporterConfig", ec.Name); err != nil {
 		return ctrl.Result{}, r.failSessionTerminally(ctx, &session, "ExporterConfigNameTooLong", err.Error())
 	}
+	if err := checkSessionObjectStorePolicy(ctx, r.reader(), &session, objectStoreCredentialPolicy(&session, r.SystemNamespace)); err != nil {
+		r.setCondition(&session, ConditionDegraded, metav1.ConditionTrue, "ObjectStoreCreds", err.Error())
+		_ = r.Status().Update(ctx, &session)
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	}
 	for _, ns := range resolved.namespaces {
 		if err := ensureSessionExporterBundleIfReferenced(ctx, r.Client, r.reader(), &session, &ec, ns, hasExporter); err != nil {
 			r.setCondition(&session, ConditionDegraded, metav1.ConditionTrue, "BundleSync", err.Error())
@@ -295,9 +300,11 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	session.Status.State = computeSessionState(session.Status.Jobs, jobs, len(targets.Nodes))
 	session.Status.ObservedGeneration = session.Generation
 
-	if err := populateSessionSummaries(ctx, r.Client, &session, jobs); err != nil {
+	summaryByNode, err := collectSessionSummaries(ctx, r.Client, jobs)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
+	applySessionSummaries(&session, summaryByNode)
 	if session.Status.StartTime == nil && anyJobStarted(jobs) {
 		now := metav1.Now()
 		session.Status.StartTime = &now
@@ -315,6 +322,7 @@ func (r *PodTraceSessionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	r.setCondition(&session, ConditionReconciled, metav1.ConditionTrue, "Reconciled", reconciledMessage)
 	r.setCondition(&session, ConditionDegraded, metav1.ConditionFalse, "Reconciled", "")
+	applySessionExportConditions(&session, summaryByNode)
 
 	if obs, err := harvestReportLocation(ctx, r.Client, &session, systemNS); err != nil {
 		logger.Error(err, "harvest report location")
@@ -660,6 +668,7 @@ func (r *PodTraceSessionReconciler) ensureJobs(ctx context.Context, s *podtracev
 			})
 			if job.Spec.Template.Spec.Containers == nil {
 				job.Spec = buildSessionJobSpec(s, nodeConfig, node, targets)
+				applyObjectStoreCredentialPolicyEnv(&job.Spec.Template.Spec, objectStoreCredentialPolicy(s, r.SystemNamespace))
 			}
 			return nil
 		}); err != nil {

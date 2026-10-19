@@ -187,14 +187,17 @@ spec:
                     description: "ObjectStoreReference names a cloud-storage destination
                       for a session\nreport. When CredentialsSecretRef is unset, the
                       uploader uses the\ncloud SDK's default credential chain (IRSA
-                      / Workload Identity /\nManaged Identity) — the cloud-native
-                      preferred path. The explicit\nSecret is the fallback for clusters
-                      without ambient credentials.\n\nPer-backend Secret key schema
-                      (all optional — missing keys defer to\nthe SDK default chain):\n\n\tS3:
-                      \    access_key_id, secret_access_key, session_token,\n\t        region,
-                      endpoint, force_path_style\n\tGCS:    service_account_json,
-                      endpoint\n\tAzure:  tenant_id, client_id, client_secret,\n\t
-                      \       account_key, endpoint"
+                      / Workload Identity /\nManaged Identity). That ambient fallback
+                      is allowed for sessions in\nthe operator's own namespace; sessions
+                      in other namespaces need the\noperator's cross-namespace ambient-credentials
+                      opt-in or a Secret with\nstatic credentials. A custom endpoint
+                      is honoured only alongside\nstatic credentials or when the operator's
+                      endpoint allowlist names it.\n\nPer-backend Secret key schema
+                      (all optional — missing keys defer to\nthe SDK default chain,
+                      subject to the rules above):\n\n\tS3:     access_key_id, secret_access_key,
+                      session_token,\n\t        region, endpoint, force_path_style\n\tGCS:
+                      \   service_account_json, endpoint\n\tAzure:  tenant_id, client_id,
+                      client_secret,\n\t        account_key, endpoint"
                     properties:
                       credentialsSecretRef:
                         description: |-

@@ -421,6 +421,7 @@ spec:
                       - BackendUnavailable
                       - BundleLoadFailed
                       - ExporterBuildFailed
+                      - ExporterDeliveryFailed
                       - ProgramAttachFailed
                       - PolicyParseError
                       - PodMatchFailed

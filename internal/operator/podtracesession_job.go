@@ -17,7 +17,6 @@ import (
 
 const defaultSessionDeadlineOffset = 90 * time.Second
 
-// sessionClock is the operator's clock, replaceable in tests.
 var sessionClock = time.Now
 
 func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alpha1.TracerConfig, node string, targets sessionTargets) batchv1.JobSpec {
@@ -139,6 +138,7 @@ func buildSessionJobSpec(s *podtracev1alpha1.PodTraceSession, tc *podtracev1alph
 			Value: "/etc/podtrace/exporter-credential/credential",
 		},
 		{Name: "PODTRACE_OTLP_INSECURE", Value: "1"},
+		{Name: "PODTRACE_EXPORTER_INSECURE", Value: "1"},
 		{Name: config.EnvArtifactBaseDir, Value: "/var/run/podtrace"},
 		podNamespaceEnv(),
 	}

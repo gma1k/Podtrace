@@ -3,7 +3,6 @@ package exporter
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,23 +109,26 @@ func (e *SplunkExporter) buildEvents(t *tracker.Trace) []SplunkEvent {
 // would exceed splunkMaxBatchBytes, so a whole export is a few sized POSTs
 // instead of one request per span.
 func (e *SplunkExporter) sendBatch(events []SplunkEvent) error {
-	var errs []error
+	var outcome exportOutcome
 	var body bytes.Buffer
+	var batchTraces []string
+	inBatch := map[string]struct{}{}
 
 	flush := func() {
 		if body.Len() == 0 {
 			return
 		}
-		if err := e.postBatch(body.Bytes()); err != nil {
-			errs = append(errs, err)
-		}
+		outcome.record(e.postBatch(body.Bytes()), batchTraces...)
 		body.Reset()
+		batchTraces = batchTraces[:0]
+		clear(inBatch)
 	}
 
 	for _, event := range events {
+		traceID, _ := event.Event["trace_id"].(string)
 		payload, err := marshalJSON(event)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("marshal event: %w", err))
+			outcome.record(permanent(fmt.Errorf("marshal event: %w", err)))
 			continue
 		}
 		if body.Len() > 0 && body.Len()+len(payload)+1 > splunkMaxBatchBytes {
@@ -134,10 +136,14 @@ func (e *SplunkExporter) sendBatch(events []SplunkEvent) error {
 		}
 		body.Write(payload)
 		body.WriteByte('\n')
+		if _, seen := inBatch[traceID]; !seen {
+			inBatch[traceID] = struct{}{}
+			batchTraces = append(batchTraces, traceID)
+		}
 	}
 	flush()
 
-	return errors.Join(errs...)
+	return outcome.err()
 }
 
 func (e *SplunkExporter) postBatch(payload []byte) error {
@@ -161,7 +167,7 @@ func (e *SplunkExporter) postBatch(payload []byte) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return statusError(resp.StatusCode)
 	}
 	return nil
 }

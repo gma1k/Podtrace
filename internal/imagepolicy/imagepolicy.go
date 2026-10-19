@@ -15,7 +15,12 @@ import (
 	"strings"
 )
 
-const dockerDefaultRegistry = "docker.io"
+const (
+	dockerDefaultRegistry = "docker.io"
+	dockerLegacyRegistry  = "index.docker.io"
+
+	AllowAnyRepository = "*"
+)
 
 // NormalizeRepository extracts the registry+repository portion of an image
 // reference, stripping any tag and digest and applying Docker Hub's implicit
@@ -46,7 +51,11 @@ func NormalizeRepository(ref string) (string, error) {
 		return "", fmt.Errorf("image reference %q has no repository path", ref)
 	}
 
-	if registry == "" {
+	registry = strings.ToLower(registry)
+	if registry == dockerLegacyRegistry {
+		registry = dockerDefaultRegistry
+	}
+	if registry == "" || registry == dockerDefaultRegistry {
 		registry = dockerDefaultRegistry
 		if !strings.Contains(remainder, "/") {
 			remainder = "library/" + remainder
@@ -62,15 +71,19 @@ func splitRegistry(ref string) (registry, remainder string) {
 		return "", ref
 	}
 	first := ref[:slash]
-	if strings.ContainsAny(first, ".:") || first == "localhost" {
+	if strings.ContainsAny(first, ".:") || first == "localhost" || strings.ToLower(first) != first {
 		return first, ref[slash+1:]
 	}
 	return "", ref
 }
 
+// RepoAllowed reports whether ref resolves to a repository under one of
+// allowedRepos.
 func RepoAllowed(ref string, allowedRepos []string) error {
-	if len(allowedRepos) == 0 {
-		return nil
+	for _, allowed := range allowedRepos {
+		if strings.TrimSpace(allowed) == AllowAnyRepository {
+			return nil
+		}
 	}
 
 	repo, err := NormalizeRepository(ref)

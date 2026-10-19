@@ -26,7 +26,7 @@ A few minutes of self-diagnosis usually shortens the round-trip by days:
 2. **Read the agent's own diagnostic surface** before logs:
    - `kubectl describe podtrace <name>` — the `Degraded` condition and
      each `nodeStatus[*].reason` carry a closed-enum reason
-     (`BackendUnavailable`, `ExporterBuildFailed`, `BundleLoadFailed`,
+     (`BackendUnavailable`, `ExporterBuildFailed`, `ExporterDeliveryFailed`, `BundleLoadFailed`,
      …) that usually points straight at the cause.
    - `kubectl get --raw /api/v1/namespaces/podtrace-system/services/podtrace-agent:9090/proxy/metrics`
      (or port-forward the agent's `:9090`) to inspect

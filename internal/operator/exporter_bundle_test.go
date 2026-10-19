@@ -38,7 +38,7 @@ func TestRenderBundlePayload_OTLP_LiteralHeaders(t *testing.T) {
 	}
 	for k, v := range map[string]string{
 		"type":             "otlp",
-		"endpoint":         "otel:4318",
+		"endpoint":         "otel.default.svc:4318",
 		"protocol":         "grpc",
 		"insecure":         "true",
 		"headers.X-Tenant": "team-a",
@@ -87,7 +87,7 @@ func TestRenderBundlePayload_Jaeger_NoCredentials(t *testing.T) {
 	if secret != nil {
 		t.Error("Jaeger has no credentials; Secret ref must be nil")
 	}
-	if data["endpoint"] != "http://jaeger:14268" || data["type"] != "jaeger" {
+	if data["endpoint"] != "http://jaeger.default.svc:14268" || data["type"] != "jaeger" {
 		t.Errorf("payload wrong: %v", data)
 	}
 }
@@ -116,7 +116,7 @@ func TestRenderBundlePayload_Splunk_RequiresTokenSecret(t *testing.T) {
 	if secret == nil || secret.Name != "hec" {
 		t.Fatalf("expected HEC credential ref, got %+v", secret)
 	}
-	if data["endpoint"] != "https://splunk:8088" {
+	if data["endpoint"] != "https://splunk.default.svc:8088" {
 		t.Errorf("splunk endpoint lost: %v", data)
 	}
 }

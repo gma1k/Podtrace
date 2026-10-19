@@ -3,7 +3,6 @@ package exporter
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,18 +57,18 @@ func (e *DataDogExporter) ExportTraces(traces []*tracker.Trace) error {
 		return nil
 	}
 
-	var errs []error
+	var outcome exportOutcome
 	for _, t := range traces {
 		if !e.shouldSample(t) {
 			continue
 		}
 
 		if err := e.exportTrace(t); err != nil {
-			errs = append(errs, fmt.Errorf("trace %s: %w", t.TraceID, err))
+			outcome.record(fmt.Errorf("trace %s: %w", t.TraceID, err), t.TraceID)
 		}
 	}
 
-	return errors.Join(errs...)
+	return outcome.err()
 }
 
 func (e *DataDogExporter) shouldSample(t *tracker.Trace) bool {
@@ -124,7 +123,7 @@ func (e *DataDogExporter) exportTrace(t *tracker.Trace) error {
 	// v0.4 payload: array of traces, each trace is an array of spans.
 	payload, err := marshalJSON([][]datadogSpan{ddSpans})
 	if err != nil {
-		return fmt.Errorf("failed to marshal datadog payload: %w", err)
+		return permanent(fmt.Errorf("failed to marshal datadog payload: %w", err))
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "POST", e.endpoint, bytes.NewReader(payload))
@@ -148,7 +147,7 @@ func (e *DataDogExporter) exportTrace(t *tracker.Trace) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return statusError(resp.StatusCode)
 	}
 
 	return nil

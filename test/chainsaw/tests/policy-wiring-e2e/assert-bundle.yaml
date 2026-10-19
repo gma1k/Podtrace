@@ -9,7 +9,7 @@ metadata:
     podtrace.io/exporter-config: policy-otlp
 data:
   type: otlp
-  endpoint: otel-collector:4318
+  (endpoint == join('', ['otel-collector.', $namespace, '.svc:4318'])): true
   sample_percent: "50"
   filters: "dns,fs"
   threshold_error_rate_percent: "5"

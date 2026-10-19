@@ -48,7 +48,7 @@ func NewSlackSender(webhookURL, channel string, timeout time.Duration) (*SlackSe
 	}
 	parsedURL, err := url.Parse(webhookURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid slack webhook URL: %w", err)
+		return nil, fmt.Errorf("invalid slack webhook URL: %w", redactSendError(err))
 	}
 	if parsedURL.Scheme != "https" {
 		return nil, fmt.Errorf("slack webhook URL must use https scheme")
@@ -76,8 +76,8 @@ func (s *SlackSender) Send(ctx context.Context, alert *Alert) error {
 	fields := buildSlackFields(alert)
 	attachment := SlackAttachment{
 		Color:     color,
-		Title:     alert.Title,
-		Text:      alert.Message,
+		Title:     slackEscape(alert.Title),
+		Text:      slackEscape(alert.Message),
 		Fields:    fields,
 		Footer:    "Podtrace",
 		Timestamp: alert.Timestamp.Unix(),
@@ -96,13 +96,13 @@ func (s *SlackSender) Send(ctx context.Context, alert *Alert) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", s.webhookURL, bytes.NewReader(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create request: %w", redactSendError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", config.GetUserAgent())
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("failed to send request: %w", redactSendError(err))
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -110,13 +110,19 @@ func (s *SlackSender) Send(ctx context.Context, alert *Alert) error {
 	}()
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, RedactURLsInText(string(bodyBytes)))
 	}
 	return nil
 }
 
 func (s *SlackSender) Name() string {
 	return "slack"
+}
+
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+func slackEscape(s string) string {
+	return slackEscaper.Replace(s)
 }
 
 func mapSeverityToSlackColor(severity AlertSeverity) string {
@@ -138,32 +144,32 @@ func buildSlackFields(alert *Alert) []SlackField {
 	fields := make([]SlackField, 0, 8)
 	fields = append(fields, SlackField{
 		Title: "Severity",
-		Value: string(alert.Severity),
+		Value: slackEscape(string(alert.Severity)),
 		Short: true,
 	})
 	fields = append(fields, SlackField{
 		Title: "Source",
-		Value: alert.Source,
+		Value: slackEscape(alert.Source),
 		Short: true,
 	})
 	if alert.PodName != "" {
 		fields = append(fields, SlackField{
 			Title: "Pod",
-			Value: alert.PodName,
+			Value: slackEscape(alert.PodName),
 			Short: true,
 		})
 	}
 	if alert.Namespace != "" {
 		fields = append(fields, SlackField{
 			Title: "Namespace",
-			Value: alert.Namespace,
+			Value: slackEscape(alert.Namespace),
 			Short: true,
 		})
 	}
 	if alert.ErrorCode != "" {
 		fields = append(fields, SlackField{
 			Title: "Error Code",
-			Value: alert.ErrorCode,
+			Value: slackEscape(alert.ErrorCode),
 			Short: true,
 		})
 	}
@@ -171,7 +177,7 @@ func buildSlackFields(alert *Alert) []SlackField {
 		recs := strings.Join(alert.Recommendations[:min(3, len(alert.Recommendations))], "\n")
 		fields = append(fields, SlackField{
 			Title: "Recommendations",
-			Value: recs,
+			Value: slackEscape(recs),
 			Short: false,
 		})
 	}

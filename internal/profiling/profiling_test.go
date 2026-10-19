@@ -178,8 +178,11 @@ func TestFetchCPUProfile_LiveServer(t *testing.T) {
 	if !r.Available {
 		t.Errorf("expected Available=true, error=%q", r.Error)
 	}
-	if len(r.RawBytes) == 0 {
-		t.Error("expected non-empty RawBytes")
+	if r.RawBytes != nil {
+		t.Error("expected the CPU profile body to be dropped once parsed")
+	}
+	if len(r.TopCPUFunctions) != 0 {
+		t.Errorf("expected no functions from an unparseable body, got %v", r.TopCPUFunctions)
 	}
 }
 

@@ -135,6 +135,8 @@ func BuildPodSpec(opts PodSpecOptions) (*corev1.Pod, error) {
 		"PODTRACE_ALERT_WARN_PCT",
 		"PODTRACE_ALERT_CRIT_PCT",
 		"PODTRACE_ALERT_EMERG_PCT",
+		"PODTRACE_MANAGEMENT_PORT",
+		"PODTRACE_PROFILING_PPROF_PORTS",
 	}
 	for _, name := range passthrough {
 		if v := os.Getenv(name); v != "" {

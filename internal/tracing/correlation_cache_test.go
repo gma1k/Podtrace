@@ -10,17 +10,25 @@ import (
 	"github.com/gma1k/podtrace/internal/events"
 )
 
-func TestCorrelationCache_StoreEvictsWhenFull(t *testing.T) {
+func TestCorrelationCache_StoreEvictsOnlyTheOldestWhenFull(t *testing.T) {
 	c := newCorrelationCache(2)
 	c.store("k1", correlationEntry{traceID: "t1"})
 	c.store("k2", correlationEntry{traceID: "t2"})
 	c.store("k3", correlationEntry{traceID: "t3"})
 
-	if got := len(c.m); got != 1 {
-		t.Fatalf("cache size after overflow = %d, want 1 (map reset then single insert)", got)
+	if got := len(c.m); got != 2 {
+		t.Fatalf("cache size after overflow = %d, want 2", got)
 	}
-	if e, ok := c.loadDelete("k3"); !ok || e.traceID != "t3" {
-		t.Errorf("newest entry k3 should survive the reset, got %+v ok=%v", e, ok)
+	if _, ok := c.loadDelete("k1"); ok {
+		t.Error("oldest entry k1 should have been evicted")
+	}
+	for _, k := range []string{"k2", "k3"} {
+		if _, ok := c.loadDelete(k); !ok {
+			t.Errorf("in-flight entry %s was evicted by an overflow", k)
+		}
+	}
+	if c.evicted != 1 {
+		t.Errorf("evicted = %d, want 1", c.evicted)
 	}
 }
 

@@ -45,12 +45,12 @@ func ScanFile(f *elf.File) ([]Probe, error) {
 	if data == nil {
 		return nil, nil
 	}
-	return parseStapsdtNotes(data, f.ByteOrder), nil
+	return parseStapsdtNotes(data, f.ByteOrder, argArchForMachine(f.Machine)), nil
 }
 
 // parseStapsdtNotes walks the .note.stapsdt note stream and returns the USDT
 // probes it declares. data is attacker-controlled.
-func parseStapsdtNotes(data []byte, order binary.ByteOrder) []Probe {
+func parseStapsdtNotes(data []byte, order binary.ByteOrder, arch argArch) []Probe {
 	var probes []Probe
 	dlen := uint64(len(data))
 	var offset uint64
@@ -102,7 +102,7 @@ func parseStapsdtNotes(data []byte, order binary.ByteOrder) []Probe {
 			Name:     probeName,
 			PC:       pc,
 			SemAddr:  semAddr,
-			Args:     parseArgDesc(argDesc),
+			Args:     parseArgDescFor(argDesc, arch),
 		})
 	}
 	return probes

@@ -26,7 +26,7 @@ func NewWebhookSender(webhookURL string, timeout time.Duration) (*WebhookSender,
 	}
 	parsedURL, err := url.Parse(webhookURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid webhook URL: %w", err)
+		return nil, fmt.Errorf("invalid webhook URL: %w", redactSendError(err))
 	}
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return nil, fmt.Errorf("webhook URL must use http or https scheme")
@@ -73,13 +73,13 @@ func (w *WebhookSender) Send(ctx context.Context, alert *Alert) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", w.url, bytes.NewReader(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create request: %w", redactSendError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", config.GetUserAgent())
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("failed to send request: %w", redactSendError(err))
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -87,7 +87,7 @@ func (w *WebhookSender) Send(ctx context.Context, alert *Alert) error {
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, RedactURLsInText(string(bodyBytes)))
 	}
 	return nil
 }

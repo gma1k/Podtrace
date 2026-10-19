@@ -65,7 +65,11 @@ func newS3Sink(ctx context.Context, cfg Config, d destination) (Sink, error) {
 		return nil, fmt.Errorf("s3: load AWS config: %w", err)
 	}
 
-	clientOpts := []func(*s3.Options){}
+	clientOpts := []func(*s3.Options){func(o *s3.Options) {
+		o.HTTPClient = guardedHTTPClient(func(rt http.RoundTripper) http.RoundTripper {
+			return newLoggingTransport(rt, SchemeS3, nil)
+		})
+	}}
 	if endpoint := stringFromCreds(creds, s3SecretKeyEndpoint); endpoint != "" {
 		clientOpts = append(clientOpts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(endpoint)

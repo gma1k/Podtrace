@@ -181,8 +181,18 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:    "credential_kv",
-			Pattern: regexp.MustCompile(`(?i)(` + credentialKeyNames + `)=[^\s&;,]+`),
+			Pattern: regexp.MustCompile(`(?i)(` + credentialKeyNames + `)[ \t]*(?:=|%3D)[ \t]*[^\s&;,]+`),
 			Replace: "${1}=***",
+		},
+		{
+			Name:    "credential_query_param",
+			Pattern: regexp.MustCompile(`(?i)((?:[?&]|%3F|%26)(?:sig|key|code))(=|%3D)[^\s&#;,"'<>]+`),
+			Replace: "${1}${2}***",
+		},
+		{
+			Name:    "google_api_key",
+			Pattern: regexp.MustCompile(`AIza[0-9A-Za-z_\-]{35}`),
+			Replace: "AIza***",
 		},
 		{
 			Name:    "bearer_token",
@@ -201,8 +211,13 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:    "credential_json",
-			Pattern: regexp.MustCompile(`(?i)"(` + credentialKeyNames + `)"\s*:\s*"[^"]*"`),
+			Pattern: regexp.MustCompile(`(?i)"(` + credentialKeyNames + `)"\s*:\s*"(?:[^"\\]|\\.)*"`),
 			Replace: `"${1}":"***"`,
+		},
+		{
+			Name:    "credential_escaped_json",
+			Pattern: regexp.MustCompile(`(?i)\\"(` + credentialKeyNames + `)\\"\s*:\s*\\"(?:[^"\\]|\\\\\\\\|\\\\\\"|\\[^"\\])*\\"`),
+			Replace: `\"${1}\":\"***\"`,
 		},
 		{
 			Name:    "credential_yaml",

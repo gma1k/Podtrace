@@ -62,7 +62,12 @@ func clean(s string) bool {
 //   - DEL (0x7f) and the C1 controls (0x80–0x9f);
 //   - the Unicode line/paragraph separators (U+2028/U+2029);
 //   - the bidirectional override and isolate format characters
-//     (U+202A–U+202E, U+2066–U+2069) — the Trojan-Source spoofing class.
+//     (U+202A–U+202E, U+2066–U+2069) and the implicit direction marks
+//     (U+200E LRM, U+200F RLM, U+061C ALM) — the Trojan-Source spoofing
+//     class;
+//   - the invisible U+200B (zero-width space) and U+FEFF (BOM / zero-width
+//     no-break space), which make two visibly identical names differ. The
+//     joiners U+200C/U+200D stay: scripts and emoji sequences need them.
 //
 // Every other rune, including normal printable Unicode, is preserved.
 func unsafeRune(r rune) bool {
@@ -76,6 +81,10 @@ func unsafeRune(r rune) bool {
 	case r >= 0x202a && r <= 0x202e:
 		return true
 	case r >= 0x2066 && r <= 0x2069:
+		return true
+	case r == 0x061c, r == 0x200e, r == 0x200f:
+		return true
+	case r == 0x200b, r == 0xfeff:
 		return true
 	default:
 		return false

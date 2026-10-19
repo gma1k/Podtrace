@@ -38,9 +38,11 @@ func (r *Resolver) Endpoint() string {
 	return r.endpoint
 }
 
+// DefaultCandidateEndpoints lists the CRI gRPC sockets probed when no
+// endpoint is configured, most common first.
 func DefaultCandidateEndpoints() []string {
 	endpoints := []string{
-		// Standard containerd (Debian, Ubuntu, GKE, AKS, EKS AL2023, Talos)
+		// Standard containerd (Debian, Ubuntu, GKE, AKS, EKS AL2023, Talos, Kind)
 		"unix:///run/containerd/containerd.sock",
 		"unix:///var/run/containerd/containerd.sock",
 		// CRI-O (OpenShift, Fedora, RHEL)
@@ -51,10 +53,12 @@ func DefaultCandidateEndpoints() []string {
 		"unix:///var/run/k3s/containerd/containerd.sock",
 		// MicroK8s
 		"unix:///var/snap/microk8s/common/run/containerd.sock",
-		// AWS Bottlerocket — containerd socket exposed through the host container
+		// cri-dockerd (Docker Engine behind a CRI shim, e.g. Minikube docker runtime)
+		"unix:///run/cri-dockerd.sock",
+		"unix:///var/run/cri-dockerd.sock",
+		// Legacy dockershim CRI socket; Bottlerocket links it to containerd
 		"unix:///run/dockershim.sock",
-		// Minikube / Kind with Docker driver
-		"unix:///var/run/docker.sock",
+		"unix:///var/run/dockershim.sock",
 	}
 
 	if os.Getenv("PODTRACE_CRI_ALLOW_PODMAN") == "1" {
@@ -66,32 +70,72 @@ func DefaultCandidateEndpoints() []string {
 	return endpoints
 }
 
-func pickExistingEndpoint(candidates []string) string {
+// existingEndpoints returns the candidates whose socket path exists, in
+// order, collapsing aliases of the same file (/run vs /var/run).
+func existingEndpoints(candidates []string) []string {
+	var out []string
+	var seen []os.FileInfo
 	for _, ep := range candidates {
 		path := strings.TrimPrefix(ep, "unix://")
 		if path == "" {
 			continue
 		}
-		if _, err := os.Stat(path); err == nil {
-			return ep
+		fi, err := os.Stat(path)
+		if err != nil {
+			continue
 		}
+		dup := false
+		for _, prev := range seen {
+			if os.SameFile(prev, fi) {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		seen = append(seen, fi)
+		out = append(out, ep)
 	}
-	return ""
+	return out
 }
+
+var criDialTimeout = 2 * time.Second
 
 func NewResolver() (*Resolver, error) {
 	return NewResolverWithEndpoint(os.Getenv("PODTRACE_CRI_ENDPOINT"))
 }
 
+// NewResolverWithEndpoint connects to endpoint, or, when it is empty, to the
+// first discovered candidate that answers the CRI Version RPC.
 func NewResolverWithEndpoint(endpoint string) (*Resolver, error) {
-	if endpoint == "" {
-		endpoint = pickExistingEndpoint(DefaultCandidateEndpoints())
+	if endpoint != "" {
+		return dialResolver(endpoint, false)
 	}
-	if endpoint == "" {
+	return newResolverFromCandidates(DefaultCandidateEndpoints())
+}
+
+func newResolverFromCandidates(candidates []string) (*Resolver, error) {
+	existing := existingEndpoints(candidates)
+	if len(existing) == 0 {
 		return nil, errors.New("podtrace: CRI endpoint not found (set PODTRACE_CRI_ENDPOINT)")
 	}
+	var errs []error
+	for _, ep := range existing {
+		r, err := dialResolver(ep, true)
+		if err == nil {
+			return r, nil
+		}
+		errs = append(errs, err)
+	}
+	return nil, errors.Join(errs...)
+}
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// dialResolver connects to one endpoint. With verify set it also requires the
+// endpoint to answer the CRI Version RPC, so a socket that accepts
+// connections but is not a CRI runtime is rejected.
+func dialResolver(endpoint string, verify bool) (*Resolver, error) {
+	dialCtx, cancel := context.WithTimeout(context.Background(), criDialTimeout)
 	defer cancel()
 
 	conn, err := grpc.NewClient(
@@ -108,10 +152,18 @@ func NewResolverWithEndpoint(endpoint string) (*Resolver, error) {
 		return nil, fmt.Errorf("podtrace: failed to connect to CRI endpoint %q: %w", endpoint, err)
 	}
 
+	client := runtimeapi.NewRuntimeServiceClient(conn)
+	if verify {
+		if _, err := client.Version(dialCtx, &runtimeapi.VersionRequest{}); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("podtrace: endpoint %q is not a CRI runtime service: %w", endpoint, err)
+		}
+	}
+
 	return &Resolver{
 		endpoint: endpoint,
 		conn:     conn,
-		client:   runtimeapi.NewRuntimeServiceClient(conn),
+		client:   client,
 	}, nil
 }
 

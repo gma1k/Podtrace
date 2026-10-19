@@ -25,6 +25,17 @@ type sessionSummaryJSON struct {
 	ErrorsDetected int32  `json:"errorsDetected,omitempty"`
 	DurationMS     int64  `json:"durationMs,omitempty"`
 	Node           string `json:"node,omitempty"`
+
+	Exports []sessionExportJSON `json:"exports,omitempty"`
+}
+
+// sessionExportJSON is one exporter's delivery record as a session Job
+// reports it (cmd/podtrace SessionExportStatus).
+type sessionExportJSON struct {
+	Exporter  string `json:"exporter"`
+	Succeeded int64  `json:"succeeded,omitempty"`
+	Failed    int64  `json:"failed,omitempty"`
+	LastError string `json:"lastError,omitempty"`
 }
 
 // populateSessionSummaries walks the session's child Jobs, reads the
@@ -34,12 +45,23 @@ func populateSessionSummaries(ctx context.Context, c client.Client, session *pod
 	if session == nil {
 		return nil
 	}
+	summaryByNode, err := collectSessionSummaries(ctx, c, jobs)
+	if err != nil {
+		return err
+	}
+	applySessionSummaries(session, summaryByNode)
+	return nil
+}
+
+// collectSessionSummaries reads the termination summary of every finished
+// session Job, keyed by node.
+func collectSessionSummaries(ctx context.Context, c client.Client, jobs []batchv1.Job) (map[string]sessionSummaryJSON, error) {
 	summaryByNode := map[string]sessionSummaryJSON{}
 	for i := range jobs {
 		j := &jobs[i]
 		summary, err := readTerminationSummaryForJob(ctx, c, j)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if summary == nil {
 			continue
@@ -50,7 +72,12 @@ func populateSessionSummaries(ctx context.Context, c client.Client, session *pod
 		}
 		summaryByNode[node] = *summary
 	}
+	return summaryByNode, nil
+}
 
+// applySessionSummaries rolls per-node summaries up into status.Summary and
+// the per-Job event counts.
+func applySessionSummaries(session *podtracev1alpha1.PodTraceSession, summaryByNode map[string]sessionSummaryJSON) {
 	for i := range session.Status.Jobs {
 		ref := &session.Status.Jobs[i]
 		if s, ok := summaryByNode[ref.Node]; ok {
@@ -59,7 +86,6 @@ func populateSessionSummaries(ctx context.Context, c client.Client, session *pod
 	}
 
 	session.Status.Summary = aggregateSessionSummary(summaryByNode)
-	return nil
 }
 
 // readTerminationSummaryForJob locates the Pod created by a session

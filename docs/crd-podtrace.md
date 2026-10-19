@@ -62,7 +62,7 @@ spec:
 | Field | Notes |
 |---|---|
 | `matchedPods` | Number of matched pods: the sum of every node's `matchedPods`. |
-| `nodeStatus[]` | One entry per node hosting a matched pod. Each carries `node`, `ready`, `matchedPods`, `activeCgroups` (the pod and container cgroups traced there, so usually more than the pods), `totalEvents`, `droppedEvents` (this PodTrace's events lost on that node), `kernelDroppedEvents` (events the node's agent lost in the kernel before they could be attributed to any PodTrace; the same node-wide figure on every PodTrace that node reports for), `lastHeartbeat`, `message`, and `policyHash` (the hash of the bundle the agent last observed — see "Verifying policy propagation" below). |
+| `nodeStatus[]` | One entry per node hosting a matched pod. Each carries `node`, `ready`, `matchedPods`, `activeCgroups` (the pod and container cgroups traced there, so usually more than the pods), `totalEvents`, `droppedEvents` (this PodTrace's events lost on that node), `kernelDroppedEvents` (events the node's agent lost in the kernel before they could be attributed to any PodTrace; the same node-wide figure on every PodTrace that node reports for), `lastHeartbeat`, `message`, `reason`, and `policyHash` (the hash of the bundle the agent last observed — see "Verifying policy propagation" below). |
 | `conditions` | Standard Kubernetes condition objects. `Ready=True` once at least one node reports healthy. `Degraded=True` on bundle sync errors. `Paused` mirrors `spec.paused`. `PolicyApplied=True` once the operator has resolved `spec.filters`/`spec.samplePercent`/`spec.thresholds` and written them to the bundle. |
 | `observedGeneration` | Most recent generation reconciled. |
 | `policy.effectiveSampleRate` | The operator-resolved sample rate (0–100), already reduced to the minimum of `spec.samplePercent` and `ExporterConfig.spec.samplePercent`. This is what every agent and exporter actually applies — do not infer effective sampling from `spec` alone. |
@@ -194,6 +194,15 @@ yet, OR no node has a matched pod. Check:
 kubectl get pods -n my-app -l <your-selector>
 kubectl -n podtrace-system get pods -l podtrace.io/component=agent
 ```
+
+**`Degraded=True ExporterDeliveryFailed`:** The agents are tracing, but
+the spans are not reaching the backend. The `nodeStatus[].message` of the
+failing node names the exporter, how long it has been failing and the last
+error: `no such host` usually means a Service name the system namespace
+cannot resolve (see
+[endpoint host names](crd-exporterconfig.md#endpoint-host-names)), `401` or
+`403` a rejected credential. The condition clears on the next delivered
+batch.
 
 **`Degraded=True ExporterNotFound`:** The named ExporterConfig isn't in
 the same namespace. Cross-namespace exporter references are not allowed.

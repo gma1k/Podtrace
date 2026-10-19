@@ -91,14 +91,15 @@ func (rm *ResourceMonitor) checkBPFCPUAlerts() {
 	}
 	title := fmt.Sprintf("Resource Limit %s", severity)
 	message := fmt.Sprintf("cpu utilization reached %s threshold (limit: %s CPUs)", severity, allowedCPUs)
+	podName, namespace := rm.alertSubject()
 	alert := &alerting.Alert{
 		Severity:  severity,
 		Title:     title,
 		Message:   message,
-		PodName:   rm.cgroupPath,
+		PodName:   podName,
 		Timestamp: time.Now(),
-		Source:    "resource_monitor_bpf",
-		Namespace: rm.namespace,
+		Source:    alerting.AlertSourceResourceMonitorBPF,
+		Namespace: namespace,
 		Context: map[string]interface{}{
 			"resource_type": "cpu",
 			"alert_level":   level,

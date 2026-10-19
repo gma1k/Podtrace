@@ -25,6 +25,8 @@ type reportUploadObservation struct {
 	Succeeded bool
 
 	Attempts int32
+
+	UploaderDisabled bool
 }
 
 func harvestReportLocation(ctx context.Context, c client.Client, s *podtracev1alpha1.PodTraceSession, systemNS string) (reportUploadObservation, error) {
@@ -44,12 +46,19 @@ func harvestReportLocation(ctx context.Context, c client.Client, s *podtracev1al
 	}
 
 	var obs reportUploadObservation
+	hasUploader := false
 	for i := range pods.Items {
 		pod := &pods.Items[i]
+		for _, c := range pod.Spec.InitContainers {
+			if c.Name == reportUploaderContainerName {
+				hasUploader = true
+			}
+		}
 		for _, cs := range pod.Status.InitContainerStatuses {
 			if cs.Name != reportUploaderContainerName {
 				continue
 			}
+			hasUploader = true
 			if cs.RestartCount > obs.Attempts {
 				obs.Attempts = cs.RestartCount
 			}
@@ -67,6 +76,7 @@ func harvestReportLocation(ctx context.Context, c client.Client, s *podtracev1al
 			return obs, nil
 		}
 	}
+	obs.UploaderDisabled = len(pods.Items) > 0 && !hasUploader
 	return obs, nil
 }
 
@@ -78,6 +88,16 @@ func applyReportUploadStatus(s *podtracev1alpha1.PodTraceSession, obs reportUplo
 	s.Status.ReportAttempts = obs.Attempts
 
 	switch {
+	case obs.UploaderDisabled:
+		s.Status.ReportFailureReason = ""
+		s.Status.Conditions = upsertCondition(s.Status.Conditions, metav1.Condition{
+			Type:               ConditionReportUploaded,
+			Status:             metav1.ConditionFalse,
+			Reason:             "UploaderDisabled",
+			Message:            "the session pods have no report-uploader sidecar because TracerConfig spec.session.sidecarUploader is off; the report is not uploaded to object storage",
+			LastTransitionTime: now,
+			ObservedGeneration: s.Generation,
+		})
 	case !obs.Terminated:
 		s.Status.ReportFailureReason = ""
 		s.Status.Conditions = upsertCondition(s.Status.Conditions, metav1.Condition{

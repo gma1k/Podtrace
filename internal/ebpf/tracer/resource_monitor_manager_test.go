@@ -19,6 +19,8 @@ func (f *fakeMonitor) Stop() {
 	f.stopped = true
 }
 
+func (f *fakeMonitor) SetPodIdentity(string, string) {}
+
 func (f *fakeMonitor) isStopped() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -31,7 +33,7 @@ func (f *fakeMonitor) isStopped() bool {
 func activateWithFakes(m *resourceMonitorManager) map[string]*fakeMonitor {
 	created := map[string]*fakeMonitor{}
 	m.mu.Lock()
-	m.startMonitor = func(path string) (stoppable, error) {
+	m.startMonitor = func(path string, _ CgroupOwner) (resourceMonitorHandle, error) {
 		f := &fakeMonitor{}
 		created[path] = f
 		return f, nil
@@ -64,7 +66,7 @@ func TestResourceMonitorManager_ReconcileAddsAndRemoves(t *testing.T) {
 
 	created := map[string]*fakeMonitor{}
 	m.mu.Lock()
-	m.startMonitor = func(path string) (stoppable, error) {
+	m.startMonitor = func(path string, _ CgroupOwner) (resourceMonitorHandle, error) {
 		f := &fakeMonitor{}
 		created[path] = f
 		return f, nil

@@ -101,17 +101,17 @@ func TestResolverClose_NilConn(t *testing.T) {
 	}
 }
 
-func TestPickExistingEndpoint_NoneExist(t *testing.T) {
+func TestExistingEndpoints_NoneExist(t *testing.T) {
 	candidates := []string{
 		"unix:///nonexistent/podtrace-test-1.sock",
 		"unix:///nonexistent/podtrace-test-2.sock",
 	}
-	if ep := pickExistingEndpoint(candidates); ep != "" {
+	if ep := firstOf(existingEndpoints(candidates)); ep != "" {
 		t.Fatalf("expected empty when none exist, got %q", ep)
 	}
 }
 
-func TestPickExistingEndpoint_FirstExists(t *testing.T) {
+func TestExistingEndpoints_FirstExists(t *testing.T) {
 	dir := t.TempDir()
 	// Create a fake socket file (just a regular file for stat purposes).
 	sockPath := dir + "/containerd.sock"
@@ -122,15 +122,15 @@ func TestPickExistingEndpoint_FirstExists(t *testing.T) {
 		"unix://" + sockPath,
 		"unix:///nonexistent/other.sock",
 	}
-	if ep := pickExistingEndpoint(candidates); ep != "unix://"+sockPath {
+	if ep := firstOf(existingEndpoints(candidates)); ep != "unix://"+sockPath {
 		t.Fatalf("expected first existing endpoint, got %q", ep)
 	}
 }
 
-func TestPickExistingEndpoint_EmptyScheme(t *testing.T) {
+func TestExistingEndpoints_EmptyScheme(t *testing.T) {
 	// Entry with empty path after stripping unix:// should be skipped.
 	candidates := []string{"unix://"}
-	if ep := pickExistingEndpoint(candidates); ep != "" {
+	if ep := firstOf(existingEndpoints(candidates)); ep != "" {
 		t.Fatalf("expected empty for unix:// with no path, got %q", ep)
 	}
 }

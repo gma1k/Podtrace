@@ -2,6 +2,7 @@ package alerting
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -74,6 +75,25 @@ func RedactURLsInText(s string) string {
 	})
 }
 
+// redactedError presents err with every embedded URL cut down to
+// scheme://host.
+type redactedError struct{ err error }
+
+func (e redactedError) Error() string { return RedactURLsInText(e.err.Error()) }
+
+func (e redactedError) Unwrap() error { return e.err }
+
+// redactSendError returns err with the request URL redacted. A *url.Error is
+// rebuilt rather than wrapped so errors.As callers find only the redacted
+// URL, while errors.Is still reaches context.DeadlineExceeded and friends.
+func redactSendError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return &url.Error{Op: ue.Op, URL: redactURLForLog(ue.URL), Err: redactedError{ue.Err}}
+	}
+	return redactedError{err}
+}
+
 func NewManager() (*Manager, error) {
 	if !config.AlertingEnabled {
 		return &Manager{enabled: false}, nil
@@ -99,7 +119,7 @@ func NewManager() (*Manager, error) {
 		slackSender, err := NewSlackSender(config.AlertSlackWebhookURL, config.AlertSlackChannel, config.AlertHTTPTimeout)
 		if err != nil {
 			alertLog.Warn("Failed to create Slack alert sender — alerts will not be delivered via Slack",
-				zap.Error(err))
+				zap.Error(err), zap.String("url", redactURLForLog(config.AlertSlackWebhookURL)))
 		} else {
 			retrySender := NewRetrySender(slackSender, config.AlertMaxRetries, config.DefaultAlertRetryBackoffBase)
 			manager.senders = append(manager.senders, retrySender)
@@ -129,17 +149,23 @@ func NewManager() (*Manager, error) {
 }
 
 func (m *Manager) SendAlert(alert *Alert) {
-	if !m.enabled || alert == nil {
+	if alert == nil {
+		return
+	}
+	m.mu.RLock()
+	enabled, deduplicator, rateLimiter := m.enabled, m.deduplicator, m.rateLimiter
+	m.mu.RUnlock()
+	if !enabled {
 		return
 	}
 	if !ShouldSendAlert(alert.Severity) {
 		return
 	}
-	if !m.deduplicator.ShouldSend(alert) {
+	if !deduplicator.ShouldSend(alert) {
 		return
 	}
-	if !m.rateLimiter.Allow() {
-		m.deduplicator.Forget(alert)
+	if !rateLimiter.Allow() {
+		deduplicator.Forget(alert)
 		return
 	}
 	m.mu.RLock()
@@ -170,7 +196,7 @@ func (m *Manager) SendAlert(alert *Alert) {
 				alertLog.Warn("Alert delivery failed",
 					zap.String("sender", s.Name()),
 					zap.String("alert", a.Title),
-					zap.Error(err))
+					zap.String("error", RedactURLsInText(err.Error())))
 			} else {
 				successes.Add(1)
 			}
@@ -203,17 +229,19 @@ func (m *Manager) cleanupLoop() {
 // Shutdown waits for in-flight alert deliveries (bounded by ctx) and is
 // idempotent — a second call no longer panics on the closed stop channel.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	m.mu.Lock()
 	if !m.enabled {
+		m.mu.Unlock()
 		return nil
 	}
-	m.mu.Lock()
 	m.shuttingDown = true
+	stopCh, cleanupTicker := m.stopCh, m.cleanupTicker
 	m.mu.Unlock()
 	m.stopOnce.Do(func() {
-		close(m.stopCh)
+		close(stopCh)
 	})
-	if m.cleanupTicker != nil {
-		m.cleanupTicker.Stop()
+	if cleanupTicker != nil {
+		cleanupTicker.Stop()
 	}
 	done := make(chan struct{})
 	go func() {
@@ -267,5 +295,7 @@ func (m *Manager) EnsureEnabledWithSender(sender Sender) {
 }
 
 func (m *Manager) IsEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.enabled
 }

@@ -354,6 +354,20 @@
         "nodeSelector": {
           "type": "object"
         },
+        "objectStore": {
+          "type": "object",
+          "properties": {
+            "crossNamespaceAmbientCredentials": {
+              "type": "boolean"
+            },
+            "endpointAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "podAnnotations": {
           "type": "object"
         },

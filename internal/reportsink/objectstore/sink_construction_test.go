@@ -54,6 +54,7 @@ func TestGCSSink_UploadAbortsOnCopyFailure(t *testing.T) {
 		Credentials: map[string][]byte{
 			gcsSecretKeyEndpoint: []byte(srv.URL),
 		},
+		Policy: CredentialPolicy{EndpointAllowlist: []string{"127.0.0.1"}},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

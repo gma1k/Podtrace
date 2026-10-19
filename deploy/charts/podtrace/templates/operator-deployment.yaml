@@ -66,6 +66,10 @@ spec:
               value: {{ .Values.tracerConfig.name | default "default" | quote }}
             - name: PODTRACE_ALLOWED_AGENT_IMAGE_REPOS
               value: {{ prepend (.Values.agent.allowedImageRepos | default list) .Values.image.repository | uniq | join "," | quote }}
+            - name: PODTRACE_OBJECTSTORE_CROSS_NAMESPACE_AMBIENT_CREDENTIALS
+              value: {{ (.Values.operator.objectStore).crossNamespaceAmbientCredentials | default false | quote }}
+            - name: PODTRACE_OBJECTSTORE_ENDPOINT_ALLOWLIST
+              value: {{ (.Values.operator.objectStore).endpointAllowlist | default list | join "," | quote }}
             {{- with .Values.operator.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -1045,6 +1045,14 @@ func (t *Tracer) SetCgroups(cgroupPaths []string) error {
 	return t.attachCgroups(cgroupPaths, true /* replace */)
 }
 
+// SetCgroupOwners replaces the index of which Kubernetes pod owns each target
+// cgroup path.
+func (t *Tracer) SetCgroupOwners(owners map[string]CgroupOwner) {
+	if t.resourceMgr != nil {
+		t.resourceMgr.setOwners(owners)
+	}
+}
+
 // AttachToCgroup adds cgroupPath to the tracer's filter set and is
 // idempotent.
 func (t *Tracer) AttachToCgroup(cgroupPath string) error {

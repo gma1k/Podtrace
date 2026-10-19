@@ -14,7 +14,7 @@ spec:
          each pod's cgroup, starts an independent per-cgroup ResourceMonitor
          for each, and the in-kernel CPU sampler crosses the threshold.
       4. Assert a distinct "Resource Limit" alert lands at the receiver for
-         EACH pod's cgroup.
+         EACH pod's cgroup, naming the pod rather than its cgroup path.
 
     Proves the multi-cgroup per-cgroup resource-monitor manager, the agent
     alert wiring, and the per-cgroup alert dedup key (without it, multiple pods'
@@ -81,14 +81,14 @@ spec:
               for i in $(seq 1 50); do
                 subjects=$(kubectl -n "${NAMESPACE}" logs deploy/alert-receiver --tail=999 2>/dev/null \
                   | grep -i "Resource Limit" \
-                  | grep -oE '"pod":"[^"]*scope"' | sort -u | wc -l)
+                  | grep -oE '"pod":"cpu-burn-[ab]-[^"]*"' | sort -u | wc -l)
                 if [ "${subjects}" -ge 2 ]; then
-                  echo "ok: distinct resource-limit alerts delivered for ${subjects} cgroups"
+                  echo "ok: distinct resource-limit alerts delivered for ${subjects} pods"
                   exit 0
                 fi
                 sleep 3
               done
-              echo "expected resource-limit alerts for 2 distinct cgroups, got ${subjects:-0}" >&2
+              echo "expected resource-limit alerts naming 2 distinct burn pods, got ${subjects:-0}" >&2
               kubectl -n "${NAMESPACE}" logs deploy/alert-receiver --tail=50 >&2 || true
               exit 1
       cleanup:

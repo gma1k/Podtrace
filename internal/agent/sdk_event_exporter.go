@@ -44,8 +44,9 @@ type sdkEventExporter struct {
 type sdkOption func(*sdkOptions)
 
 type sdkOptions struct {
-	metrics *Metrics
-	pushers *metricPusherPool
+	metrics  *Metrics
+	pushers  *metricPusherPool
+	delivery *deliveryHealth
 }
 
 func withMetrics(m *Metrics) sdkOption {
@@ -54,6 +55,10 @@ func withMetrics(m *Metrics) sdkOption {
 
 func withMetricPushers(p *metricPusherPool) sdkOption {
 	return func(o *sdkOptions) { o.pushers = p }
+}
+
+func withDeliveryHealth(h *deliveryHealth) sdkOption {
+	return func(o *sdkOptions) { o.delivery = h }
 }
 
 // newSDKEventExporter wires an SDK SpanExporter (the wire-format
@@ -91,11 +96,14 @@ func newSDKEventExporter(name string, cr CRKey, b *BundlePayload, spanExporter s
 	}
 
 	observed := &deliveryObservingExporter{
-		inner:   spanExporter,
-		cr:      cr,
-		name:    name,
-		metrics: cfg.metrics,
+		inner:    spanExporter,
+		cr:       cr,
+		name:     name,
+		metrics:  cfg.metrics,
+		delivery: cfg.delivery,
+		now:      time.Now,
 	}
+	cfg.delivery.register(cr, observed)
 
 	bsp := sdktrace.NewBatchSpanProcessor(observed,
 		sdktrace.WithMaxExportBatchSize(128),
@@ -396,10 +404,12 @@ var _ tracer.Exporter = (*sdkEventExporter)(nil)
 // deliveryObservingExporter wraps an SDK SpanExporter to make export
 // (delivery) failures observable.
 type deliveryObservingExporter struct {
-	inner   sdktrace.SpanExporter
-	cr      CRKey
-	name    string
-	metrics *Metrics
+	inner    sdktrace.SpanExporter
+	cr       CRKey
+	name     string
+	metrics  *Metrics
+	delivery *deliveryHealth
+	now      func() time.Time
 
 	mu      sync.Mutex
 	failing bool
@@ -409,6 +419,7 @@ func (e *deliveryObservingExporter) ExportSpans(ctx context.Context, spans []sdk
 	err := e.inner.ExportSpans(ctx, spans)
 	e.metrics.ObserveExportDelivery(e.cr, len(spans), err)
 	if err != nil {
+		e.delivery.fail(e.cr, e, e.name, err, e.clock())
 		e.mu.Lock()
 		firstFailure := !e.failing
 		e.failing = true
@@ -423,6 +434,7 @@ func (e *deliveryObservingExporter) ExportSpans(ctx context.Context, spans []sdk
 		}
 		return err
 	}
+	e.delivery.delivered(e.cr, e)
 	e.mu.Lock()
 	recovered := e.failing
 	e.failing = false
@@ -434,7 +446,15 @@ func (e *deliveryObservingExporter) ExportSpans(ctx context.Context, spans []sdk
 	return nil
 }
 
+func (e *deliveryObservingExporter) clock() time.Time {
+	if e.now == nil {
+		return time.Now()
+	}
+	return e.now()
+}
+
 func (e *deliveryObservingExporter) Shutdown(ctx context.Context) error {
+	e.delivery.unregister(e.cr, e)
 	return e.inner.Shutdown(ctx)
 }
 

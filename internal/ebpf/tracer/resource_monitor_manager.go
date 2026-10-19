@@ -2,6 +2,7 @@ package tracer
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 
 	"github.com/cilium/ebpf"
@@ -19,21 +20,72 @@ type resourceMonitorManager struct {
 
 	desired map[string]struct{}
 
-	running map[string]stoppable
+	running map[string]resourceMonitorHandle
+
+	owners map[string]CgroupOwner
 
 	active bool
 
-	startMonitor func(path string) (stoppable, error)
+	startMonitor func(path string, owner CgroupOwner) (resourceMonitorHandle, error)
 }
 
-type stoppable interface {
+// CgroupOwner is the Kubernetes pod a targeted cgroup belongs to. Resource
+// alerts carry it so they name the pod and can raise trigger Events.
+type CgroupOwner struct {
+	PodName   string
+	Namespace string
+}
+
+type resourceMonitorHandle interface {
 	Stop()
+	SetPodIdentity(podName, namespace string)
 }
 
 func newResourceMonitorManager() *resourceMonitorManager {
 	return &resourceMonitorManager{
 		desired: map[string]struct{}{},
-		running: map[string]stoppable{},
+		running: map[string]resourceMonitorHandle{},
+		owners:  map[string]CgroupOwner{},
+	}
+}
+
+// setOwners replaces the cgroup-path -> pod ownership index and re-labels the
+// monitors already running so their next alert names the right pod.
+func (m *resourceMonitorManager) setOwners(owners map[string]CgroupOwner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := make(map[string]CgroupOwner, len(owners))
+	for path, owner := range owners {
+		if path == "" || owner.PodName == "" || owner.Namespace == "" {
+			continue
+		}
+		next[filepath.Clean(path)] = owner
+	}
+	m.owners = next
+	for path, mon := range m.running {
+		owner := m.ownerForLocked(path)
+		mon.SetPodIdentity(owner.PodName, owner.Namespace)
+	}
+}
+
+// ownerForLocked resolves the pod owning path: an exact match, else the
+// nearest owned ancestor, which covers the per-container cgroup the tracer
+// narrows a pod cgroup to (for example CRI-O's "container" subfolder).
+func (m *resourceMonitorManager) ownerForLocked(path string) CgroupOwner {
+	if len(m.owners) == 0 || path == "" {
+		return CgroupOwner{}
+	}
+	p := filepath.Clean(path)
+	for {
+		if owner, ok := m.owners[p]; ok {
+			return owner
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return CgroupOwner{}
+		}
+		p = parent
 	}
 }
 
@@ -67,11 +119,12 @@ func (m *resourceMonitorManager) activate(ctx context.Context, eventChan chan<- 
 		return
 	}
 	if m.startMonitor == nil {
-		m.startMonitor = func(path string) (stoppable, error) {
-			rm, err := resource.NewResourceMonitor(path, limitsMap, alertsMap, eventChan, "")
+		m.startMonitor = func(path string, owner CgroupOwner) (resourceMonitorHandle, error) {
+			rm, err := resource.NewResourceMonitor(path, limitsMap, alertsMap, eventChan, owner.Namespace)
 			if err != nil {
 				return nil, err
 			}
+			rm.SetPodIdentity(owner.PodName, owner.Namespace)
 			if quotaMap != nil {
 				rm.EnableBPFCPUSampler(quotaMap, alertsMap)
 			}
@@ -99,7 +152,7 @@ func (m *resourceMonitorManager) reconcileLocked() {
 		if _, ok := m.running[path]; ok {
 			continue
 		}
-		mon, err := m.startMonitor(path)
+		mon, err := m.startMonitor(path, m.ownerForLocked(path))
 		if err != nil {
 			logger.Warn("Failed to create resource monitor", zap.Error(err), zap.String("cgroup_path", path))
 			continue

@@ -93,6 +93,11 @@ func readSecretHeaders(dir string) (map[string]string, error) {
 	return headers, nil
 }
 
+var credentialHeaderNames = map[bundle.Type]string{
+	bundle.TypeSplunk:  "X-SF-TOKEN",
+	bundle.TypeDataDog: "DD-API-KEY",
+}
+
 // otlpHeaders merges the payload's headers the way the agent does: plain
 // headers, then Secret-backed ones, then the credential under HeaderName.
 func otlpHeaders(p *bundle.Payload) (map[string]string, error) {
@@ -103,11 +108,15 @@ func otlpHeaders(p *bundle.Payload) (map[string]string, error) {
 	for k, v := range p.SecretHeaders {
 		headers[k] = v
 	}
-	if p.HeaderName != "" {
+	headerName := p.HeaderName
+	if headerName == "" && len(p.Credential) > 0 {
+		headerName = credentialHeaderNames[p.Type]
+	}
+	if headerName != "" {
 		if len(p.Credential) == 0 {
-			return nil, fmt.Errorf("exporter header %q is Secret-backed but no credential was mounted", p.HeaderName)
+			return nil, fmt.Errorf("exporter header %q is Secret-backed but no credential was mounted", headerName)
 		}
-		headers[p.HeaderName] = string(p.Credential)
+		headers[headerName] = string(p.Credential)
 	}
 	for k, v := range headers {
 		if !httpguts.ValidHeaderFieldName(k) {
@@ -144,6 +153,7 @@ func applyPayloadToConfig(p *bundle.Payload) error {
 	}
 	config.OTLPEndpoint = ""
 	config.OTLPHeaders = nil
+	config.OTLPInsecure = false
 	config.JaegerEndpoint = ""
 	config.ZipkinEndpoint = ""
 	config.SplunkEndpoint = ""
@@ -157,31 +167,22 @@ func applyPayloadToConfig(p *bundle.Payload) error {
 		return err
 	}
 	switch p.Type {
-	case bundle.TypeOTLP, bundle.TypeJaeger:
-		config.OTLPHeaders = headers
-	default:
+	case bundle.TypeZipkin:
 		if len(headers) > 0 {
-			logger.Warn("Exporter headers are only sent by the OTLP and Jaeger exporters; ignoring them",
-				zap.String("type", string(p.Type)))
+			logger.Warn("Exporter headers are not sent by the Zipkin exporter; ignoring them")
 		}
+	default:
+		config.OTLPHeaders = headers
 	}
 	switch p.Type {
-	case bundle.TypeOTLP:
+	case bundle.TypeOTLP, bundle.TypeSplunk, bundle.TypeDataDog:
 		config.OTLPEndpoint = otlpEndpointWithScheme(p.Endpoint, p.Insecure)
+		config.OTLPInsecure = p.Insecure
 	case bundle.TypeJaeger:
 		config.JaegerEndpoint = p.Endpoint
+		config.OTLPInsecure = p.Insecure
 	case bundle.TypeZipkin:
 		config.ZipkinEndpoint = p.Endpoint
-	case bundle.TypeSplunk:
-		config.SplunkEndpoint = p.Endpoint
-		if len(p.Credential) > 0 {
-			config.SplunkToken = string(p.Credential)
-		}
-	case bundle.TypeDataDog:
-		config.DataDogEndpoint = p.Endpoint
-		if len(p.Credential) > 0 {
-			config.DataDogAPIKey = string(p.Credential)
-		}
 	}
 	if p.Sample != nil {
 		config.TracingSampleRate = *p.Sample

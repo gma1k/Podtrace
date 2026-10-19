@@ -66,7 +66,7 @@ func TestPodTraceReconciler_EnvtestBundleSync_OTLPLiteral(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: bundleName, Namespace: systemNS}, &cm); err != nil {
 		t.Fatalf("bundle ConfigMap missing: %v", err)
 	}
-	if cm.Data["type"] != "otlp" || cm.Data["endpoint"] != "otel:4318" {
+	if cm.Data["type"] != "otlp" || cm.Data["endpoint"] != "otel."+ns+".svc:4318" {
 		t.Errorf("bundle data wrong: %+v", cm.Data)
 	}
 	// Credential-less exporter → no companion Secret.
