@@ -6,6 +6,7 @@ import (
 )
 
 func TestDefaultRules_CredentialEncodings(t *testing.T) {
+	fakeGoogleAPIKey := "AIza" + strings.Repeat("Fake0", 7)
 	cases := []struct {
 		name     string
 		in       string
@@ -13,8 +14,8 @@ func TestDefaultRules_CredentialEncodings(t *testing.T) {
 		survives string
 	}{
 		{"azure sas sig", "GET /c/blob.txt?sv=2022-11-02&sig=AbCdEf%2Bsecret%3D&se=2026", "AbCdEf", "sv=2022-11-02"},
-		{"google key param", "GET /maps/api?key=AIzaSyA1234567890abcdefghijklmnopqrstuv", "AIzaSyA1234567890abcdef", "/maps/api"},
-		{"google key bare", "config loaded AIzaSyA1234567890abcdefghijklmnopqrstuv ok", "SyA1234567890abcdef", "config loaded"},
+		{"google key param", "GET /maps/api?key=" + fakeGoogleAPIKey, "Fake0Fake0", "/maps/api"},
+		{"google key bare", "config loaded " + fakeGoogleAPIKey + " ok", "Fake0Fake0", "config loaded"},
 		{"opaque key param", "GET /x?a=1&key=opaqueValue77", "opaqueValue77", "a=1"},
 		{"oauth code", "GET /callback?code=4/0AY0e-g7secretcode&state=xyz", "0AY0e-g7secretcode", "state=xyz"},
 		{"encoded oauth code", "GET /r?next=%2Fcb%3Fcode%3Dsplendid42%26x%3D1", "splendid42", "/r?next="},
