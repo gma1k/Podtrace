@@ -38,7 +38,6 @@ env:
     curlimages/curl:8.9.1
     python:3.12-alpine
     registry.k8s.io/pause:3.9
-    public.ecr.aws/aws-cli/aws-cli:2.17.0
     chrislusf/seaweedfs:3.93
 
 permissions:
@@ -146,8 +145,7 @@ jobs:
               sleep 15
             done
             if [ "$pulled" -ne 1 ]; then
-              echo "::error::could not pull $image after 3 attempts"
-              exit 1
+              echo "::warning::could not pull $image after 3 attempts; the kubelet pulls it when a test needs it"
             fi
           done
 
@@ -168,6 +166,10 @@ jobs:
             podtrace-usdtdemo:ci \
             ${UPSTREAM_FIXTURE_IMAGES}
           do
+            if ! docker image inspect "${image}" >/dev/null 2>&1; then
+              echo "::warning::${image} is not available locally; not preloaded"
+              continue
+            fi
             archive="${tmp}/$(echo "${image}" | tr '/:' '__').tar"
             docker image save --platform "linux/${arch}" "${image}" -o "${archive}"
             kind load image-archive --name podtrace-chainsaw "${archive}"

@@ -8,24 +8,26 @@ spec:
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: awscli
-          image: public.ecr.aws/aws-cli/aws-cli:2.17.0
+        - name: s3
+          image: curlimages/curl:8.9.1
           env:
             - name: AWS_ACCESS_KEY_ID
               value: chainsaw
             - name: AWS_SECRET_ACCESS_KEY
               value: chainsawSecretKey
-            - name: AWS_REGION
-              value: us-east-1
-            - name: AWS_EC2_METADATA_DISABLED
-              value: "true"
+            - name: S3_ENDPOINT
+              value: http://seaweedfs.objectstore-upload-test.svc.cluster.local:8333
           command:
             - /bin/sh
             - -c
             - |
               set -eu
               for i in 1 2 3 4 5 6 7 8 9 10; do
-                count=$(aws --endpoint-url http://seaweedfs.objectstore-upload-test.svc.cluster.local:8333 s3 ls s3://reports/diagnose/ 2>/dev/null | wc -l)
+                listing=$(curl -sS --max-time 10 \
+                  --aws-sigv4 "aws:amz:us-east-1:s3" \
+                  --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
+                  "${S3_ENDPOINT}/reports?list-type=2&prefix=diagnose/" || true)
+                count=$(printf '%s' "${listing}" | grep -o '<Key>diagnose/[^<]*</Key>' | wc -l)
                 if [ "$count" -gt 0 ]; then
                   echo "found $count object(s) under s3://reports/diagnose/"
                   exit 0

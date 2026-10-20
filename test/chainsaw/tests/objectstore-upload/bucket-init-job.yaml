@@ -8,32 +8,32 @@ spec:
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: awscli
-          image: public.ecr.aws/aws-cli/aws-cli:2.17.0
+        - name: s3
+          image: curlimages/curl:8.9.1
           env:
             - name: AWS_ACCESS_KEY_ID
               value: chainsaw
             - name: AWS_SECRET_ACCESS_KEY
               value: chainsawSecretKey
-            - name: AWS_REGION
-              value: us-east-1
-            - name: AWS_EC2_METADATA_DISABLED
-              value: "true"
+            - name: S3_ENDPOINT
+              value: http://seaweedfs.objectstore-upload-test.svc.cluster.local:8333
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              s3() {
+                curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+                  --aws-sigv4 "aws:amz:us-east-1:s3" \
+                  --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" "$@"
+              }
               for i in 1 2 3 4 5 6 7 8 9 10; do
-                if aws --endpoint-url http://seaweedfs.objectstore-upload-test.svc.cluster.local:8333 s3 mb s3://reports 2>/dev/null; then
-                  echo "bucket created"
-                  exit 0
-                fi
-                if aws --endpoint-url http://seaweedfs.objectstore-upload-test.svc.cluster.local:8333 s3api head-bucket --bucket reports 2>/dev/null; then
-                  echo "bucket already exists"
-                  exit 0
-                fi
-                echo "attempt $i failed, retrying"
+                code=$(s3 -X PUT "${S3_ENDPOINT}/reports" || true)
+                case "${code}" in
+                  200) echo "bucket created"; exit 0 ;;
+                  409) echo "bucket already exists"; exit 0 ;;
+                esac
+                echo "attempt $i: create bucket answered ${code:-nothing}, retrying"
                 sleep 2
               done
               echo "could not create bucket"
