@@ -210,7 +210,7 @@ since each request costs two uprobe hits.
 ### The agent's /profile endpoint
 
 `status` is the way to read it. The raw per-node endpoint is on the agent's
-metrics port:
+inspect port, 9092:
 
 | Query | Returns |
 |---|---|
@@ -256,11 +256,13 @@ rendered waits up to five seconds for its turn, then gets `429 Too Many
 Requests` with `Retry-After: 5`. `status` reads each agent once, so it only
 sees a 429 when someone else is reading the same agent at that moment.
 
-The metrics port has no authentication. `/profile` returns symbolised stacks
+The inspect port has no authentication. `/profile` returns symbolised stacks
 for every workload on the node, whichever namespace it is in, and `/issues`
-returns every workload's active issues. With the chart's default
-`networkPolicy.enabled: false`, any pod in the cluster can read them. See
-[restricting the metrics port](operator.md#restricting-the-metrics-port).
+returns every workload's active issues. The chart's default NetworkPolicy
+admits only the operator (and, on Cilium, the API server's pod proxy that
+`status` uses); with `networkPolicy.enabled: false`, or on a CNI that does not
+enforce NetworkPolicy, any pod in the cluster can read them. See
+[restricting the agent's ports](operator.md#restricting-the-agents-ports).
 
 ### What keeps it affordable
 

@@ -3,8 +3,8 @@ Podtrace installed — release {{ .Release.Name | quote }}.
 Note: `helm install --create-namespace` (or a pre-created release
 namespace) is required. Helm writes its release record into the target
 namespace before any chart hook runs, so the chart cannot bootstrap
-that namespace itself. The bootstrap Job in kube-system patches PSA
-labels onto the existing namespace after Helm creates it.
+that namespace itself. The bootstrap Job in {{ .Release.Namespace }} creates the
+system namespace and sets its PSA labels.
 
 Installed resources
 -------------------
@@ -55,7 +55,8 @@ Quick start
   kubectl apply -f examples/tracerconfig.yaml
 {{- else }}
   # CRDs are installed. Enable the operator to start managing resources:
-  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --reuse-values --set operator.enabled=true
+  helm upgrade {{ .Release.Name }} oci://ghcr.io/gma1k/charts/podtrace --version {{ .Chart.Version }} \
+    --namespace {{ .Release.Namespace }} --reuse-values --set operator.enabled=true
 {{- end }}
 
 Docs

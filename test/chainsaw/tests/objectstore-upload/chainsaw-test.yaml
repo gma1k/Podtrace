@@ -4,6 +4,7 @@ metadata:
   name: objectstore-upload
 spec:
   namespace: objectstore-upload-test
+  concurrent: false
   description: |
     End-to-end verification — ObjectStore session report uploads.
 

@@ -115,11 +115,11 @@ SLSA Build L2 provenance:
 
 ```bash
 cosign verify ghcr.io/gma1k/charts/podtrace:<chart-version> \
-  --certificate-identity-regexp "^https://github.com/gma1k/podtrace" \
+  --certificate-identity-regexp '^https://github\.com/gma1k/podtrace/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
 cosign verify ghcr.io/gma1k/podtrace:<app-version> \
-  --certificate-identity-regexp "^https://github.com/gma1k/podtrace" \
+  --certificate-identity-regexp '^https://github\.com/gma1k/podtrace/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
@@ -143,7 +143,7 @@ is documented inline with its defaults.
 | `webhook` | Validating webhook for the CRDs |
 | `rbac` | RBAC creation |
 | `metrics` | Prometheus `PodMonitor` (on) and `ServiceMonitor` (off) |
-| `networkPolicy` | Restrict who may reach the agent and operator metrics ports |
+| `networkPolicy` | On by default: keeps the agents' `/issues` and `/profile` port (9092) to the operator and, on Cilium, the API server; `metricsFrom` restricts the metrics ports |
 | `tracerConfig` | The `default` TracerConfig the chart creates, including PII redaction |
 | `examples` | Optional sample `TracerConfig` and `ExporterConfig` resources |
 

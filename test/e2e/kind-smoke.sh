@@ -47,6 +47,9 @@ require_tool() {
 	fi
 }
 
+# shellcheck source-path=SCRIPTDIR source=kube-context-guard.sh
+source "$(dirname "${BASH_SOURCE[0]}")/kube-context-guard.sh"
+
 repo_root() {
 	cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd
 }
@@ -139,6 +142,9 @@ assert_resource_exists() {
 main() {
 	require_tool kubectl
 	require_tool helm
+	require_tool jq
+	require_kind_context
+	trap remove_e2e_kubeconfig EXIT
 
 	local action="${1:-run}"
 	if [[ "${action}" == "cleanup" ]]; then

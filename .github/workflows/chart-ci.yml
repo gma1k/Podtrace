@@ -1,0 +1,74 @@
+name: Chart CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/charts/**"
+      - "deploy/olm/**"
+      - "test/chart/**"
+      - "hack/render-quickstart.sh"
+      - "api/**"
+      - ".github/workflows/chart-ci.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "deploy/charts/**"
+      - "deploy/olm/**"
+      - "test/chart/**"
+      - "hack/render-quickstart.sh"
+      - "api/**"
+      - ".github/workflows/chart-ci.yml"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HELM_VERSION: v4.3.1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  chart:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Lint with default and non-default values
+        run: |
+          set -euo pipefail
+          chart=deploy/charts/podtrace
+          helm lint "${chart}"
+          helm lint "${chart}" \
+            --set webhook.enabled=true \
+            --set operator.replicas=2 \
+            --set networkPolicy.enabled=true \
+            --set agent.rolloutMaxUnavailable=2 \
+            --set namespace.labels.team=observability \
+            --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+          helm lint "${chart}" --set operator.enabled=false --set crds.adopt=false
+
+      - name: Render the quickstart
+        run: ./hack/render-quickstart.sh deploy/charts/podtrace "${RUNNER_TEMP}/quickstart.yaml"
+
+      - name: Chart render tests
+        env:
+          PODTRACE_REQUIRE_HELM: "1"
+        run: GOTOOLCHAIN=auto go test -tags=integration -count=1 ./test/chart/...

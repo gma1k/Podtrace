@@ -24,6 +24,7 @@ import (
 const (
 	runHealthAddr  = "127.0.0.1:19191"
 	runMetricsAddr = "127.0.0.1:19192"
+	runInspectAddr = "127.0.0.1:19193"
 )
 
 func probe(t *testing.T, addr, path string) (int, string) {
@@ -91,6 +92,7 @@ func TestAgentRunBootsServesAndShutsDownCleanly(t *testing.T) {
 			TracerConfigName:     "default",
 			MetricsAddr:          runMetricsAddr,
 			HealthAddr:           runHealthAddr,
+			InspectAddr:          runInspectAddr,
 			StatusReportInterval: time.Second,
 			RestConfig:           testEnv.Config,
 			BackendFactory: func() (tracer.TracerBackend, error) {
@@ -114,6 +116,14 @@ func TestAgentRunBootsServesAndShutsDownCleanly(t *testing.T) {
 	if code, _ := probe(t, runMetricsAddr, "/metrics"); code != http.StatusOK {
 		t.Errorf("/metrics = %d, want 200. An agent that boots but never serves its registry is "+
 			"invisible to the scrape that is supposed to prove it is working", code)
+	}
+
+	if code, body := probe(t, runInspectAddr, "/issues"); body == "404 page not found\n" {
+		t.Errorf("/issues on the inspect port = %d %q; the operator and kubectl podtrace status "+
+			"read issues there", code, body)
+	}
+	if code, body := probe(t, runMetricsAddr, "/issues"); code != http.StatusNotFound || body != "404 page not found\n" {
+		t.Errorf("/issues on the metrics port = %d %q, want unrouted: any scraper reaches that port", code, body)
 	}
 
 	waitForReconcile(t, done)

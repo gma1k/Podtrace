@@ -58,6 +58,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
@@ -107,6 +109,8 @@ jobs:
       tags: ${{ steps.meta.outputs.tags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -195,6 +199,8 @@ jobs:
       version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
         with:
@@ -225,6 +231,13 @@ jobs:
             exit 1
           fi
           echo "pinned ${IMAGE}@${DIGEST} for Artifact Hub"
+
+          values="${CHART_PATH}/values.yaml"
+          sed -i -E "s|^  appVersionDigest: \"\"$|  appVersionDigest: \"${DIGEST}\"|" "$values"
+          if ! grep -q "^  appVersionDigest: \"${DIGEST}\"$" "$values"; then
+            echo "::error::failed to pin the image digest in ${values}"
+            exit 1
+          fi
 
       - id: package
         name: Lint, package, push
@@ -276,25 +289,36 @@ jobs:
   quickstart:
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && !inputs.olm_bundle_only
     runs-on: ubuntu-26.04
-    needs: chart
+    needs: [image, chart]
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
         with:
           version: ${{ env.HELM_VERSION }}
 
       - name: Render quickstart manifests
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::image job did not provide a digest to pin"
+            exit 1
+          fi
           mkdir -p dist
-          # Same renderer test/e2e/quickstart-smoke.sh uses, so the released
-          # artifact is produced by the code CI exercises on every PR.
-          ./hack/render-quickstart.sh "${{ env.CHART_PATH }}" dist/quickstart.yaml
+          ./hack/render-quickstart.sh "${{ env.CHART_PATH }}" dist/quickstart.yaml \
+            --set "image.appVersionDigest=${DIGEST}"
+          if ! grep -q "@${DIGEST}" dist/quickstart.yaml; then
+            echo "::error::the quickstart does not pin ${IMAGE}@${DIGEST}"
+            exit 1
+          fi
           cp deploy/quickstart-sample.yaml dist/quickstart-demo.yaml
           echo "Rendered $(wc -l < dist/quickstart.yaml) + $(wc -l < dist/quickstart-demo.yaml) lines"
 
@@ -338,6 +362,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -382,9 +407,6 @@ jobs:
             --bundle checksums.txt.sigstore.json \
             checksums.txt
 
-      # Attest the tarballs themselves, not checksums.txt, so that
-      # `gh attestation verify podtrace_linux_amd64.tar.gz` is a one-step check
-      # instead of "verify the checksum file, then hand-match the hash".
       - name: Attest the CLI tarballs
         id: attest_cli
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
@@ -442,7 +464,17 @@ jobs:
     env:
       VERSION: ${{ (github.event_name == 'workflow_dispatch' && inputs.olm_bundle_only) && inputs.version || github.ref_name }}
     steps:
+      - name: Validate the version
+        run: |
+          if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version ${VERSION} is not a release version (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: refs/tags/${{ env.VERSION }}
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
         with:
@@ -469,8 +501,25 @@ jobs:
         with:
           cosign-release: ${{ env.COSIGN_VERSION }}
 
+      - name: Resolve the image digest
+        id: digest
+        env:
+          BUILT_DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest="${BUILT_DIGEST}"
+          if [ -z "${digest}" ]; then
+            digest=$(docker buildx imagetools inspect "${IMAGE}:${VERSION#v}" --format '{{json .Manifest}}' | jq -r .digest)
+          fi
+          if [[ ! "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::could not resolve the digest of ${IMAGE}:${VERSION#v} (got '${digest}')"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Submit bundle to community-operators
         env:
           GH_TOKEN: ${{ secrets.OPERATORHUB_PAT }}
           PREVIOUS_VERSION: ${{ steps.prev.outputs.previous }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: ./scripts/submit-olm-bundle.sh

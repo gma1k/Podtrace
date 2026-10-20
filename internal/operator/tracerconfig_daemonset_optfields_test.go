@@ -139,6 +139,32 @@ func TestRolloutMaxUnavailableReachesTheUpdateStrategy(t *testing.T) {
 	}
 }
 
+func TestRolloutMaxUnavailableCountWrittenAsStringBecomesAnInteger(t *testing.T) {
+	for in, want := range map[string]intstr.IntOrString{
+		"2":   intstr.FromInt32(2),
+		"0":   intstr.FromInt32(0),
+		"25%": intstr.FromString("25%"),
+		"-1":  intstr.FromString("-1"),
+		"2x":  intstr.FromString("2x"),
+	} {
+		t.Run(in, func(t *testing.T) {
+			value := intstr.FromString(in)
+			ds := buildAgentDaemonSetSpec(&podtracev1alpha1.TracerConfig{
+				Spec: podtracev1alpha1.TracerConfigSpec{
+					Agent: podtracev1alpha1.AgentSpec{RolloutMaxUnavailable: &value},
+				},
+			}, "podtrace-system")
+
+			got := ds.UpdateStrategy.RollingUpdate.MaxUnavailable
+			if got == nil || *got != want {
+				t.Errorf("MaxUnavailable for %q = %v, want %v: the API server rejects a "+
+					"string that is not a percentage, so every DaemonSet write would fail",
+					in, got, want)
+			}
+		})
+	}
+}
+
 func TestNoRolloutMaxUnavailableLeavesTheDefaultStrategy(t *testing.T) {
 	ds := buildAgentDaemonSetSpec(&podtracev1alpha1.TracerConfig{}, "podtrace-system")
 
@@ -148,5 +174,13 @@ func TestNoRolloutMaxUnavailableLeavesTheDefaultStrategy(t *testing.T) {
 	if ds.UpdateStrategy.RollingUpdate != nil {
 		t.Errorf("RollingUpdate = %+v with nothing configured; the Kubernetes default "+
 			"should stand rather than being pinned here", ds.UpdateStrategy.RollingUpdate)
+	}
+}
+
+func TestTheAgentDaemonSetDeclaresTheInspectPort(t *testing.T) {
+	spec := buildAgentDaemonSetSpec(&podtracev1alpha1.TracerConfig{}, "podtrace-system")
+	pod := &corev1.Pod{Spec: spec.Template.Spec}
+	if got := agentPort(pod); got != "9092" {
+		t.Errorf("issues are read from port %s, want 9092, the agent's --inspect-addr default", got)
 	}
 }

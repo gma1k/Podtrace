@@ -154,6 +154,7 @@ func buildAgentDaemonSetSpec(tc *podtracev1alpha1.TracerConfig, systemNS string)
 					Ports: []corev1.ContainerPort{
 						{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
 						{Name: "health", ContainerPort: 9091, Protocol: corev1.ProtocolTCP},
+						{Name: agentInspectPortName, ContainerPort: agentInspectPort, Protocol: corev1.ProtocolTCP},
 					},
 					StartupProbe:   agentStartupProbe(),
 					LivenessProbe:  agentLivenessProbe(),
@@ -225,9 +226,21 @@ func agentUpdateStrategy(tc *podtracev1alpha1.TracerConfig) appsv1.DaemonSetUpda
 		return strategy
 	}
 	strategy.RollingUpdate = &appsv1.RollingUpdateDaemonSet{
-		MaxUnavailable: tc.Spec.Agent.RolloutMaxUnavailable,
+		MaxUnavailable: normalizedMaxUnavailable(*tc.Spec.Agent.RolloutMaxUnavailable),
 	}
 	return strategy
+}
+
+// normalizedMaxUnavailable turns a count written as a string ("2") into an
+// integer. The API server accepts a string only as a percentage, so passing
+// "2" through would get every DaemonSet write rejected.
+func normalizedMaxUnavailable(v intstr.IntOrString) *intstr.IntOrString {
+	if v.Type == intstr.String {
+		if n, err := strconv.ParseInt(v.StrVal, 10, 32); err == nil && n >= 0 {
+			v = intstr.FromInt32(int32(n))
+		}
+	}
+	return &v
 }
 
 // btfFileMountDir is where a supplied BTF blob is mounted in the agent.
@@ -279,6 +292,14 @@ func btfFileWiring(tc *podtracev1alpha1.TracerConfig) ([]corev1.EnvVar, []corev1
 
 // agentMetricsPort is the agent container's "metrics" port.
 const agentMetricsPort = "9090"
+
+// The agent serves /issues and /profile on its own port, which the chart's
+// NetworkPolicy opens only to the operator (and, on Cilium, the API server's
+// pod proxy), not to every scraper that may read /metrics.
+const (
+	agentInspectPortName       = "inspect"
+	agentInspectPort     int32 = 9092
+)
 
 // agentScrapeAnnotations advertises the agent's metrics endpoint to
 // annotation-based scrapers: the community Prometheus chart, the OpenTelemetry

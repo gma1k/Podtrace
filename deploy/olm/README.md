@@ -16,7 +16,7 @@ catalog.
 ## Build flow
 
 ```
-helm template (chart) ─┐
+chart templates/crds/ ─┐
                        ├─► scripts/build-olm-bundle.sh ─► bundle/<version>/
 csv-template.yaml ─────┤                                    manifests/
                        │                                      *.crd.yaml
@@ -26,15 +26,19 @@ bundle.Dockerfile.tpl ─┘                                      annotations.ya
                                                             bundle.Dockerfile
 ```
 
-The Helm chart (`deploy/charts/podtrace/`) is the **single source of
-truth** for the operator's runtime manifests (Deployment, RBAC, CRDs).
-The CSV template references those manifests by structure; the build
-script renders them via `helm template` and folds them into the CSV.
+The CRDs are copied from the Helm chart (`deploy/charts/podtrace/`). The
+operator's RBAC and Deployment in `csv-template.yaml` are a hand-maintained
+copy of what the chart renders, because OLM wants them inline in the CSV.
 
-This avoids the divergence-bug factory of maintaining a parallel
-`config/` directory, while still producing an OperatorHub-compliant
-bundle. Pattern modelled on cert-manager, jaeger-operator, and
-tempo-operator.
+That copy is held to the chart by `test/chart/olm_csv_drift_test.go`, which
+renders the chart and fails when the CSV's cluster permissions, namespaced
+permissions, rollout strategy, pod and container security contexts, image,
+args, env, ports or probes differ from it. Change the chart first, then make
+the same change here; the Chart CI workflow runs the test on every PR that
+touches either. Resource requests and limits are deliberately not compared.
+
+When `IMAGE_DIGEST` is set (the release workflow always sets it), the build
+script references the operator image by digest instead of by tag.
 
 ## Output (gitignored)
 

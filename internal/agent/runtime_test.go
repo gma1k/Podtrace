@@ -181,16 +181,16 @@ func TestNoopBackend_BasicLifecycle(t *testing.T) {
 }
 
 func TestServeMetrics_EmptyAddrIsNoop(t *testing.T) {
-	if err := serveMetrics(context.Background(), "", NewMetrics(), nil, nil, logr.Discard()); err != nil {
+	if err := serveMetrics(context.Background(), "", NewMetrics(), logr.Discard()); err != nil {
 		t.Errorf("empty addr should return nil, got %v", err)
 	}
-	if err := serveMetrics(context.Background(), "0", NewMetrics(), nil, nil, logr.Discard()); err != nil {
+	if err := serveMetrics(context.Background(), "0", NewMetrics(), logr.Discard()); err != nil {
 		t.Errorf("'0' addr should return nil, got %v", err)
 	}
 }
 
 func TestServeMetrics_BadAddrErrors(t *testing.T) {
-	err := serveMetrics(context.Background(), "not-a-valid-addr", NewMetrics(), nil, nil, logr.Discard())
+	err := serveMetrics(context.Background(), "not-a-valid-addr", NewMetrics(), logr.Discard())
 	if err == nil {
 		t.Fatal("expected listen error")
 	}
@@ -207,7 +207,7 @@ func TestServeMetrics_ServesAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serveMetrics(ctx, addr, NewMetrics(), nil, nil, logr.Discard())
+		done <- serveMetrics(ctx, addr, NewMetrics(), logr.Discard())
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)

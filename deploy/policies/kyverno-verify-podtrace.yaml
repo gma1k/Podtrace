@@ -60,7 +60,7 @@ spec:
             - count: 1
               entries:
                 - keyless:
-                    subject: "https://github.com/gma1k/podtrace/.github/workflows/release.yml@refs/tags/*"
+                    subject: "https://github.com/gma1k/podtrace/.github/workflows/release.yml@refs/tags/v*"
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: https://rekor.sigstore.dev
@@ -71,7 +71,7 @@ spec:
                 - count: 1
                   entries:
                     - keyless:
-                        subject: "https://github.com/gma1k/podtrace/.github/workflows/release.yml@refs/tags/*"
+                        subject: "https://github.com/gma1k/podtrace/.github/workflows/release.yml@refs/tags/v*"
                         issuer: "https://token.actions.githubusercontent.com"
                         rekor:
                           url: https://rekor.sigstore.dev

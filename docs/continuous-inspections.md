@@ -473,8 +473,9 @@ names no real service and is never a dependency.
 | `podtrace_issue_cause{id,namespace,workload,cause_id,cause_namespace,cause_workload}` | 1 while an issue's likely root cause is that other issue; deleted when the link no longer holds |
 | `podtrace_correlation_agent_reads_failed_total` | agent reads that failed; links involving those agents' workloads are missing while it rises |
 
-With `networkPolicy.metricsFrom` set, the chart still lets the operator reach
-the agents' metrics port.
+The operator reads `/issues` on the agents' inspect port (9092), which the
+chart's NetworkPolicy keeps open to it whatever `networkPolicy.metricsFrom`
+and `networkPolicy.inspectFrom` say.
 
 ### Cost
 

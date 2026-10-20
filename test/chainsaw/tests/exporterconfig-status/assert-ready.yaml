@@ -4,5 +4,4 @@ metadata:
   name: ec-status-splunk
 status:
   (conditions[?type == 'Ready'].status | [0]): "True"
-  (conditions[?type == 'Ready'].status | [0]): "True"
   (conditions[?type == 'Ready'].reason | [0]): SecretsResolved

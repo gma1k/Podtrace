@@ -38,16 +38,7 @@ spec:
             content: |
               set -eu
 
-              for _ in $(seq 1 60); do
-                if kubectl -n podtrace-system get endpoints podtrace-webhook \
-                     -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
-                  if kubectl patch tracerconfig default --type=merge --dry-run=server \
-                       -p '{"metadata":{"annotations":{}}}' >/dev/null 2>&1; then
-                    break
-                  fi
-                fi
-                sleep 2
-              done
+              sh ../../lib/webhook-ready.sh
 
               saved=$(kubectl get tracerconfig default -o jsonpath='{.spec.agent.metrics}')
               kubectl -n "${NAMESPACE}" create configmap tracerconfig-before \
@@ -72,21 +63,7 @@ spec:
                 }
               }'
 
-              for _ in $(seq 1 150); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                updated=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.updatedNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${updated}" = "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "all ${desired} agents updated and ready"
-                  break
-                fi
-                sleep 2
-              done
-              if [ "${updated:-0}" != "${desired:-1}" ] || [ "${ready:-0}" != "${desired:-1}" ]; then
-                echo "FAIL: agents did not converge (updated=${updated:-?} ready=${ready:-?} desired=${desired:-?})"
-                kubectl -n podtrace-system get pod -l podtrace.io/component=agent
-                exit 1
-              fi
+              sh ../../lib/agents-converged.sh
       cleanup:
         - script:
             content: |
@@ -234,12 +211,13 @@ spec:
               kubectl -n dns-failures delete deployment dns-timeouts --wait=true
 
               for attempt in $(seq 1 36); do
-                active=""
-                for a in $(kubectl -n podtrace-system get pod -l podtrace.io/component=agent -o name); do
-                  active="${active}$(kubectl get --raw "/api/v1/namespaces/podtrace-system/pods/${a#pod/}:9090/proxy/metrics" 2>/dev/null \
-                    | grep '^podtrace_issue_active' | grep 'id="dns.failure_rate"' \
-                    | grep 'workload="dns-timeouts"' | awk '{ if ($2 + 0 == 1) print }' || true)"
-                done
+                if ! out=$(sh ../../lib/scrape-agent-metrics.sh); then
+                  echo "attempt ${attempt}: not every agent answered, so an absent series proves nothing"
+                  sleep 5
+                  continue
+                fi
+                active=$(printf '%s\n' "${out}" | grep '^podtrace_issue_active' | grep 'id="dns.failure_rate"' \
+                  | grep 'workload="dns-timeouts"' | awk '{ if ($2 + 0 == 1) print }' || true)
                 if [ -z "${active}" ]; then
                   echo "dns.failure_rate cleared on attempt ${attempt}"
                   exit 0

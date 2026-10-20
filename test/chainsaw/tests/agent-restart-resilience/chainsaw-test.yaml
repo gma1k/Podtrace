@@ -44,3 +44,33 @@ spec:
       try:
         - assert:
             file: ./assert-post-restart.yaml
+
+    - name: node-status-reappears
+      description: |
+        The restarted agents must report on the PodTrace again, not leave
+        the entry the old agents wrote standing. The cut-off is taken once
+        the rollout has finished, when every old agent is gone, so only a
+        new agent can write a heartbeat at or after it. Agents report every
+        30s.
+      try:
+        - script:
+            timeout: 150s
+            content: |
+              set -eu
+              kubectl -n podtrace-system rollout status ds/podtrace-agent --timeout=60s >/dev/null
+              cutoff=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              for _ in $(seq 1 45); do
+                beats=$(kubectl -n "${NAMESPACE}" get podtrace restart-pt \
+                  -o jsonpath='{range .status.nodeStatus[*]}{.lastHeartbeat}{"\n"}{end}')
+                for beat in ${beats}; do
+                  newest=$(printf '%s\n%s\n' "${cutoff}" "${beat}" | sort | tail -n 1)
+                  if [ "${newest}" = "${beat}" ]; then
+                    echo "a restarted agent reported at ${beat} (rollout finished ${cutoff})"
+                    exit 0
+                  fi
+                done
+                sleep 2
+              done
+              echo "FAIL: no nodeStatus heartbeat at or after ${cutoff}; the restarted agents never reported" >&2
+              kubectl -n "${NAMESPACE}" get podtrace restart-pt -o jsonpath='{.status.nodeStatus}' >&2
+              exit 1

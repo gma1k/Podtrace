@@ -25,6 +25,9 @@ metadata:
   name: podtrace-system
   labels:
     app.kubernetes.io/managed-by: podtrace-quickstart
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
 NSEOF
 
 drop_uninstall_hooks() {
@@ -47,12 +50,16 @@ echo "---" >>"${out}"
 helm template podtrace "${chart}" \
 	--namespace podtrace-system \
 	--include-crds \
-	--set namespace.create=true \
+	--set namespace.create=false \
 	--set operator.enabled=true \
 	"$@" |
 	drop_uninstall_hooks >>"${out}"
 
 if grep -q "helm.sh/hook:.*pre-delete" "${out}"; then
 	echo "render-quickstart.sh: pre-delete hooks survived the filter in ${out}" >&2
+	exit 1
+fi
+if grep -q "namespace-bootstrap" "${out}"; then
+	echo "render-quickstart.sh: namespace-bootstrap leaked into ${out}" >&2
 	exit 1
 fi

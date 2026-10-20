@@ -16,7 +16,7 @@ independently runnable.
 - `chainsaw` CLI on `$PATH`. Install:
 
   ```bash
-  go install github.com/kyverno/chainsaw@latest
+  make chainsaw-tools   # installs the version CI uses (CHAINSAW_VERSION in the Makefile)
   ```
 
 ## Running

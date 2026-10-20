@@ -6,6 +6,8 @@
 #   VERSION           Required. e.g. 0.11.7 (no leading 'v')
 #   PREVIOUS_VERSION  Optional. Empty for first catalog submission;
 #                     otherwise the version this release replaces.
+#   IMAGE_DIGEST      Optional. sha256:... of the released image; when set,
+#                     the CSV references the image by digest, not by tag.
 #
 # Outputs:
 #   bundle/<version>/
@@ -31,6 +33,23 @@ fi
 # Strip leading 'v' if present (release tags carry it; CSV name does not).
 VERSION="${VERSION#v}"
 PREVIOUS_VERSION="${PREVIOUS_VERSION#v}"
+IMAGE_DIGEST="${IMAGE_DIGEST:-}"
+
+readonly VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
+if [[ ! "${VERSION}" =~ ${VERSION_PATTERN} ]]; then
+	echo "ERROR: VERSION ${VERSION} is not MAJOR.MINOR.PATCH" >&2
+	exit 2
+fi
+prev="${PREVIOUS_VERSION}"
+if [[ -n "${prev}" && ! "${prev}" =~ ${VERSION_PATTERN} ]]; then
+	echo "ERROR: PREVIOUS_VERSION ${PREVIOUS_VERSION} is not X.Y.Z" >&2
+	exit 2
+fi
+readonly DIGEST_PATTERN='^sha256:[a-f0-9]{64}$'
+if [[ -n "${IMAGE_DIGEST}" && ! "${IMAGE_DIGEST}" =~ ${DIGEST_PATTERN} ]]; then
+	echo "ERROR: IMAGE_DIGEST ${IMAGE_DIGEST} is not a sha256 digest" >&2
+	exit 2
+fi
 
 # --- paths -------------------------------------------------------------
 
@@ -89,13 +108,16 @@ CSV_OUT="${MANIFESTS_DIR}/podtrace.clusterserviceversion.yaml"
 
 # Use python for reliable multi-line/large-substring substitution.
 python3 - "${SRC_DIR}/csv-template.yaml" "${CSV_OUT}" \
-	"${VERSION}" "${PREVIOUS_VERSION}" "${CREATED_AT}" "${SKIP_RANGE_UPPER}" "${ICON_PATH}" <<'PY'
+	"${VERSION}" "${PREVIOUS_VERSION}" "${CREATED_AT}" "${SKIP_RANGE_UPPER}" "${ICON_PATH}" "${IMAGE_DIGEST}" <<'PY'
 import base64, sys
 
-src, out, version, prev, created_at, skip_upper, icon_path = sys.argv[1:]
+src, out, version, prev, created_at, skip_upper, icon_path, digest = sys.argv[1:]
 
 with open(src) as f:
     csv = f.read()
+
+if digest:
+    csv = csv.replace("ghcr.io/gma1k/podtrace:__VERSION__", "ghcr.io/gma1k/podtrace@" + digest)
 
 with open(icon_path, "rb") as f:
     icon_b64 = base64.b64encode(f.read()).decode()

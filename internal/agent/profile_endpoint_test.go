@@ -83,7 +83,7 @@ func TestProfileEndpointRendersAnEmptyProfileBeforeAnySamples(t *testing.T) {
 	}
 }
 
-func TestServeMetricsRegistersTheProfileEndpointOnlyWithAProfiler(t *testing.T) {
+func TestServeInspectRegistersTheProfileEndpointOnlyWithAProfiler(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -96,7 +96,7 @@ func TestServeMetricsRegistersTheProfileEndpointOnlyWithAProfiler(t *testing.T) 
 
 	p := profiling.NewContinuousProfiler(nil, nil)
 	done := make(chan error, 1)
-	go func() { done <- serveMetrics(ctx, addr, NewMetrics(), p, nil, logr.Discard()) }()
+	go func() { done <- serveInspect(ctx, addr, p, nil, logr.Discard()) }()
 
 	var resp *http.Response
 	for range 50 {
@@ -117,7 +117,7 @@ func TestServeMetricsRegistersTheProfileEndpointOnlyWithAProfiler(t *testing.T) 
 
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
-		t.Errorf("serveMetrics returned %v on shutdown", err)
+		t.Errorf("serveInspect returned %v on shutdown", err)
 	}
 }
 

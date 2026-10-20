@@ -195,7 +195,7 @@ this repository. To check the cosign signature specifically:
 ```bash
 # x-release-please-version
 cosign verify ghcr.io/gma1k/podtrace:0.11.0 \
-  --certificate-identity-regexp 'https://github.com/gma1k/podtrace/.+' \
+  --certificate-identity-regexp '^https://github\.com/gma1k/podtrace/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -333,7 +333,7 @@ done
 # Verify the signature was produced by a workflow in gma1k/podtrace
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/gma1k/podtrace/.+' \
+  --certificate-identity-regexp '^https://github\.com/gma1k/podtrace/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 
@@ -342,9 +342,12 @@ curl -fsSLO https://github.com/gma1k/podtrace/releases/latest/download/podtrace_
 sha256sum -c checksums.txt --ignore-missing
 ```
 
-If the cosign verify step succeeds, the certificate's `--certificate-identity-regexp`
-field proves the tarball was built by a workflow run inside the
-`gma1k/podtrace` repository — not by a third party.
+If the cosign verify step succeeds, the certificate's identity proves the
+tarball was built by `release.yml` in the `gma1k/podtrace` repository, from a
+release tag. A looser pattern such as `https://github.com/gma1k/podtrace/.+`
+would also accept any other workflow or branch in the repository, the `test*`
+tags the release workflow signs as prereleases, and repositories whose name
+merely starts with `podtrace`.
 
 ### Building from source
 

@@ -34,6 +34,10 @@ image:
   repository: ghcr.io/gma1k/podtrace
   tag: ""
   digest: ""
+  # Set by the release job to the digest of the image built with this chart.
+  # It pins only the default reference: setting tag, digest or another
+  # repository takes precedence over it.
+  appVersionDigest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
 
@@ -129,6 +133,9 @@ agent:
   # attach the family is absent and the rule falls back to syscall latency.
   sockOpsRTT: true
 
+  # How many agents may restart at once when the DaemonSet's pod template
+  # changes: a count (2) or a percentage ("25%"). Empty keeps the Kubernetes
+  # default of one at a time.
   rolloutMaxUnavailable: ""
 
   alerting:
@@ -233,13 +240,17 @@ metrics:
     path: /metrics
 
 networkPolicy:
-  enabled: false
+  # On by default. The agent's /issues and /profile (port 9092) name pods,
+  # workloads and symbolised stacks in every namespace, so only the operator
+  # may reach them, plus inspectFrom below. /metrics (9090) and the health
+  # port stay open to every source unless metricsFrom says otherwise.
+  # Enforced only where the CNI implements NetworkPolicy; kubectl
+  # port-forward is not subject to it.
+  enabled: true
   # Sources allowed to reach the agent's and the operator's metrics ports, as
   # NetworkPolicy `from` peers. Left empty, every source is allowed: the
-  # policy then restricts nothing on those ports. The agent's port 9090 also
-  # serves /profile (symbolised CPU stacks for every workload on the node, in
-  # every namespace) and /issues, without authentication, so name your
-  # scrapers here. The operator is always allowed to the agents. For example:
+  # policy then restricts nothing on those ports. The operator is always
+  # allowed to the agents. For example:
   #   metricsFrom:
   #     - namespaceSelector:
   #         matchLabels:
@@ -248,13 +259,23 @@ networkPolicy:
   #         matchLabels:
   #           app.kubernetes.io/name: prometheus
   metricsFrom: []
-  # With metricsFrom set, `kubectl podtrace status` cannot reach the agents or
-  # the operator, because it reads them through the API server. On Cilium,
-  # true adds CiliumNetworkPolicies that allow the API server to their metrics
-  # ports. Off by default: it widens a restriction you chose. On other CNIs,
-  # add the control-plane node addresses to metricsFrom instead. The operator
-  # can always reach the agents' metrics port: it reads their active issues to
-  # link them across workloads.
+  # Further sources allowed to the agent's /issues and /profile port, as
+  # NetworkPolicy `from` peers. `kubectl podtrace status` reads it through the
+  # API server's pod proxy: on Cilium allowAPIServerToInspect covers that; on
+  # other CNIs that enforce NetworkPolicy, add the control-plane node
+  # addresses here as ipBlock peers or the status view falls back to Events
+  # for issues and cannot show profiles.
+  inspectFrom: []
+  # On Cilium, allow the API server's pod proxy to the agent's inspect port.
+  # The proxy is gated by RBAC (pods/proxy), so this admits users you
+  # authorised, not other pods.
+  allowAPIServerToInspect: true
+  # With metricsFrom set, `kubectl podtrace status` cannot reach the agents'
+  # or the operator's metrics, because it reads them through the API server.
+  # On Cilium, true adds CiliumNetworkPolicies that allow the API server to
+  # their metrics ports. Off by default: it widens a restriction you chose.
+  # On other CNIs, add the control-plane node addresses to metricsFrom
+  # instead.
   allowAPIServerProxy: false
 
 tracerConfig:

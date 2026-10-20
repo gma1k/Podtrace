@@ -280,6 +280,17 @@ func TestTheAgentPortIsReadByName(t *testing.T) {
 	}
 }
 
+func TestIssuesAreReadFromTheInspectPortWhenTheAgentHasOne(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{{Ports: []corev1.ContainerPort{
+		{Name: "metrics", ContainerPort: 9090},
+		{Name: "health", ContainerPort: 9091},
+		{Name: "inspect", ContainerPort: 9192},
+	}}}}}
+	if got := agentPort(pod); got != "9192" {
+		t.Errorf("port %s, want the inspect port 9192; the metrics port no longer serves /issues", got)
+	}
+}
+
 func TestTheCachedEndpointSliceKeepsOnlyTheServiceAndThePods(t *testing.T) {
 	slice := serviceSlice("shop", "backend", "backend-1")
 	slice.Labels["extra"] = "x"

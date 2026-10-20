@@ -1,0 +1,26 @@
+# The builder stage runs `COPY . .`, so anything here would land in a builder
+# layer, and the release build exports builder layers to the Actions cache.
+# The checkout's .git/config can hold the job's token, and an untracked secret
+# in a working tree would otherwise be copied in too.
+#
+# Do not exclude bpf/.generated/ or internal/ebpf/embedded/*.bpf.o: the build
+# reads the BTF header and the prebuilt BPF objects from the context.
+.git
+.github
+bin/
+/podtrace
+/bundle/
+/dist/
+/release/
+.env
+.env.*
+*.pem
+*.key
+*.test
+*.prof
+*.out
+*.coverprofile
+test-report.txt
+test_output.log
+.idea/
+.vscode/

@@ -43,6 +43,9 @@ require_tool() {
 	fi
 }
 
+# shellcheck source-path=SCRIPTDIR source=kube-context-guard.sh
+source "$(dirname "${BASH_SOURCE[0]}")/kube-context-guard.sh"
+
 repo_root() {
 	cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd
 }
@@ -83,8 +86,16 @@ cleanup() {
 		podtracesessions.podtrace.io \
 		tracerconfigs.podtrace.io \
 		--ignore-not-found --wait=false >/dev/null 2>&1 || true
-	kubectl delete clusterrole podtrace-operator podtrace-agent --ignore-not-found >/dev/null 2>&1 || true
-	kubectl delete clusterrolebinding podtrace-operator podtrace-agent --ignore-not-found >/dev/null 2>&1 || true
+	# kubectl apply keeps the chart's hook objects, so the quickstart leaves
+	# the bootstrap and labeler grants behind unless they are named here.
+	local -a roles=(
+		podtrace-operator podtrace-agent
+		podtrace-cr-bootstrap podtrace-crd-labeler
+	)
+	kubectl delete clusterrole "${roles[@]}" \
+		--ignore-not-found >/dev/null 2>&1 || true
+	kubectl delete clusterrolebinding "${roles[@]}" \
+		--ignore-not-found >/dev/null 2>&1 || true
 
 	log_info "cleanup issued (deletions run async; kubectl get may still show items for a few seconds)"
 }
@@ -169,6 +180,8 @@ wait_namespace_gone() {
 main() {
 	require_tool kubectl
 	require_tool helm
+	require_kind_context
+	trap remove_e2e_kubeconfig EXIT
 
 	local action="${1:-run}"
 	if [[ "${action}" == "cleanup" ]]; then
@@ -182,7 +195,7 @@ main() {
 	local root
 	root="$(repo_root)"
 	RENDERED="$(mktemp -t quickstart.XXXXXX.yaml)"
-	trap 'rm -f "${RENDERED:-}" "${RENDERED:-}.demo"' EXIT
+	trap 'rm -f "${RENDERED:-}" "${RENDERED:-}.demo"; remove_e2e_kubeconfig' EXIT
 
 	log_info "rendering quickstart manifests from chart + sample"
 	render_quickstart "${root}" "${RENDERED}"

@@ -42,17 +42,7 @@ spec:
             content: |
               set -eu
 
-              for _ in $(seq 1 60); do
-                if kubectl -n podtrace-system get endpoints podtrace-webhook \
-                     -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
-                  if kubectl patch tracerconfig default --type=merge --dry-run=server \
-                       -p '{"metadata":{"annotations":{}}}' >/dev/null 2>&1; then
-                    echo "validating webhook is answering"
-                    break
-                  fi
-                fi
-                sleep 2
-              done
+              sh ../../lib/webhook-ready.sh
 
               saved=$(kubectl get tracerconfig default -o jsonpath='{.spec.agent.metrics}')
               kubectl -n "${NAMESPACE}" create configmap tracerconfig-before \
@@ -69,20 +59,7 @@ spec:
                 }
               }'
 
-              for _ in $(seq 1 120); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                updated=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.updatedNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${updated}" = "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "all ${desired} agents updated and ready"
-                  break
-                fi
-                sleep 2
-              done
-              if [ "${updated:-0}" != "${desired:-1}" ] || [ "${ready:-0}" != "${desired:-1}" ]; then
-                echo "FAIL: agents did not converge (updated=${updated:-?} ready=${ready:-?} desired=${desired:-?})"
-                exit 1
-              fi
+              sh ../../lib/agents-converged.sh
       cleanup:
         - script:
             content: |

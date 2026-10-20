@@ -1,0 +1,36 @@
+apiVersion: podtrace.io/v1alpha1
+kind: ExporterConfig
+metadata:
+  name: usdt-otlp
+spec:
+  type: otlp
+  otlp:
+    endpoint: otel-collector:4318
+    protocol: http
+    insecure: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usdtdemo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: usdtdemo
+  template:
+    metadata:
+      labels:
+        app: usdtdemo
+    spec:
+      containers:
+        - name: usdtdemo
+          image: podtrace-usdtdemo:ci
+          imagePullPolicy: Never
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi

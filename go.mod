@@ -1,6 +1,6 @@
 module github.com/gma1k/podtrace
 
-go 1.27.2
+go 1.27.3
 
 require (
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a
@@ -35,7 +35,7 @@ require (
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/time v0.16.0
-	google.golang.org/api v0.304.0
+	google.golang.org/api v0.305.0
 	google.golang.org/grpc v1.85.0-dev.0.20260825072537-93e31b48545e
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1

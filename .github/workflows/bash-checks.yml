@@ -6,7 +6,6 @@ on:
     paths:
       - "**/*.sh"
       - "scripts/**"
-      - "build.sh"
       - "test/**/*.sh"
   workflow_dispatch:
 

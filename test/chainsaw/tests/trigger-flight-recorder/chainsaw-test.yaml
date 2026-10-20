@@ -4,6 +4,7 @@ metadata:
   name: trigger-flight-recorder
 spec:
   namespace: trigger-flight-recorder-test
+  concurrent: false
   description: |
     End-to-end verification — the "flight recorder": a PodTraceSchedule in
     trigger mode creates a PodTraceSession in response to an agent-detected
@@ -54,15 +55,9 @@ spec:
                 agent:
                   alerting:
                     enabled: true
-        - assert:
-            resource:
-              apiVersion: apps/v1
-              kind: DaemonSet
-              metadata:
-                name: podtrace-agent
-                namespace: podtrace-system
-              status:
-                (numberReady == desiredNumberScheduled && updatedNumberScheduled == desiredNumberScheduled && desiredNumberScheduled > `0`): true
+        - script:
+            timeout: 330s
+            content: sh ../../lib/agents-converged.sh
       cleanup:
         - script:
             content: |

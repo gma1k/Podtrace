@@ -84,7 +84,7 @@ spec:
                   | grep "namespace=\"${NAMESPACE}\"" | grep 'workload="h3server"' \
                   | grep 'protocol="http3"' | grep 'status_class="2xx"' \
                   | awk '{ s += $2 } END { print s + 0 }')
-                joined=$(kubectl get --raw "/api/v1/namespaces/podtrace-system/pods/${agent}:9090/proxy/profile?namespace=${NAMESPACE}&workload=h3server" 2>/dev/null \
+                joined=$(kubectl get --raw "/api/v1/namespaces/podtrace-system/pods/${agent}:9092/proxy/profile?namespace=${NAMESPACE}&workload=h3server" 2>/dev/null \
                   | grep -o '"slowRequests":{[^}]*"requests":[0-9]*' \
                   | grep -o '"requests":[0-9]*$' | cut -d: -f2 || true)
                 if [ "${served:-0}" -gt 0 ] && [ "${joined:-0}" -gt 0 ]; then
@@ -94,6 +94,6 @@ spec:
                 sleep 5
               done
               echo "FAIL: server responses counted=${served:-0}, requests joined=${joined:-0} (agent ${agent:-none})" >&2
-              kubectl get --raw "/api/v1/namespaces/podtrace-system/pods/${agent}:9090/proxy/profile?namespace=${NAMESPACE}" >&2 || true
+              kubectl get --raw "/api/v1/namespaces/podtrace-system/pods/${agent}:9092/proxy/profile?namespace=${NAMESPACE}" >&2 || true
               kubectl -n podtrace-system logs "${agent}" --tail=60 >&2 || true
               exit 1

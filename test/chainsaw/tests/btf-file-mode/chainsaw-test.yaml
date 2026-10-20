@@ -61,12 +61,7 @@ spec:
                 -p '[{"op": "remove", "path": "/spec/btfSource"}]' >/dev/null 2>&1 || true
               kubectl patch tracerconfig default --type=merge \
                 -p '{"spec": {"btfMode": "auto"}}' >/dev/null 2>&1 || true
-              for _ in $(seq 1 90); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null)
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}' 2>/dev/null)
-                if [ -n "${desired}" ] && [ "${ready}" = "${desired}" ]; then break; fi
-                sleep 2
-              done
+              sh ../../lib/agents-converged.sh default 170 || true
         - delete:
             ref:
               apiVersion: apps/v1
@@ -87,21 +82,7 @@ spec:
                 }
               }'
 
-              for _ in $(seq 1 150); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                updated=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.updatedNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${updated}" = "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "all ${desired} agents ready on the supplied blob"
-                  break
-                fi
-                sleep 2
-              done
-              if [ "${ready:-0}" != "${desired:-1}" ]; then
-                echo "FAIL: agents did not converge on the supplied blob (ready=${ready:-?} desired=${desired:-?})" >&2
-                kubectl -n podtrace-system get pod -l podtrace.io/component=agent
-                exit 1
-              fi
+              sh ../../lib/agents-converged.sh
 
               msg=$(kubectl get tracerconfig default -o jsonpath='{range .status.conditions[?(@.type=="Reconciled")]}{.message}{end}')
               case "${msg}" in
@@ -174,18 +155,8 @@ spec:
               kubectl patch tracerconfig default --type=merge -p '{
                 "spec": {"btfSource": {"hostPath": "/var/lib/podtrace-e2e/vmlinux.btf"}}
               }'
-              for _ in $(seq 1 150); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "ok: fleet recovered on the good blob"
-                  exit 0
-                fi
-                sleep 2
-              done
-              echo "FAIL: fleet did not recover after the blob was restored" >&2
-              kubectl -n podtrace-system get pod -l podtrace.io/component=agent
-              exit 1
+              sh ../../lib/agents-converged.sh
+              echo "ok: fleet recovered on the good blob"
 
     - name: a-missing-configmap-is-reported-not-claimed
       description: |
@@ -236,12 +207,5 @@ spec:
                 {"op": "remove", "path": "/spec/btfSource"},
                 {"op": "replace", "path": "/spec/btfMode", "value": "auto"}
               ]' || kubectl patch tracerconfig default --type=merge -p '{"spec": {"btfMode": "auto"}}'
-              for _ in $(seq 1 150); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "fleet restored to btfMode=auto"
-                  break
-                fi
-                sleep 2
-              done
+              sh ../../lib/agents-converged.sh
+              echo "fleet restored to btfMode=auto"

@@ -32,6 +32,7 @@ type agentOptions struct {
 	nodeName             string
 	metricsAddr          string
 	healthAddr           string
+	inspectAddr          string
 	statusReportInterval time.Duration
 	backendMode          string
 }
@@ -67,6 +68,8 @@ exporter routing).`,
 		"Address for the Prometheus metrics endpoint")
 	cmd.Flags().StringVar(&opts.healthAddr, "health-addr", ":9091",
 		"Address for liveness/readiness probes")
+	cmd.Flags().StringVar(&opts.inspectAddr, "inspect-addr", ":9092",
+		"Address for /issues and /profile; the same as --metrics-addr serves them alongside /metrics")
 	cmd.Flags().DurationVar(&opts.statusReportInterval, "status-report-interval", 0,
 		"How often to patch PodTrace.status.nodeStatus (default: 30s)")
 	cmd.Flags().StringVar(&opts.backendMode, "backend", backendModeReal,
@@ -95,6 +98,7 @@ func toAgentOptions(c *agentOptions) (agent.Options, error) {
 		TracerConfigName:     c.tracerConfigName,
 		MetricsAddr:          c.metricsAddr,
 		HealthAddr:           c.healthAddr,
+		InspectAddr:          c.inspectAddr,
 		StatusReportInterval: c.statusReportInterval,
 		BackendFactory:       factory,
 	}, nil

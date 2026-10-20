@@ -68,6 +68,8 @@ type Options struct {
 	MetricsAddr string
 	HealthAddr  string
 
+	InspectAddr string
+
 	StatusReportInterval time.Duration
 
 	BackendFactory func() (tracer.TracerBackend, error)
@@ -80,6 +82,7 @@ func DefaultOptions() Options {
 	return Options{
 		MetricsAddr: ":9090",
 		HealthAddr:  ":9091",
+		InspectAddr: ":9092",
 	}
 }
 
@@ -231,7 +234,9 @@ func Run(ctx context.Context, opts Options) error {
 	g.Go(func() error { return engine.Run(gctx, targetsCh) })
 	g.Go(func() error { return writer.Run(gctx) })
 	g.Go(func() error { return probeSrv.Run(gctx) })
-	g.Go(func() error { return serveMetrics(gctx, opts.MetricsAddr, metrics, profiler, inspections, logger) })
+	for _, serve := range httpServers(opts, metrics, profiler, inspections, logger) {
+		g.Go(func() error { return serve(gctx) })
+	}
 	g.Go(func() error { return reapWorkloadMetrics(gctx, metricsSink, logger) })
 	g.Go(func() error { return drainKernelMetrics(gctx, backend, metricsSink, router, metrics, logger) })
 	g.Go(func() error { return drainOnCPUSamples(gctx, backend, profiler, metrics, logger) })
@@ -308,32 +313,72 @@ func newMetricsServer(handler http.Handler) *http.Server {
 	}
 }
 
+// httpServers returns the agent's HTTP listeners: one for /metrics and one
+// for /issues and /profile, or a single one serving all three when both
+// addresses are the same.
+func httpServers(opts Options, metrics *Metrics, profiler *profiling.ContinuousProfiler, inspections *inspect.Engine, logger logr.Logger) []func(context.Context) error {
+	if opts.InspectAddr == opts.MetricsAddr {
+		return []func(context.Context) error{func(ctx context.Context) error {
+			return serveHTTP(ctx, "metrics and inspection", opts.MetricsAddr, combinedMux(metrics, profiler, inspections), logger)
+		}}
+	}
+	return []func(context.Context) error{
+		func(ctx context.Context) error { return serveMetrics(ctx, opts.MetricsAddr, metrics, logger) },
+		func(ctx context.Context) error {
+			return serveInspect(ctx, opts.InspectAddr, profiler, inspections, logger)
+		},
+	}
+}
+
 // serveMetrics exposes the agent's Prometheus registry on the
 // metrics-addr port. Short-circuit when the address is empty — useful
 // in tests.
-func serveMetrics(ctx context.Context, addr string, metrics *Metrics, profiler *profiling.ContinuousProfiler, inspections *inspect.Engine, logger logr.Logger) error {
-	if addr == "" || addr == "0" {
-		return nil
-	}
+func serveMetrics(ctx context.Context, addr string, metrics *Metrics, logger logr.Logger) error {
+	return serveHTTP(ctx, "metrics", addr, metricsMux(metrics), logger)
+}
+
+// serveInspect exposes /issues and /profile on the inspect-addr port.
+func serveInspect(ctx context.Context, addr string, profiler *profiling.ContinuousProfiler, inspections *inspect.Engine, logger logr.Logger) error {
+	mux := http.NewServeMux()
+	registerInspectHandlers(mux, profiler, inspections)
+	return serveHTTP(ctx, "inspection", addr, mux, logger)
+}
+
+func metricsMux(metrics *Metrics) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metrics.Handler())
+	return mux
+}
+
+func combinedMux(metrics *Metrics, profiler *profiling.ContinuousProfiler, inspections *inspect.Engine) *http.ServeMux {
+	mux := metricsMux(metrics)
+	registerInspectHandlers(mux, profiler, inspections)
+	return mux
+}
+
+func registerInspectHandlers(mux *http.ServeMux, profiler *profiling.ContinuousProfiler, inspections *inspect.Engine) {
 	mux.HandleFunc("/issues", issuesHandler(inspections))
 	if profiler != nil {
 		mux.HandleFunc("/profile", profileHandler(profiler))
 	}
+}
 
+func serveHTTP(ctx context.Context, name, addr string, handler http.Handler, logger logr.Logger) error {
+	if addr == "" || addr == "0" {
+		return nil
+	}
 	ln, err := listenMetrics("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
-	srv := newMetricsServer(mux)
+	srv := newMetricsServer(handler)
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
-	logger.Info("starting metrics server", "addr", addr)
+	logger.Info("starting "+name+" server", "addr", addr)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

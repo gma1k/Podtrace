@@ -48,16 +48,7 @@ spec:
             content: |
               set -eu
 
-              for _ in $(seq 1 60); do
-                if kubectl -n podtrace-system get endpoints podtrace-webhook \
-                     -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
-                  if kubectl patch tracerconfig default --type=merge --dry-run=server \
-                       -p '{"metadata":{"annotations":{}}}' >/dev/null 2>&1; then
-                    break
-                  fi
-                fi
-                sleep 2
-              done
+              sh ../../lib/webhook-ready.sh
 
               saved=$(kubectl get tracerconfig default -o jsonpath='{.spec.agent.metrics}')
               kubectl -n "${NAMESPACE}" create configmap tracerconfig-before \
@@ -83,21 +74,7 @@ spec:
                 }
               }'
 
-              for _ in $(seq 1 150); do
-                desired=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.desiredNumberScheduled}')
-                updated=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.updatedNumberScheduled}')
-                ready=$(kubectl -n podtrace-system get ds podtrace-agent -o jsonpath='{.status.numberReady}')
-                if [ -n "${desired}" ] && [ "${updated}" = "${desired}" ] && [ "${ready}" = "${desired}" ]; then
-                  echo "all ${desired} agents updated and ready"
-                  break
-                fi
-                sleep 2
-              done
-              if [ "${updated:-0}" != "${desired:-1}" ] || [ "${ready:-0}" != "${desired:-1}" ]; then
-                echo "FAIL: agents did not converge (updated=${updated:-?} ready=${ready:-?} desired=${desired:-?})"
-                kubectl -n podtrace-system get pod -l podtrace.io/component=agent
-                exit 1
-              fi
+              sh ../../lib/agents-converged.sh
       cleanup:
         - script:
             content: |
@@ -444,19 +421,14 @@ spec:
 
               cleared=0
               for attempt in $(seq 1 24); do
-                still=0
-                for ip in $(kubectl -n podtrace-system get pod \
-                              -l podtrace.io/component=agent \
-                              -o jsonpath='{range .items[*]}{.status.podIP} {end}'); do
-                  if kubectl -n inspect-app exec "${scraper}" -c curl -- \
-                       curl -sS --max-time 10 "http://${ip}:9090/metrics" 2>/dev/null \
-                     | grep '^podtrace_issue_active' \
+                if ! out=$(sh ../../lib/scrape-agent-metrics.sh inspect-app "${scraper}" curl); then
+                  echo "attempt ${attempt}: not every agent answered, so an absent series proves nothing"
+                  sleep 5
+                  continue
+                fi
+                if ! printf '%s\n' "${out}" | grep '^podtrace_issue_active' \
                      | grep 'id="l7.error_rate"' \
                      | grep -q 'workload="broken-api"'; then
-                    still=1
-                  fi
-                done
-                if [ "${still}" -eq 0 ]; then
                   cleared=1
                   echo "issue cleared on attempt ${attempt}"
                   break

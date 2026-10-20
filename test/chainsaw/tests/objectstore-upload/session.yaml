@@ -25,13 +25,13 @@ spec:
     spec:
       containers:
         - name: curl
-          image: curlimages/curl:latest
+          image: curlimages/curl:8.9.1
           command:
             - sh
             - -c
             - |
               while true; do
-                curl -sS -o /dev/null https://kubernetes.io || true
+                curl -sk -o /dev/null https://kubernetes.default.svc.cluster.local/livez || true
                 sleep 1
               done
 ---

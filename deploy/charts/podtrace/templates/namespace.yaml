@@ -33,6 +33,28 @@ Why a Job instead of a templated Namespace resource:
   no delete-policy on the manifest applied inside the Job.
 */}}
 {{- if .Values.namespace.create }}
+{{- $systemNamespace := include "podtrace.systemNamespace" . }}
+{{- /*
+  The chart's labels are merged over the user's, so a user value for a
+  pod-security.kubernetes.io/* key cannot produce a duplicate key or relax the
+  privileged level the agent DaemonSet and session Jobs need
+  (CAP_BPF / CAP_SYS_ADMIN / CAP_PERFMON). User-namespace CRs stay under
+  restricted PSA; only implementation pods land here.
+*/}}
+{{- $labels := merge (dict
+      "app.kubernetes.io/name" "podtrace"
+      "app.kubernetes.io/instance" .Release.Name
+      "app.kubernetes.io/managed-by" .Release.Service
+      "app.kubernetes.io/part-of" "podtrace"
+      "pod-security.kubernetes.io/enforce" "privileged"
+      "pod-security.kubernetes.io/audit" "privileged"
+      "pod-security.kubernetes.io/warn" "privileged")
+    (.Values.namespace.labels | default dict) }}
+{{- $metadata := dict "name" $systemNamespace "labels" $labels }}
+{{- with .Values.namespace.annotations }}
+{{- $_ := set $metadata "annotations" . }}
+{{- end }}
+{{- $namespaceManifest := dict "apiVersion" "v1" "kind" "Namespace" "metadata" $metadata }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -47,7 +69,7 @@ metadata:
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-100"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -61,11 +83,18 @@ metadata:
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-100"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
 rules:
+  # create cannot be narrowed by name; everything that changes an existing
+  # namespace is limited to the system namespace, so this ServiceAccount
+  # cannot relabel another namespace privileged.
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get", "create", "patch", "update"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: [{{ $systemNamespace | quote }}]
+    verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -79,7 +108,7 @@ metadata:
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-100"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -139,33 +168,13 @@ spec:
           command:
             - /bin/sh
             - -c
+            # The manifest is rendered by Helm as one JSON line inside a
+            # quoted heredoc, so nothing in a label or annotation value is
+            # expanded by the shell.
             - |
               set -eu
-              NS="{{ include "podtrace.systemNamespace" . }}"
-              cat <<EOF | kubectl apply -f -
-              apiVersion: v1
-              kind: Namespace
-              metadata:
-                name: $NS
-{{- with .Values.namespace.annotations }}
-                annotations:
-{{ toYaml . | indent 18 }}
-{{- end }}
-                labels:
-{{- with .Values.namespace.labels }}
-{{ toYaml . | indent 18 }}
-{{- end }}
-                  app.kubernetes.io/name: podtrace
-                  app.kubernetes.io/instance: {{ .Release.Name }}
-                  app.kubernetes.io/managed-by: {{ .Release.Service }}
-                  app.kubernetes.io/part-of: podtrace
-                  # podtrace-system runs the agent DaemonSet and session
-                  # Jobs, which require CAP_BPF / CAP_SYS_ADMIN / CAP_PERFMON.
-                  # User-namespace CRs (PodTrace / PodTraceSession) stay
-                  # under restricted PSA; only implementation pods land here.
-                  pod-security.kubernetes.io/enforce: privileged
-                  pod-security.kubernetes.io/audit: privileged
-                  pod-security.kubernetes.io/warn: privileged
-              EOF
-              echo "namespace-bootstrap: $NS ready"
+              kubectl apply -f - <<'PODTRACE_NAMESPACE_MANIFEST'
+              {{ $namespaceManifest | toJson }}
+              PODTRACE_NAMESPACE_MANIFEST
+              echo "namespace-bootstrap: done"
 {{- end }}

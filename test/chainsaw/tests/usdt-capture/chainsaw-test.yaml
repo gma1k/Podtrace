@@ -1,0 +1,57 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: usdt-capture
+spec:
+  description: |
+    Verifies USDT capture end-to-end through the operator path:
+      1. Apply ExporterConfig + a C workload built with systemtap's sys/sdt.h
+         that fires the podtrace_test:hit probe about five times a second
+         (workload/main.c).
+      2. Apply a PodTraceSession with filters=[usdt] targeting it. The session
+         Job scans the binary's .note.stapsdt notes and attaches a uprobe at
+         each probe site (bpf/usdt.c).
+      3. Session reaches Completed with summary.totalEvents > 0. With only the
+         usdt category selected, nothing but USDT events can make that count.
+
+    The workload image is built and loaded by the chainsaw workflow as
+    podtrace-usdtdemo:ci, like the other locally built fixtures; without it
+    the Deployment never becomes ready.
+  timeouts:
+    apply: 30s
+    assert: 150s
+    delete: 60s
+    cleanup: 120s
+  steps:
+    - name: setup-workload
+      try:
+        - apply:
+            file: ./resources.yaml
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: usdtdemo
+              status:
+                readyReplicas: 1
+      catch:
+        - describe:
+            apiVersion: v1
+            kind: Pod
+            selector: app=usdtdemo
+    - name: apply-session
+      try:
+        - apply:
+            file: ./session.yaml
+        - assert:
+            file: ./assert-completed.yaml
+      catch:
+        - describe:
+            apiVersion: podtrace.io/v1alpha1
+            kind: PodTraceSession
+            name: usdt-session
+        - podLogs:
+            namespace: podtrace-system
+            selector: podtrace.io/session=usdt-session
+            tail: 80

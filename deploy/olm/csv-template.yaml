@@ -155,10 +155,10 @@ spec:
     `podtrace-system` namespace and watches the six CRD kinds
     cluster-wide. When a `TracerConfig` is created, the operator rolls
     out a `podtrace-agent` DaemonSet across the cluster. The agent
-    container runs **privileged** with `hostPID` (capabilities include
-    `CAP_BPF`, `CAP_SYS_ADMIN`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`, and
-    `CAP_NET_ADMIN`) — required for attaching eBPF kprobes/uprobes and
-    walking host cgroup and proc trees. Per-session Jobs use a
+    container is not privileged, but runs as root with `hostPID` and the
+    capabilities `CAP_BPF`, `CAP_SYS_ADMIN`, `CAP_PERFMON`,
+    `CAP_SYS_RESOURCE`, `CAP_NET_ADMIN` and `CAP_SYS_PTRACE` — required for
+    attaching eBPF kprobes/uprobes and walking host cgroup and proc trees. Per-session Jobs use a
     separate, narrower ServiceAccount with namespaced RBAC scoped to
     the session's target.
 
@@ -176,12 +176,11 @@ spec:
     - Linux nodes with kernel **5.8+** (BPF ring buffer)
     - For some probes (gRPC, FastCGI, full path resolution),
       `/sys/kernel/btf/vmlinux` must be present (BTF support)
-    - `cert-manager` is **required** if you enable the validating
-      webhook (default: enabled). The operator ships with
-      `cert-manager.io/inject-ca-from` annotations on the
-      `ValidatingWebhookConfiguration`. For air-gapped clusters
-      without cert-manager, configure self-signed webhook certs via
-      the underlying Helm chart values.
+    - This bundle does not install the validating webhook, so a resource
+      the operator cannot act on is reported in its status conditions
+      rather than rejected at admission. The optional webhook (which needs
+      `cert-manager` or a supplied CA bundle) is available through the
+      Helm chart.
 
     ## Resources
 
@@ -372,6 +371,12 @@ spec:
             - apiGroups: [""]
               resources: ["nodes"]
               verbs: ["get", "list", "watch"]
+            - apiGroups: ["discovery.k8s.io"]
+              resources: ["endpointslices"]
+              verbs: ["get", "list", "watch"]
+            - apiGroups: [""]
+              resources: ["services"]
+              verbs: ["get", "list", "watch"]
             - apiGroups: [""]
               resources: ["serviceaccounts", "configmaps"]
               verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -404,7 +409,7 @@ spec:
             strategy:
               type: RollingUpdate
               rollingUpdate:
-                maxUnavailable: 1
+                maxUnavailable: 0
                 maxSurge: 1
             selector:
               matchLabels:
@@ -421,6 +426,8 @@ spec:
                   runAsNonRoot: true
                   runAsUser: 65532
                   fsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
                 containers:
                   - name: operator
                     image: ghcr.io/gma1k/podtrace:__VERSION__
@@ -439,6 +446,14 @@ spec:
                             fieldPath: metadata.namespace
                       - name: PODTRACE_BOOTSTRAP_IMAGE
                         value: ghcr.io/gma1k/podtrace:__VERSION__
+                      - name: PODTRACE_BOOTSTRAP_TC_NAME
+                        value: default
+                      - name: PODTRACE_ALLOWED_AGENT_IMAGE_REPOS
+                        value: ghcr.io/gma1k/podtrace
+                      - name: PODTRACE_OBJECTSTORE_CROSS_NAMESPACE_AMBIENT_CREDENTIALS
+                        value: "false"
+                      - name: PODTRACE_OBJECTSTORE_ENDPOINT_ALLOWLIST
+                        value: ""
                     ports:
                       - name: metrics
                         containerPort: 8080

@@ -62,13 +62,21 @@ Resolved container image reference. Prefers an immutable digest when
 image.digest is set (repository@sha256:...); otherwise falls back to
 repository:tag. Pinning by digest closes the mutable-tag supply-chain gap for
 the root+CAP_SYS_ADMIN workload.
+
+image.appVersionDigest is written by the release job: the digest of the
+appVersion image it built. It pins the default reference only, so a chosen
+tag, a chosen digest or a mirror repository (which may hold a re-pushed image
+with another digest) behave exactly as they would without it.
 */}}
 {{- define "podtrace.image" -}}
 {{- $repo := .Values.image.repository -}}
 {{- if .Values.image.digest -}}
 {{- printf "%s@%s" $repo .Values.image.digest -}}
+{{- else if .Values.image.tag -}}
+{{- printf "%s:%s" $repo .Values.image.tag -}}
+{{- else if and .Values.image.appVersionDigest (eq $repo "ghcr.io/gma1k/podtrace") -}}
+{{- printf "%s:%s@%s" $repo .Chart.AppVersion .Values.image.appVersionDigest -}}
 {{- else -}}
-{{- $tag := default .Chart.AppVersion .Values.image.tag -}}
-{{- printf "%s:%s" $repo $tag -}}
+{{- printf "%s:%s" $repo .Chart.AppVersion -}}
 {{- end -}}
 {{- end }}

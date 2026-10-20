@@ -3,23 +3,43 @@ name: Chainsaw e2e
 on:
   pull_request:
     branches: ["**"]
-    paths:
-      - "api/v1alpha1/**"
-      - "cmd/podtrace/**"
-      - "internal/operator/**"
-      - "internal/agent/**"
-      - "deploy/charts/podtrace/**"
-      - "test/chainsaw/**"
-      - "test/e2e/**"
-      - "deploy/quickstart-sample.yaml"
-      - "Makefile"
-      - "Dockerfile"
-      - ".github/workflows/chainsaw.yml"
-      - ".github/actions/setup-bpf-toolchain/**"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "assets/**"
+      - "examples/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/DISCUSSION_TEMPLATE/**"
+      - "LICENSE"
+      - "AUTHORS"
+      - "CODEOWNERS"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "assets/**"
+      - "examples/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/DISCUSSION_TEMPLATE/**"
+      - "LICENSE"
+      - "AUTHORS"
+      - "CODEOWNERS"
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  UPSTREAM_FIXTURE_IMAGES: >-
+    nginx:1.29
+    nginx:1.27-alpine
+    alpine/k8s:1.30.4
+    polinux/stress:1.0.4
+    busybox:1.36
+    curlimages/curl:8.9.1
+    python:3.12-alpine
+    registry.k8s.io/pause:3.9
+    public.ecr.aws/aws-cli/aws-cli:2.17.0
+    chrislusf/seaweedfs:3.93
 
 permissions:
   contents: read
@@ -31,7 +51,7 @@ concurrency:
 jobs:
   chainsaw:
     if: ${{ !startsWith(github.head_ref, 'release-please--') }}
-    runs-on: ${{ vars.CHAINSAW_RUNNER || 'ubuntu-26.04' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CHAINSAW_RUNNER || 'ubuntu-26.04' }}
     timeout-minutes: 30
 
     strategy:
@@ -43,6 +63,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -107,10 +129,13 @@ jobs:
           docker build --provenance=false \
             -t podtrace-h3server:ci \
             test/chainsaw/tests/h3-nghttp3-server/workload-server
+          docker build --provenance=false \
+            -t podtrace-usdtdemo:ci \
+            test/chainsaw/tests/usdt-capture/workload
 
       - name: Pull upstream workload images
         run: |
-          for image in nginx:1.29 alpine/k8s:1.30.4 polinux/stress:1.0.4; do
+          for image in ${UPSTREAM_FIXTURE_IMAGES}; do
             pulled=0
             for i in 1 2 3; do
               if docker pull "$image"; then
@@ -140,9 +165,8 @@ jobs:
             podtrace-otlp-sink:ci \
             podtrace-h3curl:ci \
             podtrace-h3server:ci \
-            nginx:1.29 \
-            alpine/k8s:1.30.4 \
-            polinux/stress:1.0.4
+            podtrace-usdtdemo:ci \
+            ${UPSTREAM_FIXTURE_IMAGES}
           do
             archive="${tmp}/$(echo "${image}" | tr '/:' '__').tar"
             docker image save --platform "linux/${arch}" "${image}" -o "${archive}"
@@ -152,16 +176,10 @@ jobs:
 
       - name: Install operator via Helm
         run: |
-          kubectl create namespace podtrace-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl label namespace podtrace-system \
-            pod-security.kubernetes.io/enforce=privileged \
-            pod-security.kubernetes.io/audit=privileged \
-            pod-security.kubernetes.io/warn=privileged \
-            --overwrite
-
           timeout 420 helm install podtrace deploy/charts/podtrace \
             --namespace podtrace-system \
-            --set namespace.create=false \
+            --create-namespace \
+            --set namespace.create=true \
             --set operator.enabled=true \
             --set image.repository=ghcr.io/gma1k/podtrace \
             --set image.tag=ci \
@@ -210,6 +228,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:

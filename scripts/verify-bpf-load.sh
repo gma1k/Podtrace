@@ -29,4 +29,6 @@ EBPF_VERSION="$(grep 'github.com/cilium/ebpf' go.mod | awk '{print $2}')"
 	CGO_ENABLED=0 go build -o loader .
 )
 
-docker run --rm --privileged -v "${WORKDIR}":/lt debian:bookworm-slim /lt/loader /lt/object.bpf.o
+readonly LOADER_IMAGE="debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+docker run --rm --privileged -v "${WORKDIR}":/lt "${LOADER_IMAGE}" \
+	/lt/loader /lt/object.bpf.o

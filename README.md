@@ -314,7 +314,7 @@ Verify the image was built by this repository:
 
 ```bash
 cosign verify ghcr.io/gma1k/podtrace:latest \
-  --certificate-identity-regexp 'https://github.com/gma1k/podtrace/.+' \
+  --certificate-identity-regexp '^https://github\.com/gma1k/podtrace/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

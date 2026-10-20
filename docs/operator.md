@@ -216,24 +216,40 @@ Both templates are gated on `monitoring.coreos.com/v1` being installed —
 flipping the toggle on a cluster without prometheus-operator is a silent
 no-op rather than a hard install failure.
 
-### Restricting the metrics port
+### Restricting the agent's ports
 
-The agent's port 9090 serves `/metrics`, `/issues` and `/profile` without
-authentication. `/issues` lists every workload's active issues on the node and
-`/profile` returns symbolised CPU stacks for every workload on the node, in
-every namespace, so whoever can reach the port can read another tenant's
-profile. The chart leaves `networkPolicy.enabled` off by default, which lets
-any pod reach it.
+The agent listens on three ports, none of them authenticated:
 
-`networkPolicy.enabled: true` adds NetworkPolicies for the agent and the
-operator. The operator can always reach the agents' port 9090, because it reads
-`/issues` to link issues across workloads. Who else can reach it is
-`networkPolicy.metricsFrom`; **left empty, it allows every source**, so the
-policy restricts nothing on 9090. Name your scrapers there:
+| Port | Serves | Default reach |
+|---|---|---|
+| 9090 `metrics` | `/metrics` | every source, so any Prometheus can scrape it |
+| 9091 `health` | liveness and readiness | every source |
+| 9092 `inspect` | `/issues`, `/profile` | the operator only |
+
+`/issues` lists every workload's active issues on the node and `/profile`
+returns symbolised CPU stacks for every workload on the node, in every
+namespace. They are on their own port so the chart's NetworkPolicy, on by
+default, can keep other tenants' pods away from them while `/metrics` stays
+open. The operator reads `/issues` to link issues across workloads.
+
+`kubectl podtrace status` reads the agents through the API server's pod proxy,
+which RBAC gates (`get` on `pods/proxy` in the podtrace namespace). The API
+server is not a pod, so a NetworkPolicy cannot name it:
+
+- On Cilium, `networkPolicy.allowAPIServerToInspect` (on by default) adds a
+  CiliumNetworkPolicy that lets it reach the inspect port.
+- On other CNIs that enforce NetworkPolicy, add the control-plane node
+  addresses to `networkPolicy.inspectFrom` as `ipBlock`s. Without them,
+  `status` falls back to the issues' Events and cannot show profiles.
+
+`kubectl port-forward` is not subject to NetworkPolicy, so it reaches
+`/profile` either way.
+
+`networkPolicy.metricsFrom` restricts the metrics ports of the agents and the
+operator; **left empty, it allows every source**. Name your scrapers there:
 
 ```yaml
 networkPolicy:
-  enabled: true
   metricsFrom:
     - namespaceSelector:
         matchLabels:
@@ -244,12 +260,13 @@ networkPolicy:
   allowAPIServerProxy: true
 ```
 
-`kubectl podtrace status` reads the agents through the API server's pod proxy,
-so once `metricsFrom` is set the API server has to be allowed too: on Cilium
-with `allowAPIServerProxy: true`, on other CNIs by adding the control-plane
-node addresses to `metricsFrom` as `ipBlock`s. Anyone with `get` on
-`pods/proxy` in the podtrace namespace can still read every endpoint through
-the API server.
+Once `metricsFrom` is set, `status` needs the API server allowed to the
+metrics ports too: on Cilium with `allowAPIServerProxy: true`, on other CNIs
+by adding the control-plane node addresses to `metricsFrom` as `ipBlock`s.
+
+The policies cover the agents in the chart's system namespace. A fleet that a
+TracerConfig places in another namespace with `spec.systemNamespace` needs a
+policy of its own there. `networkPolicy.enabled: false` removes them all.
 
 Both [PodTrace](crd-podtrace.md) (continuous) and
 [PodTraceSession](crd-podtracesession.md) (bounded) drive the real eBPF

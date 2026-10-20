@@ -4,19 +4,31 @@ metadata:
   name: psa-enforcement
 spec:
   description: |
-    PSA enforce=privileged on podtrace-system admits agent-style
-    privileged pods (privileged + CAP_BPF + hostPID). The same pod
-    spec must be rejected in a PSA-restricted namespace, proving the
-    chart's privileged label is doing real work.
+    The chart's namespace-bootstrap hook labels podtrace-system
+    enforce=privileged, and that admits agent-style pods (privileged +
+    CAP_BPF + hostPID). The same pod spec must be rejected by PodSecurity
+    in a restricted namespace, proving the label is doing real work.
 
-    This test does NOT install via the chart — it directly probes
-    the apiserver's PSA admission with a synthetic privileged pod.
+    CI installs the chart with namespace.create=true and does not label
+    the namespace itself, so the label asserted first is the hook's. kind
+    enforces nothing on an unlabelled namespace, so admission alone would
+    pass without it.
   timeouts:
     apply: 30s
     assert: 30s
   steps:
     - name: privileged-namespace-admits
       try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: podtrace-system
+                labels:
+                  pod-security.kubernetes.io/enforce: privileged
+                  pod-security.kubernetes.io/audit: privileged
+                  pod-security.kubernetes.io/warn: privileged
         - apply:
             file: ./privileged-pod-system.yaml
         - assert:
@@ -38,6 +50,7 @@ spec:
             expect:
               - check:
                   ($error != null): true
+                  (contains($error, 'violates PodSecurity')): true
       finally:
         - delete:
             ref:

@@ -33,6 +33,20 @@ spec:
             matchLabels:
               {{- include "podtrace.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: operator
+    # /issues and /profile name pods, workloads and symbolised stacks in
+    # every namespace. Only the operator, which links issues across
+    # workloads, and the peers named in inspectFrom may read them.
+    - ports:
+        - port: inspect
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "podtrace.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: operator
+        {{- with .Values.networkPolicy.inspectFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -62,6 +76,33 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- if and .Values.networkPolicy.allowAPIServerToInspect (.Capabilities.APIVersions.Has "cilium.io/v2") }}
+---
+# kubectl podtrace status reads /issues and /profile through the API
+# server's pod proxy, which RBAC already gates (pods/proxy). The API server
+# is not a pod, so the policy above cannot name it; on Cilium it can.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "podtrace.fullname" . }}-agent-apiserver-inspect
+  namespace: {{ include "podtrace.systemNamespace" . }}
+  labels:
+    {{- include "podtrace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  endpointSelector:
+    matchLabels:
+      podtrace.io/managed-by: podtrace-operator
+      podtrace.io/component: agent
+  ingress:
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "9092"
+              protocol: TCP
+{{- end }}
 {{- if and .Values.networkPolicy.allowAPIServerProxy (.Capabilities.APIVersions.Has "cilium.io/v2") }}
 ---
 apiVersion: cilium.io/v2

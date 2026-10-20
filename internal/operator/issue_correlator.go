@@ -440,17 +440,22 @@ func podReady(p *corev1.Pod) bool {
 	return false
 }
 
-// agentPort is the agent container's metrics port, by name, so a fleet that
-// moved it is still read.
+// agentPort is the port the agent serves /issues on, by name, so a fleet
+// that moved it is still read. Agents from before the inspect port served
+// /issues on the metrics port, so that is the fallback while a fleet rolls.
 func agentPort(pod *corev1.Pod) string {
+	metrics := agentMetricsPort
 	for _, container := range pod.Spec.Containers {
 		for _, port := range container.Ports {
-			if port.Name == "metrics" {
+			switch port.Name {
+			case agentInspectPortName:
 				return fmt.Sprint(port.ContainerPort)
+			case "metrics":
+				metrics = fmt.Sprint(port.ContainerPort)
 			}
 		}
 	}
-	return agentMetricsPort
+	return metrics
 }
 
 // workloadsBehind maps a Service to the workloads of the pods its

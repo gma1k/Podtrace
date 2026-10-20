@@ -26,7 +26,7 @@ func TestAMetricsServerThatCannotServeReportsWhy(t *testing.T) {
 	listenMetrics = func(string, string) (net.Listener, error) { return refusingListener{}, nil }
 	t.Cleanup(func() { listenMetrics = orig })
 
-	err := serveMetrics(context.Background(), "127.0.0.1:0", NewMetrics(), nil, nil, logr.Discard())
+	err := serveMetrics(context.Background(), "127.0.0.1:0", NewMetrics(), logr.Discard())
 	if err == nil {
 		t.Error("serveMetrics returned nil although the listener refused every connection; " +
 			"the agent would run with no /metrics and nothing saying so")

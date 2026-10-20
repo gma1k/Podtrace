@@ -33,6 +33,7 @@ const (
 	tracerConfigLabel  = "podtrace.io/tracer-config"
 	metricsPortName    = "metrics"
 	defaultMetricsPort = 9090
+	inspectPortName    = "inspect"
 
 	operatorMetricsPort = 8080
 
@@ -48,6 +49,8 @@ type Agent struct {
 	Phase    corev1.PodPhase
 	Restarts int32
 	Port     int32
+
+	InspectPort int32
 }
 
 // Component is the operator Deployment or one fleet's agent DaemonSet, and
@@ -158,16 +161,29 @@ func agentOf(p *corev1.Pod) Agent {
 	}
 	for _, c := range p.Spec.Containers {
 		for _, port := range c.Ports {
-			if port.Name == metricsPortName {
+			switch port.Name {
+			case metricsPortName:
 				a.Port = port.ContainerPort
+			case inspectPortName:
+				a.InspectPort = port.ContainerPort
 			}
 		}
+	}
+	if a.InspectPort == 0 {
+		a.InspectPort = a.Port
 	}
 	return a
 }
 
-// proxyGet fetches path from an agent's metrics port through the API
-// server's pod proxy.
+// inspectTarget addresses an agent's inspection endpoints.
+func inspectTarget(agent Agent) Agent {
+	if agent.InspectPort != 0 {
+		agent.Port = agent.InspectPort
+	}
+	return agent
+}
+
+// proxyGet fetches path from agent.Port through the API server's pod proxy.
 func (k *KubeCluster) proxyGet(ctx context.Context, agent Agent, path, accept string, params ...[2]string) ([]byte, string, error) {
 	var contentType string
 	req := k.Client.CoreV1().RESTClient().Get().
@@ -228,7 +244,7 @@ func DecodeMetrics(raw []byte, contentType string) ([]*dto.MetricFamily, error) 
 // or one with inspections off, answers with an error, and the caller falls
 // back to the issues' Events.
 func (k *KubeCluster) ActiveIssues(ctx context.Context, agent Agent) ([]LiveIssue, error) {
-	raw, _, err := k.proxyGet(ctx, agent, "issues", "application/json")
+	raw, _, err := k.proxyGet(ctx, inspectTarget(agent), "issues", "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +259,7 @@ func (k *KubeCluster) ActiveIssues(ctx context.Context, agent Agent) ([]LiveIssu
 
 // Profile reads one agent's /profile.
 func (k *KubeCluster) Profile(ctx context.Context, agent Agent) (Profile, error) {
-	raw, _, err := k.proxyGet(ctx, agent, "profile", "application/json")
+	raw, _, err := k.proxyGet(ctx, inspectTarget(agent), "profile", "application/json")
 	if err != nil {
 		return Profile{}, err
 	}
@@ -261,7 +277,7 @@ func (k *KubeCluster) ProfileStacks(ctx context.Context, agent Agent, format Sta
 	if sel.SlowRequests {
 		params = append(params, [2]string{"requests", "slow"})
 	}
-	raw, _, err := k.proxyGet(ctx, agent, "profile", "", params...)
+	raw, _, err := k.proxyGet(ctx, inspectTarget(agent), "profile", "", params...)
 	return raw, err
 }
 

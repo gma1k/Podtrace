@@ -1,0 +1,15 @@
+apiVersion: podtrace.io/v1alpha1
+kind: PodTraceSession
+metadata:
+  name: usdt-session
+spec:
+  selector:
+    matchLabels:
+      app: usdtdemo
+  duration: 30s
+  filters: [usdt]
+  exporterRef:
+    name: usdt-otlp
+  reportRef:
+    configMap:
+      name: usdt-report

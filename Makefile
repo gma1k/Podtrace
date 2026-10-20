@@ -435,7 +435,7 @@ e2e-kind-cleanup:
 	test/e2e/kind-smoke.sh cleanup
 
 CHAINSAW ?= $(shell command -v chainsaw 2>/dev/null)
-CHAINSAW_VERSION ?= latest
+CHAINSAW_VERSION ?= v0.2.15
 
 CHAINSAW_PARALLEL ?= 2
 

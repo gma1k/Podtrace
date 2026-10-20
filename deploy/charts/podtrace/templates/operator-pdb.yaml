@@ -1,0 +1,22 @@
+{{- /*
+With more than one operator replica, keep one serving through node drains.
+The validating webhook runs on every replica and fails closed, so losing all
+of them at once blocks every podtrace.io create and update. Not rendered for
+a single replica, where a budget would only block the drain.
+*/}}
+{{- if and .Values.operator.enabled (gt (int .Values.operator.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "podtrace.fullname" . }}-operator
+  namespace: {{ include "podtrace.systemNamespace" . }}
+  labels:
+    {{- include "podtrace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "podtrace.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator
+{{- end }}
