@@ -9,6 +9,28 @@ under the rules described in [STABILITY.md](STABILITY.md).
 Going forward, releases are managed by [release-please](https://github.com/googleapis/release-please)
 based on [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.15.0](https://github.com/gma1k/podtrace/compare/v0.14.10...v0.15.0) (2026-10-20)
+
+
+### Bug Fixes
+
+* harden chart defaults, release pipeline and e2e coverage ([#540](https://github.com/gma1k/podtrace/issues/540)) ([02e294d](https://github.com/gma1k/podtrace/commit/02e294d3c17cde8a86a1bd878200a765f124372a))
+* harden cli spawn, target selection and cluster access ([#537](https://github.com/gma1k/podtrace/issues/537)) ([f1221dc](https://github.com/gma1k/podtrace/commit/f1221dcba47075774c2f400e72a8744383da0b11))
+* harden diagnose stack symbolisation, sampling and report accuracy ([#536](https://github.com/gma1k/podtrace/issues/536)) ([55c067d](https://github.com/gma1k/podtrace/commit/55c067d6efd6c216c6682e2a01931be79e7a39ae))
+* harden exporter egress, credentials and delivery reporting ([#538](https://github.com/gma1k/podtrace/issues/538)) ([9ff1975](https://github.com/gma1k/podtrace/commit/9ff1975914497b3d30b0004882ed2068e04694ca))
+* harden metrics plane label safety, tenancy and L7 attribution ([#534](https://github.com/gma1k/podtrace/issues/534)) ([2021c27](https://github.com/gma1k/podtrace/commit/2021c272473c3040639432e5fede549fc5f56f52))
+
+
+### Tests
+
+* build fake google api key at runtime in redactor test ([#539](https://github.com/gma1k/podtrace/issues/539)) ([f954f10](https://github.com/gma1k/podtrace/commit/f954f10b0b1256a70ce08f007bf2e2febbe243e5))
+
+
+### Maintenance
+
+* release 0.15.0 ([#541](https://github.com/gma1k/podtrace/issues/541)) ([0538570](https://github.com/gma1k/podtrace/commit/0538570b948bd1f9e84ff94a0fc9a9ce18039206))
+* release 0.15.0 ([#543](https://github.com/gma1k/podtrace/issues/543)) ([114a548](https://github.com/gma1k/podtrace/commit/114a5483ee54a6fa232eb3a7e79d5d1ff568e90f))
+
 ## [0.14.10](https://github.com/gma1k/podtrace/compare/v0.14.9...v0.14.10) (2026-10-17)
 
 
