@@ -205,15 +205,22 @@ spec:
               }
 
               seen=""
+              out=""
               for attempt in $(seq 1 36); do
                 out=$(stats)
-                if printf '%s' "${out}" | grep -q '"metrics"'; then
+                if printf '%s' "${out}" | grep -q '"metrics"' &&
+                   printf '%s' "${out}" | grep -q 'podtrace_workload_l7_requests_total' &&
+                   printf '%s' "${out}" | grep -q 'http\.server\.request\.duration'; then
                   seen="${out}"
-                  echo "metric push observed on attempt ${attempt}"
+                  echo "request metrics pushed by attempt ${attempt}"
                   break
                 fi
                 sleep 10
               done
+              if [ -z "${seen}" ] && printf '%s' "${out}" | grep -q '"metrics"'; then
+                seen="${out}"
+                echo "metric pushes arrived, but none carried request metrics within 360s"
+              fi
 
               if [ -z "${seen}" ]; then
                 echo "FAIL: no OTLP metric push reached the sink after 360s"

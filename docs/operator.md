@@ -220,24 +220,26 @@ no-op rather than a hard install failure.
 
 The agent listens on three ports, none of them authenticated:
 
-| Port | Serves | Default reach |
+| Port | Serves | With `networkPolicy.enabled: true` |
 |---|---|---|
-| 9090 `metrics` | `/metrics` | every source, so any Prometheus can scrape it |
+| 9090 `metrics` | `/metrics` | every source, or `metricsFrom` |
 | 9091 `health` | liveness and readiness | every source |
-| 9092 `inspect` | `/issues`, `/profile` | the operator only |
+| 9092 `inspect` | `/issues`, `/profile` | the operator, plus `inspectFrom` |
 
 `/issues` lists every workload's active issues on the node and `/profile`
 returns symbolised CPU stacks for every workload on the node, in every
-namespace. They are on their own port so the chart's NetworkPolicy, on by
-default, can keep other tenants' pods away from them while `/metrics` stays
-open. The operator reads `/issues` to link issues across workloads.
+namespace. The chart leaves `networkPolicy.enabled` off by default, so any pod
+can read them. They are on their own port so that turning the policy on keeps
+other tenants' pods away from them while `/metrics` stays open to scrapers.
+The operator reads `/issues` to link issues across workloads.
 
 `kubectl podtrace status` reads the agents through the API server's pod proxy,
 which RBAC gates (`get` on `pods/proxy` in the podtrace namespace). The API
 server is not a pod, so a NetworkPolicy cannot name it:
 
-- On Cilium, `networkPolicy.allowAPIServerToInspect` (on by default) adds a
-  CiliumNetworkPolicy that lets it reach the inspect port.
+- On Cilium, `networkPolicy.allowAPIServerToInspect` (on by default once the
+  policy is enabled) adds a CiliumNetworkPolicy that lets it reach the inspect
+  port.
 - On other CNIs that enforce NetworkPolicy, add the control-plane node
   addresses to `networkPolicy.inspectFrom` as `ipBlock`s. Without them,
   `status` falls back to the issues' Events and cannot show profiles.
@@ -250,6 +252,7 @@ operator; **left empty, it allows every source**. Name your scrapers there:
 
 ```yaml
 networkPolicy:
+  enabled: true
   metricsFrom:
     - namespaceSelector:
         matchLabels:

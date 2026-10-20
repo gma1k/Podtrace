@@ -258,10 +258,11 @@ sees a 429 when someone else is reading the same agent at that moment.
 
 The inspect port has no authentication. `/profile` returns symbolised stacks
 for every workload on the node, whichever namespace it is in, and `/issues`
-returns every workload's active issues. The chart's default NetworkPolicy
+returns every workload's active issues. With the chart's default
+`networkPolicy.enabled: false`, or on a CNI that does not enforce
+NetworkPolicy, any pod in the cluster can read them. Turned on, the policy
 admits only the operator (and, on Cilium, the API server's pod proxy that
-`status` uses); with `networkPolicy.enabled: false`, or on a CNI that does not
-enforce NetworkPolicy, any pod in the cluster can read them. See
+`status` uses). See
 [restricting the agent's ports](operator.md#restricting-the-agents-ports).
 
 ### What keeps it affordable

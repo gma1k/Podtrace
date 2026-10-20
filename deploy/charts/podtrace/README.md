@@ -143,7 +143,7 @@ is documented inline with its defaults.
 | `webhook` | Validating webhook for the CRDs |
 | `rbac` | RBAC creation |
 | `metrics` | Prometheus `PodMonitor` (on) and `ServiceMonitor` (off) |
-| `networkPolicy` | On by default: keeps the agents' `/issues` and `/profile` port (9092) to the operator and, on Cilium, the API server; `metricsFrom` restricts the metrics ports |
+| `networkPolicy` | Off by default. On, keeps the agents' `/issues` and `/profile` port (9092) to the operator and, on Cilium, the API server; `metricsFrom` restricts the metrics ports |
 | `tracerConfig` | The `default` TracerConfig the chart creates, including PII redaction |
 | `examples` | Optional sample `TracerConfig` and `ExporterConfig` resources |
 

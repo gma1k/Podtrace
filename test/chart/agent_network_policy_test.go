@@ -25,8 +25,8 @@ func rulesForPort(np networkingv1.NetworkPolicy, port string) []networkingv1.Net
 	return out
 }
 
-func TestTheInspectPortIsClosedToOtherPodsByDefault(t *testing.T) {
-	rules := rulesForPort(agentPolicy(t), "inspect")
+func TestTheInspectPortIsClosedToOtherPodsOnceThePolicyIsOn(t *testing.T) {
+	rules := rulesForPort(agentPolicy(t, "networkPolicy.enabled=true"), "inspect")
 	if len(rules) != 1 {
 		t.Fatalf("%d rules name the inspect port, want 1", len(rules))
 	}
@@ -39,26 +39,27 @@ func TestTheInspectPortIsClosedToOtherPodsByDefault(t *testing.T) {
 	}
 }
 
-func TestMetricsStayOpenToScrapersByDefault(t *testing.T) {
-	for _, rule := range rulesForPort(agentPolicy(t), "metrics") {
+func TestMetricsStayOpenToScrapersWhenThePolicyIsOn(t *testing.T) {
+	for _, rule := range rulesForPort(agentPolicy(t, "networkPolicy.enabled=true"), "metrics") {
 		if len(rule.From) == 0 {
 			return
 		}
 	}
-	t.Error("no rule admits every source to the metrics port; turning the policy on by default " +
+	t.Error("no rule admits every source to the metrics port; turning the policy on " +
 		"would cut off Prometheus in any namespace not named in metricsFrom")
 }
 
 func TestInspectFromAddsPeers(t *testing.T) {
-	rules := rulesForPort(agentPolicy(t, "networkPolicy.inspectFrom[0].ipBlock.cidr=10.0.0.0/24"), "inspect")
+	rules := rulesForPort(agentPolicy(t, "networkPolicy.enabled=true", "networkPolicy.inspectFrom[0].ipBlock.cidr=10.0.0.0/24"), "inspect")
 	if len(rules) != 1 || len(rules[0].From) != 2 || rules[0].From[1].IPBlock == nil ||
 		rules[0].From[1].IPBlock.CIDR != "10.0.0.0/24" {
 		t.Errorf("inspect peers = %+v, want the operator plus 10.0.0.0/24", rules)
 	}
 }
 
-func TestThePolicyCanStillBeTurnedOff(t *testing.T) {
-	if _, ok := findObject(t, renderChart(t, "networkPolicy.enabled=false"), "NetworkPolicy", "podtrace-agent"); ok {
-		t.Error("networkPolicy.enabled=false still renders the agent policy")
+func TestThePolicyIsOptIn(t *testing.T) {
+	if _, ok := findObject(t, renderChart(t), "NetworkPolicy", "podtrace-agent"); ok {
+		t.Error("the agent policy renders by default; on a CNI that enforces it but is not " +
+			"Cilium it cuts kubectl podtrace status off from /issues and /profile")
 	}
 }

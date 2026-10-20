@@ -14,7 +14,7 @@ func TestTheAPIServerProxyPolicyIsRenderedOnlyWhenAskedForOnCilium(t *testing.T)
 	}{
 		"off by default":           {cilium, []string{"networkPolicy.enabled=true"}, false},
 		"no Cilium":                {nil, []string{"networkPolicy.enabled=true", "networkPolicy.allowAPIServerProxy=true"}, false},
-		"no network policy at all": {cilium, []string{"networkPolicy.enabled=false", "networkPolicy.allowAPIServerProxy=true"}, false},
+		"no network policy at all": {cilium, []string{"networkPolicy.allowAPIServerProxy=true"}, false},
 		"asked for, on Cilium":     {cilium, []string{"networkPolicy.enabled=true", "networkPolicy.allowAPIServerProxy=true"}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -34,17 +34,17 @@ func TestTheAPIServerProxyPolicyIsRenderedOnlyWhenAskedForOnCilium(t *testing.T)
 	}
 }
 
-func TestTheAPIServerReachesTheInspectPortOnCiliumByDefault(t *testing.T) {
+func TestTheAPIServerReachesTheInspectPortOnCiliumOnceThePolicyIsOn(t *testing.T) {
 	cilium := []string{"cilium.io/v2"}
 	for name, tt := range map[string]struct {
 		apis []string
 		set  []string
 		want bool
 	}{
-		"default on Cilium":   {cilium, nil, true},
-		"turned off":          {cilium, []string{"networkPolicy.allowAPIServerToInspect=false"}, false},
-		"no Cilium":           {nil, nil, false},
-		"no network policies": {cilium, []string{"networkPolicy.enabled=false"}, false},
+		"policy on, Cilium":   {cilium, []string{"networkPolicy.enabled=true"}, true},
+		"turned off":          {cilium, []string{"networkPolicy.enabled=true", "networkPolicy.allowAPIServerToInspect=false"}, false},
+		"no Cilium":           {nil, []string{"networkPolicy.enabled=true"}, false},
+		"no network policies": {cilium, nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := renderChartWithAPIVersions(t, tt.apis, tt.set...)
