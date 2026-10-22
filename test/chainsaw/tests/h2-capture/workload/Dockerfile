@@ -7,6 +7,6 @@ RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=0 go build -o /h2demo .
 
-FROM gcr.io/distroless/static-debian12@sha256:a9fcaedd4c9b59e12dd65d954f0b5044f19b0647a8a3712e77205df9e7b102cd
+FROM gcr.io/distroless/static-debian13@sha256:034df5c1737e8241f6ed6423a12e720ee0f6d6f088609ee172f98f6f2166ef5d
 COPY --from=build /h2demo /h2demo
 ENTRYPOINT ["/h2demo"]
