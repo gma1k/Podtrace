@@ -9,6 +9,20 @@ under the rules described in [STABILITY.md](STABILITY.md).
 Going forward, releases are managed by [release-please](https://github.com/googleapis/release-please)
 based on [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.15.1](https://github.com/gma1k/podtrace/compare/v0.15.0...v0.15.1) (2026-10-23)
+
+
+### Build System
+
+* move runtime image to distroless static-debian13 ([#547](https://github.com/gma1k/podtrace/issues/547)) ([133c4fa](https://github.com/gma1k/podtrace/commit/133c4fa7718b5f997b58e065b12eb07bf3b4bc21))
+
+
+### Maintenance
+
+* **deps:** update aws-sdk-go-v2 and google.golang.org/api modules and docker/login-action to v4.7.0 ([#548](https://github.com/gma1k/podtrace/issues/548)) ([b844be7](https://github.com/gma1k/podtrace/commit/b844be76918bf27f80171eb2997664e2506055dd))
+* **deps:** update golang image digest, setuptools, codeql-action and go modules ([#544](https://github.com/gma1k/podtrace/issues/544)) ([a19c165](https://github.com/gma1k/podtrace/commit/a19c1653a9bc38734c1561d9d8aa3de999ac160e))
+* **deps:** update golang:1.27.3-trixie docker digest to fbb7ae4 ([#546](https://github.com/gma1k/podtrace/issues/546)) ([d702e43](https://github.com/gma1k/podtrace/commit/d702e436df102551f72cdb9825a394fd2bc325b9))
+
 ## [0.15.0](https://github.com/gma1k/podtrace/compare/v0.14.10...v0.15.0) (2026-10-20)
 
 

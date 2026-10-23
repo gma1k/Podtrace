@@ -3,8 +3,8 @@ name: podtrace
 description: eBPF-driven APM and diagnostic tool for Kubernetes applications 🐝
 type: application
 kubeVersion: '>=1.28.0-0'
-version: 0.15.0
-appVersion: 0.15.0
+version: 0.15.1
+appVersion: 0.15.1
 keywords:
   - ebpf
   - apm
@@ -144,7 +144,7 @@ annotations:
                 name: on-issue-report
   artifacthub.io/images: |
     - name: podtrace
-      image: ghcr.io/gma1k/podtrace:0.15.0 # x-release-please-version
+      image: ghcr.io/gma1k/podtrace:0.15.1 # x-release-please-version
       platforms:
         - linux/amd64
         - linux/arm64
